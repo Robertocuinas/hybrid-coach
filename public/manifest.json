@@ -1,9 +1,16 @@
 {
   "name": "Hybrid Coach",
   "short_name": "Coach",
+  "description": "Plan de media maratón con base de evidencia, fuerza híbrida y nutrición por sesión.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#0E1621",
   "theme_color": "#0E1621",
-  "orientation": "portrait"
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
 }
