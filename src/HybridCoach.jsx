@@ -6,8 +6,6 @@ import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContai
    ============================================================ */
 
 const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap
-');
 .hc *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 .hc{--ink:#0E1621;--surf:#16222F;--surf2:#1D2C3C;--line:#27394C;--paper:#E9EFF4;--mut:#8CA3B8;
  --run:#4CC9C0;--gym:#F2A65A;--rest:#5E738A;--alert:#E2685F;--ok:#7BC96F;--evid:#9B8CF0;

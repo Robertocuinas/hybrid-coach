@@ -266,7 +266,15 @@ app.get("/api/strava/actividades", puerta, async (req, res) => {
 /* ============================================================
    LA APLICACIÓN
    ============================================================ */
-app.use(express.static(path.join(__dirname, "public"), { maxAge: "1h", index: false }));
+/* Sin caché fuerte en app.js: si no, un redeploy tarda hasta una hora en verse
+   porque el navegador sigue sirviendo el bundle anterior desde su propia caché.
+   El resto de estáticos (manifest, iconos) sí pueden cachearse tranquilamente. */
+app.use(express.static(path.join(__dirname, "public"), {
+  index: false,
+  setHeaders: (res, filePath) => {
+    res.setHeader("Cache-Control", filePath.endsWith("app.js") ? "no-cache" : "public, max-age=3600");
+  },
+}));
 app.get("*", (_req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
 app.listen(PORT, "0.0.0.0", () => {
