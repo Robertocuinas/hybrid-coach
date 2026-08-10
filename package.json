@@ -1,0 +1,21 @@
+{
+  "name": "hybrid-coach",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Plan de media maratón con base de evidencia y módulo de nutrición",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node server.js",
+    "dev": "node build.mjs --watch & node server.js"
+  },
+  "dependencies": {
+    "esbuild": "^0.24.2",
+    "express": "^4.21.2",
+    "googleapis": "^144.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.15.0"
+  }
+}
