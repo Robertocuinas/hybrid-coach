@@ -131,7 +131,29 @@ Ver [`04-capa-ia.md`](04-capa-ia.md).
 
 ---
 
-## D6 · Dimensión de embeddings fija a 1024
+## D6 · Herramienta de migraciones para PostgreSQL
+
+**Problema.** Elegir la herramienta de migraciones adecuada para crear el esquema de
+PostgreSQL y mantenerlo versionado sin añadir un ORM pesado.
+
+**Alternativas.** `node-pg-migrate`, `Drizzle`, `Prisma`, `knex`.
+
+**Decisión: `node-pg-migrate`.**
+
+**Por qué.**
+- Es ligera y se integra bien en un proyecto Node.js con `express` y `esbuild`.
+- Permite escribir migraciones versionadas en JavaScript/SQL sin ocultar la definición
+  del esquema.
+- Encaja con la filosofía del proyecto: pocas dependencias, control explícito y un
+  backend simple.
+- Funciona bien con Railway y el uso de `DATABASE_URL` en producción.
+
+**Reconsiderar si.** El proyecto evoluciona hacia un query builder tipado o necesita un
+esquema fuertemente tipado en TypeScript, en cuyo caso `Drizzle` podría ser una opción.
+
+---
+
+## D7 · Dimensión de embeddings fija a 1024
 
 **Problema.** Cada modelo de embeddings tiene su dimensión nativa; la columna
 `vector(N)` de Postgres es fija.
