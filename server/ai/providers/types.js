@@ -53,6 +53,21 @@ export function assertEmbeddingProvider(provider, expectedDimensions = 1024) {
   return provider;
 }
 
+export function assertRerankProvider(provider) {
+  if (!provider || typeof provider.rerank !== "function" || typeof provider.capabilities !== "function") {
+    throw new TypeError("El adaptador no cumple RerankProvider { rerank(), capabilities() }");
+  }
+  const capabilities = provider.capabilities();
+  /* `scoresAbsolutos` es la capability que de verdad importa: dice si el score
+     devuelto significa algo por sí solo. El adaptador noop no reordena y sus
+     "scores" son posicionales, así que el umbral debe caer sobre otra señal
+     (la similitud coseno). Ver server/rag/retrieval.js. */
+  for (const key of ["scoresAbsolutos", "maxDocuments"]) {
+    if (!(key in capabilities)) throw new TypeError(`Falta capability de reranking: ${key}`);
+  }
+  return provider;
+}
+
 export async function readProviderResponse(response, provider) {
   let data;
   try { data = await response.json(); } catch { data = null; }

@@ -38,7 +38,11 @@ export async function activateIndex(db, config) {
   if (counts.indexed_chunks !== counts.total_chunks) {
     throw new Error(`Índice incompleto: ${counts.indexed_chunks}/${counts.total_chunks} chunks vectorizados`);
   }
-  const transaction = typeof db.connect === "function" ? await db.connect() : db;
+  /* Un Pool y un Client tienen los dos `.connect()`, así que preguntar solo
+     por él haría que a un Client ya conectado se le llamara connect() otra vez
+     ("Client has already been connected"). `idleCount` solo existe en el Pool. */
+  const esPool = typeof db.connect === "function" && typeof db.idleCount === "number";
+  const transaction = esPool ? await db.connect() : db;
   const release = typeof transaction.release === "function" ? () => transaction.release() : () => {};
   await transaction.query("BEGIN");
   try {

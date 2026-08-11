@@ -7,8 +7,9 @@ import * as documentsRepo from "../db/repositories/documents.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/authorization.js";
 import { createStorageClient } from "../integrations/storage/r2.js";
-import { createEmbeddingProvider, createLLMProvider } from "../ai/factory.js";
+import { createEmbeddingProvider, createLLMProvider, createRerankProvider, readEmbeddingConfig, readRAGConfig, readRerankConfig } from "../ai/factory.js";
 import { ingerirPDF, IngestaError, MAX_BYTES } from "../ingestion/pipeline.js";
+import { recuperar } from "../rag/retrieval.js";
 
 const router = express.Router();
 router.use(requireAuth, requireAdmin);
@@ -105,6 +106,96 @@ router.get("/documents/:id/pdf", async (req, res, next) => {
 
 router.get("/storage/estado", (_req, res) => {
   res.json({ ok: true, r2: !!getStorage(), ia: !!getProvider(), embeddings: !!getEmbeddingProvider(), maxBytes: MAX_BYTES });
+});
+
+/* ============================================================
+   RETRIEVAL — endpoint interno de depuración
+   Devuelve los scores desglosados de cada componente. Es lo que permite
+   entender por qué salió un fragmento y no otro, y lo que consumirá el
+   dataset de evaluación de la Fase 10.
+
+   Solo admin: expone contenido de la biblioteca y permite sondear el corpus.
+   ============================================================ */
+let rerankProvider = null;
+let rerankIniciado = false;
+const getRerankProvider = () => {
+  if (!rerankIniciado) { rerankProvider = createRerankProvider(); rerankIniciado = true; }
+  return rerankProvider;
+};
+
+const listaDe = (valor) => {
+  if (valor === undefined || valor === null || valor === "") return undefined;
+  const lista = (Array.isArray(valor) ? valor : [valor]).map((v) => String(v).trim()).filter(Boolean);
+  return lista.length ? lista : undefined;
+};
+const enteroDe = (valor) => {
+  const n = Number.parseInt(valor, 10);
+  return Number.isInteger(n) ? n : undefined;
+};
+
+router.post("/retrieval", async (req, res, next) => {
+  try {
+    const cuerpo = req.body || {};
+    const consulta = String(cuerpo.consulta || "").trim();
+    if (!consulta) return res.status(400).json({ ok: false, message: "Falta la consulta" });
+
+    const embeddingConfig = readEmbeddingConfig();
+    if (!embeddingConfig.enabled) {
+      return res.status(503).json({ ok: false, message: "Los embeddings no están configurados: el retrieval solo tendría la mitad léxica." });
+    }
+
+    /* El índice activo manda sobre la configuración: validateEmbeddingStartup()
+       ya garantiza al arrancar que coinciden, así que basta con leer la config. */
+    const indice = { provider: embeddingConfig.provider, model: embeddingConfig.model, dimensions: embeddingConfig.dimensions };
+
+    const config = { ...readRAGConfig(), ...sobrescrituras(cuerpo) };
+    const resultado = await recuperar(consulta, {
+      db: pool,
+      repo: documentsRepo,
+      embeddingProvider: getEmbeddingProvider(),
+      rerankProvider: getRerankProvider(),
+      indice,
+      config,
+      contexto: cuerpo.contexto || {},
+      filtros: {
+        studyType: listaDe(cuerpo.filtros?.studyType),
+        populationType: listaDe(cuerpo.filtros?.populationType),
+        evidenceGrade: listaDe(cuerpo.filtros?.evidenceGrade),
+        seccion: listaDe(cuerpo.filtros?.seccion),
+        anioMin: enteroDe(cuerpo.filtros?.anioMin),
+        anioMax: enteroDe(cuerpo.filtros?.anioMax),
+      },
+    });
+
+    res.json({ ...resultado, rerank: getRerankProvider().provider });
+  } catch (error) { next(error); }
+});
+
+/* Permite probar umbrales y top-K sin reiniciar el servidor. Solo afecta a
+   esta petición: las variables de entorno no se tocan. */
+function sobrescrituras(cuerpo = {}) {
+  const salida = {};
+  const minScore = Number(cuerpo.minScore);
+  if (Number.isFinite(minScore) && minScore >= 0 && minScore <= 1) salida.minScore = minScore;
+  const topKFinal = enteroDe(cuerpo.topKFinal);
+  if (topKFinal && topKFinal > 0) salida.topKFinal = topKFinal;
+  const topKRetrieval = enteroDe(cuerpo.topKRetrieval);
+  if (topKRetrieval && topKRetrieval > 0) salida.topKRetrieval = topKRetrieval;
+  if (typeof cuerpo.weightByGrade === "boolean") salida.weightByGrade = cuerpo.weightByGrade;
+  return salida;
+}
+
+router.get("/retrieval/config", (_req, res) => {
+  /* Nunca se devuelve apiKey: los secretos no salen del proceso ni para un
+     admin (CLAUDE.md §4.6). Solo qué proveedor y qué modelo están en uso. */
+  const { provider, model, baseURL } = readRerankConfig();
+  const embeddings = readEmbeddingConfig();
+  res.json({
+    ok: true,
+    rag: readRAGConfig(),
+    rerank: { provider, model: model || null, baseURL: baseURL || null },
+    embeddings: embeddings.enabled ? { provider: embeddings.provider, model: embeddings.model, dimensions: embeddings.dimensions } : null,
+  });
 });
 
 export default router;

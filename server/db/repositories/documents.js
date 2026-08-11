@@ -181,14 +181,61 @@ export async function listPendingReview() {
   return rows;
 }
 
-export async function fullTextSearch(consulta, limit = 20) {
-  const { rows } = await pool.query(
-    `SELECT dc.*, ts_rank(dc.tsv, websearch_to_tsquery('english', $1)) AS rank
+/* Filtros duros del retrieval (docs/05-rag.md §5). Se aplican DENTRO de cada
+   componente, antes de rankear: si se filtrara después de fusionar, el top-K
+   llegaría contaminado y se habrían perdido candidatos válidos por el camino.
+
+   `revisado = true` no es opcional ni configurable: un documento sin confirmar
+   no participa en el retrieval (docs/05-rag.md §2.5). */
+function construirFiltros(filtros = {}, params = []) {
+  const condiciones = ["d.revisado = true"];
+  const push = (valor) => { params.push(valor); return `$${params.length}`; };
+  /* Las listas viajan como texto separado por comas y se reconstruyen con
+     string_to_array: cada cliente (pg, PGlite) serializa los arrays de JS a su
+     manera, y esto funciona igual en los dos. Ningún valor de estos enums
+     contiene comas. */
+  const enLista = (columna, valores, tipo) =>
+    `${columna} = ANY(string_to_array(${push(valores.join(","))}, ',')::${tipo}[])`;
+
+  if (filtros.studyType?.length) condiciones.push(enLista("d.study_type", filtros.studyType, "study_type"));
+  if (filtros.populationType?.length) condiciones.push(enLista("d.population_type", filtros.populationType, "population_type"));
+  if (filtros.evidenceGrade?.length) condiciones.push(enLista("d.evidence_grade", filtros.evidenceGrade, "evidence_grade"));
+  if (Number.isInteger(filtros.anioMin)) condiciones.push(`d.anio >= ${push(filtros.anioMin)}`);
+  if (Number.isInteger(filtros.anioMax)) condiciones.push(`d.anio <= ${push(filtros.anioMax)}`);
+  if (filtros.seccion?.length) condiciones.push(enLista("dc.seccion", filtros.seccion, "text"));
+
+  return { where: condiciones.join(" AND "), params };
+}
+
+/* Columnas comunes a los dos componentes para que la fusión compare peras con
+   peras y el prompt tenga siempre los mismos metadatos disponibles. */
+const COLUMNAS_CHUNK = `
+  dc.id, dc.document_id, dc.chunk_index, dc.seccion, dc.pagina_inicio, dc.pagina_fin,
+  dc.texto, dc.num_tokens,
+  d.titulo, d.autores, d.anio, d.doi, d.fuente_revista, d.study_type,
+  d.evidence_grade, d.population_type, d.sample_size, d.tema_principal, d.storage_key`;
+
+/**
+ * Componente léxico. `consulta` debe venir en sintaxis websearch (términos
+ * unidos por OR); ver server/rag/query-expansion.js: con AND —que es el
+ * comportamiento por defecto de plainto_/websearch_to_tsquery ante palabras
+ * sueltas— una consulta de varias palabras no encontraría casi nada.
+ */
+export async function lexicalSearch(consulta, { limit = 25, filtros = {} } = {}, db = pool) {
+  const texto = String(consulta || "").trim();
+  if (!texto) return [];
+  const { where, params } = construirFiltros(filtros, [texto]);
+  params.push(Math.min(200, Math.max(1, Number(limit) || 25)));
+
+  const { rows } = await db.query(
+    `SELECT ${COLUMNAS_CHUNK},
+            ts_rank(dc.tsv, websearch_to_tsquery('english', $1)) AS ts_rank
        FROM document_chunks dc
-      WHERE dc.tsv @@ websearch_to_tsquery('english', $1)
-      ORDER BY rank DESC
-      LIMIT $2;`,
-    [consulta, limit]
+       JOIN documents d ON d.id = dc.document_id
+      WHERE dc.tsv @@ websearch_to_tsquery('english', $1) AND ${where}
+      ORDER BY ts_rank DESC, dc.id
+      LIMIT $${params.length};`,
+    params
   );
   return rows;
 }
@@ -204,19 +251,25 @@ export function addEmbedding(chunkId, { provider, model, dimensions, embedding }
   ).then((r) => r.rows[0]);
 }
 
-/* Retrieval vectorial vía HNSW. `<=>` es distancia coseno: menor es más similar. */
-export async function vectorSearch(embedding, { provider, model, dimensions = 1024, limit = 8 } = {}, db = pool) {
+/* Retrieval vectorial vía HNSW. `<=>` es distancia coseno: menor es más
+   similar. Se devuelve además `similitud` (1 - distancia) porque es la señal
+   sobre la que cae el umbral cuando no hay reranker (server/rag/retrieval.js). */
+export async function vectorSearch(embedding, { provider, model, dimensions = 1024, limit = 8, filtros = {} } = {}, db = pool) {
   if (!provider || !model) throw new Error("vectorSearch requiere provider y model del índice activo");
-  const safeLimit = Math.min(100, Math.max(1, Number(limit) || 8));
+  const { where, params } = construirFiltros(filtros, [comoVector(embedding), provider, model, dimensions]);
+  params.push(Math.min(200, Math.max(1, Number(limit) || 8)));
+
   const { rows } = await db.query(
-    `SELECT dc.*, d.titulo, d.autores, ce.embedding <=> $1 AS distancia
+    `SELECT ${COLUMNAS_CHUNK},
+            ce.embedding <=> $1 AS distancia,
+            1 - (ce.embedding <=> $1) AS similitud
        FROM chunk_embeddings ce
        JOIN document_chunks dc ON dc.id = ce.document_chunk_id
        JOIN documents d ON d.id = dc.document_id
-      WHERE ce.provider=$2 AND ce.model=$3 AND ce.dimensions=$4 AND d.revisado=true
-      ORDER BY ce.embedding <=> $1
-      LIMIT $5;`,
-    [comoVector(embedding), provider, model, dimensions, safeLimit]
+      WHERE ce.provider=$2 AND ce.model=$3 AND ce.dimensions=$4 AND ${where}
+      ORDER BY ce.embedding <=> $1, dc.id
+      LIMIT $${params.length};`,
+    params
   );
   return rows;
 }

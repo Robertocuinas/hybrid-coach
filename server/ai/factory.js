@@ -4,20 +4,29 @@ import { OpenAICompatibleProvider } from "./providers/openai-compatible.js";
 import { VoyageEmbeddingProvider } from "./providers/embeddings/voyage.js";
 import { OpenAIEmbeddingProvider } from "./providers/embeddings/openai.js";
 import { OpenAICompatibleEmbeddingProvider } from "./providers/embeddings/openai-compatible.js";
-import { assertEmbeddingProvider, assertLLMProvider } from "./providers/types.js";
+import { CohereRerankProvider } from "./providers/rerank/cohere.js";
+import { OpenAICompatibleRerankProvider } from "./providers/rerank/openai-compatible.js";
+import { NoopRerankProvider } from "./providers/rerank/noop.js";
+import { assertEmbeddingProvider, assertLLMProvider, assertRerankProvider } from "./providers/types.js";
 
 const PROVIDERS = new Set(["anthropic", "openai", "openai-compatible"]);
 const EMBEDDING_PROVIDERS = new Set(["voyage", "openai", "openai-compatible"]);
+const RERANK_PROVIDERS = new Set(["noop", "cohere", "openai-compatible"]);
+
+/* El nombre de la variable ya dice de qué familia es (LLM_, EMBEDDING_,
+   RERANK_): se deriva de ahí para que el mensaje señale la variable correcta
+   y no siempre a LLM_PROVIDER. */
+const familiaDe = (name) => String(name).split("_")[0];
 
 function required(value, name, provider) {
-  if (!String(value || "").trim()) throw new Error(`${name} es obligatoria para LLM_PROVIDER=${provider}`);
+  if (!String(value || "").trim()) throw new Error(`${name} es obligatoria para ${familiaDe(name)}_PROVIDER=${provider}`);
   return String(value).trim();
 }
 
-function validBaseURL(value) {
+function validBaseURL(value, name = "LLM_BASE_URL") {
   let url;
-  try { url = new URL(value); } catch { throw new Error("LLM_BASE_URL no es una URL válida"); }
-  if (!["http:", "https:"].includes(url.protocol)) throw new Error("LLM_BASE_URL debe usar http o https");
+  try { url = new URL(value); } catch { throw new Error(`${name} no es una URL válida`); }
+  if (!["http:", "https:"].includes(url.protocol)) throw new Error(`${name} debe usar http o https`);
   return url.toString().replace(/\/+$/, "");
 }
 
@@ -60,8 +69,8 @@ export function readEmbeddingConfig(env = process.env) {
     ? String(env.EMBEDDING_API_KEY || "")
     : required(env.EMBEDDING_API_KEY, "EMBEDDING_API_KEY", provider);
   const baseURL = provider === "openai-compatible"
-    ? validBaseURL(required(env.EMBEDDING_BASE_URL, "EMBEDDING_BASE_URL", provider))
-    : env.EMBEDDING_BASE_URL ? validBaseURL(env.EMBEDDING_BASE_URL) : undefined;
+    ? validBaseURL(required(env.EMBEDDING_BASE_URL, "EMBEDDING_BASE_URL", provider), "EMBEDDING_BASE_URL")
+    : env.EMBEDDING_BASE_URL ? validBaseURL(env.EMBEDDING_BASE_URL, "EMBEDDING_BASE_URL") : undefined;
   return { enabled: true, provider, model, apiKey, baseURL, dimensions, batchSize, maxRetries };
 }
 
@@ -73,4 +82,62 @@ export function createEmbeddingProvider(env = process.env, { fetchImpl = fetch }
   if (config.provider === "openai") provider = new OpenAIEmbeddingProvider({ ...config, fetchImpl });
   if (config.provider === "openai-compatible") provider = new OpenAICompatibleEmbeddingProvider({ ...config, fetchImpl });
   return assertEmbeddingProvider(provider, config.dimensions);
+}
+
+/* El reranking es la única pieza de la capa de IA que SIEMPRE devuelve un
+   adaptador: sin configurar cae en `noop`, que conserva el orden de la fusión.
+   Así el retrieval nunca tiene que preguntarse si hay reranker. */
+export function readRerankConfig(env = process.env) {
+  const provider = String(env.RERANK_PROVIDER || "noop").trim() || "noop";
+  if (!RERANK_PROVIDERS.has(provider)) throw new Error(`RERANK_PROVIDER desconocido: ${provider}`);
+  if (provider === "noop") return { enabled: true, provider };
+
+  const model = provider === "cohere"
+    ? required(env.RERANK_MODEL, "RERANK_MODEL", provider)
+    : String(env.RERANK_MODEL || "").trim() || undefined;
+  const apiKey = provider === "openai-compatible"
+    ? String(env.RERANK_API_KEY || "")
+    : required(env.RERANK_API_KEY, "RERANK_API_KEY", provider);
+  const baseURL = provider === "openai-compatible"
+    ? validBaseURL(required(env.RERANK_BASE_URL, "RERANK_BASE_URL", provider), "RERANK_BASE_URL")
+    : env.RERANK_BASE_URL ? validBaseURL(env.RERANK_BASE_URL, "RERANK_BASE_URL") : undefined;
+
+  return { enabled: true, provider, model, apiKey, baseURL };
+}
+
+export function createRerankProvider(env = process.env, { fetchImpl = fetch } = {}) {
+  const config = readRerankConfig(env);
+  let provider;
+  if (config.provider === "noop") provider = new NoopRerankProvider();
+  if (config.provider === "cohere") provider = new CohereRerankProvider({ ...config, fetchImpl });
+  if (config.provider === "openai-compatible") provider = new OpenAICompatibleRerankProvider({ ...config, fetchImpl });
+  return assertRerankProvider(provider);
+}
+
+/* Los tres parámetros del retrieval viven juntos porque se calibran juntos
+   (docs/05-rag.md §7): recuperar 25, rerankear, quedarse con 8. */
+export function readRAGConfig(env = process.env) {
+  const entero = (valor, porDefecto, nombre, min, max) => {
+    const n = Number(valor ?? porDefecto);
+    if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${nombre} debe ser un entero entre ${min} y ${max}`);
+    return n;
+  };
+  const topKRetrieval = entero(env.RAG_TOP_K_RETRIEVAL, 25, "RAG_TOP_K_RETRIEVAL", 1, 200);
+  const topKFinal = entero(env.RAG_TOP_K_FINAL, 8, "RAG_TOP_K_FINAL", 1, topKRetrieval);
+  /* Mínimo por debajo del cual se completa con fragmentos marcados como
+     relleno. Es el `min` de refsRelevantes(), conservado. */
+  const minResults = entero(env.RAG_MIN_RESULTS, 3, "RAG_MIN_RESULTS", 0, topKFinal);
+  const minScore = Number(env.RAG_MIN_SCORE ?? 0.25);
+  if (!Number.isFinite(minScore) || minScore < 0 || minScore > 1) throw new Error("RAG_MIN_SCORE debe estar entre 0 y 1");
+  return {
+    topKRetrieval,
+    topKFinal,
+    minResults,
+    minScore,
+    /* Ponderar por grado de evidencia mezcla "encaja con la pregunta" con
+       "merece confianza" y desplaza el umbral. Desactivado hasta poder
+       calibrarlo con el dataset de la Fase 10. */
+    weightByGrade: String(env.RAG_WEIGHT_BY_GRADE || "false").toLowerCase() === "true",
+    rrfK: entero(env.RAG_RRF_K, 60, "RAG_RRF_K", 1, 1000),
+  };
 }

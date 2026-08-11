@@ -18,8 +18,11 @@ test("reindexa con otro proveedor usando solo los chunks y activa la nueva gener
   const db = new PGlite({ extensions: { vector } });
   await db.exec(`
     CREATE EXTENSION IF NOT EXISTS vector;
-    CREATE TABLE documents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), titulo text, autores text, revisado boolean);
-    CREATE TABLE document_chunks (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), document_id uuid REFERENCES documents(id), texto text);
+    CREATE TABLE documents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), titulo text, autores text, revisado boolean,
+      anio int, doi text, fuente_revista text, study_type text, evidence_grade text, population_type text,
+      sample_size int, tema_principal text, storage_key text);
+    CREATE TABLE document_chunks (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), document_id uuid REFERENCES documents(id), texto text,
+      chunk_index int, seccion text, pagina_inicio int, pagina_fin int, num_tokens int);
     CREATE TABLE chunk_embeddings (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), document_chunk_id uuid REFERENCES document_chunks(id), provider text, model text, dimensions int, embedding vector(1024), created_at timestamptz DEFAULT now());
     CREATE UNIQUE INDEX idx_chunk_embeddings_generation ON chunk_embeddings(document_chunk_id,provider,model,dimensions);
     CREATE INDEX idx_embeddings_hnsw ON chunk_embeddings USING hnsw (embedding vector_cosine_ops);
