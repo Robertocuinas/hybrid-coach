@@ -31,7 +31,10 @@ export function documentoDesdeAPI(row = {}) {
     limites: row.limites || "",
     revisado: row.revisado !== false,
     creado: row.created_at || new Date().toISOString().slice(0, 10),
-    studyType: row.study_type || "narrative_review",
+    /* null se conserva: un documento recién ingerido puede estar SIN clasificar
+       y etiquetarlo por defecto como revisión narrativa sería inventarse un
+       metadato que luego filtra el retrieval. */
+    studyType: row.study_type || null,
     populationType: row.population_type || null,
     sampleSize: Number.isInteger(row.sample_size) ? row.sample_size : null,
   };
@@ -44,7 +47,7 @@ export function documentoParaAPI(ref = {}) {
     anio: Number(ref.anio) || null,
     fuenteRevista: ref.fuente || null,
     doi: ref.doi?.trim() || null,
-    studyType: ref.studyType || "narrative_review",
+    studyType: ref.studyType || null,
     evidenceGrade: GRADE_TO_API[ref.grado] || "moderada",
     poblacion: ref.poblacion || null,
     populationType: ref.populationType || null,

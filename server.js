@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { checkDatabaseStatus } from "./server/db/status.js";
 import authRoutes from "./server/routes/auth.js";
 import apiRoutes from "./server/routes/api.js";
+import adminRoutes from "./server/routes/admin.js";
 import syncRoutes from "./server/routes/sync.js";
 import { startReconciliationJob } from "./server/jobs/reconciliation.js";
 import { loginRateLimiter, requireAuth } from "./server/middleware/auth.js";
@@ -49,6 +50,9 @@ app.use("/api/auth", authRoutes);
 app.use("/auth/login", loginRateLimiter);
 app.use("/auth", authRoutes);
 app.use("/api", syncRoutes);
+/* Antes que apiRoutes: /api/admin/* tiene su propio parseo de cuerpo binario
+   y no debe caer en los manejadores JSON genéricos. */
+app.use("/api/admin", adminRoutes);
 app.use("/api", apiRoutes);
 
 /* La ruta heredada /api/entrar devuelve 410; no existe fallback de contraseña compartida. */

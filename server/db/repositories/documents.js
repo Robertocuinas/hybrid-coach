@@ -121,6 +121,58 @@ export function addChunk(documentId, { chunkIndex, seccion, paginaInicio = null,
   });
 }
 
+/* Documento + chunks en una sola transacción: un documento sin sus chunks no
+   sirve para nada y dejaría basura que el retrieval nunca encontraría. El
+   cliente se inyecta (pool en producción, PGlite en las pruebas), igual que
+   en replaceProfileState(). */
+export async function crearDocumentoConChunks(client, { documento, chunks = [] }) {
+  await client.query("BEGIN");
+  try {
+    const columnas = Object.keys(documento);
+    const marcadores = columnas.map((_, i) => `$${i + 1}`).join(", ");
+    const { rows } = await client.query(
+      `INSERT INTO documents (${columnas.join(", ")}) VALUES (${marcadores}) RETURNING *;`,
+      Object.values(documento)
+    );
+    const creado = rows[0];
+
+    for (const chunk of chunks) {
+      await client.query(
+        `INSERT INTO document_chunks (document_id, chunk_index, seccion, pagina_inicio, pagina_fin, texto, num_tokens)
+         VALUES ($1, $2, $3, $4, $5, $6, $7);`,
+        [creado.id, chunk.chunk_index, chunk.seccion, chunk.pagina_inicio, chunk.pagina_fin, chunk.texto, chunk.num_tokens]
+      );
+    }
+
+    await client.query("COMMIT");
+    return { documento: creado, chunks: chunks.length };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+export async function listChunksByDocument(documentId) {
+  const { rows } = await pool.query(
+    `SELECT id, chunk_index, seccion, pagina_inicio, pagina_fin, texto, num_tokens
+       FROM document_chunks WHERE document_id = $1 ORDER BY chunk_index;`,
+    [documentId]
+  );
+  return rows;
+}
+
+/* Cola de revisión: lo que entró por PDF y nadie ha confirmado todavía. */
+export async function listPendingReview() {
+  const { rows } = await pool.query(
+    `SELECT d.*, count(dc.id)::int AS num_chunks
+       FROM documents d LEFT JOIN document_chunks dc ON dc.document_id = d.id
+      WHERE d.revisado = false
+      GROUP BY d.id
+      ORDER BY d.created_at DESC;`
+  );
+  return rows;
+}
+
 export async function fullTextSearch(consulta, limit = 20) {
   const { rows } = await pool.query(
     `SELECT dc.*, ts_rank(dc.tsv, websearch_to_tsquery('english', $1)) AS rank

@@ -168,6 +168,20 @@ const PLANTILLAS = {
    o un PDF importado. normRef() garantiza que todas tengan la misma forma,
    para que la biblioteca vieja siga funcionando sin migración destructiva.   */
 const GRADOS = ["fuerte", "moderada", "débil", "práctica"];
+/* Espejo de los enums study_type y population_type de PostgreSQL. La clave es
+   el valor del enum; la etiqueta, lo que se lee en pantalla.                */
+const STUDY_TYPES_UI = [
+  ["", "— sin clasificar —"],
+  ["meta_analysis", "Metaanálisis"], ["systematic_review", "Revisión sistemática"],
+  ["rct", "Ensayo controlado aleatorizado"], ["observational", "Observacional"],
+  ["position_statement", "Posicionamiento"], ["narrative_review", "Revisión narrativa"],
+  ["preprint", "Preprint"],
+];
+const POPULATION_TYPES_UI = [
+  ["", "— sin especificar —"],
+  ["runners", "Corredores / resistencia"], ["strength_athletes", "Deportistas de fuerza"],
+  ["general_population", "Población general"], ["mixed", "Mixta"],
+];
 const TEMAS_SUG = ["Rendimiento","Volumen","Lesiones","Concurrente","Fuerza","Hipertrofia","Detraining","Carga","Progresión","Monitorización","Taper","Nutrición","Recuperación","Sueño","Biomecánica","Calzado","Mujer","Calor/altitud"];
 
 function normRef(r) {
@@ -188,7 +202,7 @@ function normRef(r) {
     paginas: +r.paginas || 0,
     revisado: r.revisado === undefined ? true : !!r.revisado, // false = propuesto por IA, sin confirmar
     creado: r.creado || iso(new Date()),
-    studyType: r.studyType || "narrative_review",
+    studyType: r.studyType || null,
     populationType: r.populationType || null,
     sampleSize: Number.isInteger(r.sampleSize) ? r.sampleSize : null,
   };
@@ -2177,6 +2191,15 @@ function Biblioteca({ st, P, update, notify, onClose }) {
   const [edit, setEdit] = useState(null);
   const [importando, setImportando] = useState(false);
   const [q, setQ] = useState("");
+  /* El rol lo dice el servidor, no el cliente: ocultar la pestaña es comodidad
+     de interfaz, la puerta real es requireAdmin en /api/admin/*.            */
+  const [esAdmin, setEsAdmin] = useState(false);
+  useEffect(() => {
+    fetch("/api/auth/me", { credentials: "same-origin" })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => setEsAdmin(d?.user?.role === "admin"))
+      .catch(() => setEsAdmin(false));
+  }, []);
   const temas = ["Todos", ...new Set(st.biblio.map((b) => b.tema).filter(Boolean))];
   const porRevisar = st.biblio.filter((b) => b.revisado === false).length;
 
@@ -2234,6 +2257,7 @@ function Biblioteca({ st, P, update, notify, onClose }) {
       <button className={"chip" + (vista === "plan" ? " on" : "")} style={{ flex: 1 }} onClick={() => setVista("plan")}>Decisiones</button>
       <button className={"chip" + (vista === "refs" ? " on" : "")} style={{ flex: 1 }} onClick={() => setVista("refs")}>Referencias</button>
       <button className={"chip" + (vista === "ia" ? " on" : "")} style={{ flex: 1 }} onClick={() => setVista("ia")}>Razonamiento</button>
+      {esAdmin && <button className={"chip" + (vista === "admin" ? " on" : "")} style={{ flex: 1 }} onClick={() => setVista("admin")}>Admin</button>}
     </div>
 
     {vista === "plan" && (<>
@@ -2286,6 +2310,11 @@ function Biblioteca({ st, P, update, notify, onClose }) {
     </>)}
 
     {vista === "ia" && <Razonamiento st={st} P={P} update={update} notify={notify} />}
+
+    {/* Revisar una ficha reutiliza el mismo editor y el mismo guardar() que el
+        resto de la biblioteca: guardar marca revisado=true en PostgreSQL.   */}
+    {vista === "admin" && esAdmin && <PanelAdmin notify={notify}
+      onRevisar={(fila) => setEdit(normRef({ ...documentoDesdeAPI(fila), archivo: fila.storage_key || "" }))} />}
   </div>);
 }
 
@@ -2803,6 +2832,123 @@ function Razonamiento({ st, P, update, notify }) {
   </div>);
 }
 
+/* ---------- ADMINISTRACIÓN DE LA BIBLIOTECA (solo rol admin) ----------
+   La ingesta de PDF vive en el servidor (docs/roadmap/fase-05-ingesta-pdf.md):
+   aquí solo se manda el archivo y se muestra lo que devuelve. El troceado, la
+   extracción y la ficha no se calculan en el navegador.                      */
+const SECCION_ES = { abstract: "Resumen", introduction: "Introducción", methods: "Métodos", results: "Resultados", discussion: "Discusión", conclusion: "Conclusión", other: "Otras" };
+
+function PanelAdmin({ notify, onRevisar }) {
+  const [estado, setEstado] = useState(null);        // { r2, ia, maxBytes }
+  const [pendientes, setPendientes] = useState([]);
+  const [subiendo, setSubiendo] = useState(false);
+  const [ultima, setUltima] = useState(null);        // resultado de la última subida
+  const [error, setError] = useState("");
+  const [fragmentos, setFragmentos] = useState(null);
+
+  const cargar = async () => {
+    try {
+      const [e, p] = await Promise.all([
+        fetch("/api/admin/storage/estado", { credentials: "same-origin" }).then((r) => r.json()),
+        fetch("/api/admin/documents/pending", { credentials: "same-origin" }).then((r) => r.json()),
+      ]);
+      setEstado(e); setPendientes(p.documents || []);
+    } catch { setError("No se pudo consultar el estado de administración."); }
+  };
+  useEffect(() => { cargar(); }, []);
+
+  const subir = async (file) => {
+    if (!file) return;
+    setSubiendo(true); setError(""); setUltima(null);
+    try {
+      /* El PDF va como cuerpo binario, no como formulario: el servidor no
+         necesita el nombre del archivo para nada crítico (la clave en R2 sale
+         del hash), solo para mostrarlo y para el prompt de la ficha.         */
+      const r = await fetch("/api/admin/documents/upload", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/pdf", "X-Nombre-Archivo": encodeURIComponent(file.name) },
+        body: file,
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.message || `HTTP ${r.status}`);
+      setUltima(data);
+      notify(`PDF procesado: ${data.chunks} fragmentos. Revisa la ficha antes de que el coach pueda citarlo.`);
+      await cargar();
+    } catch (e) { setError(e.message); }
+    finally { setSubiendo(false); }
+  };
+
+  const verFragmentos = async (doc) => {
+    try {
+      const r = await fetch(`/api/admin/documents/${encodeURIComponent(doc.id)}/chunks`, { credentials: "same-origin" });
+      const data = await r.json();
+      setFragmentos({ doc, chunks: data.chunks || [] });
+    } catch { notify("No se pudieron cargar los fragmentos."); }
+  };
+
+  if (fragmentos) return (<div>
+    <div className="between" style={{ marginTop: 8 }}>
+      <div><p className="eyebrow" style={{ margin: 0 }}>{fragmentos.chunks.length} fragmentos</p><h1 style={{ fontSize: 22 }}>{fragmentos.doc.titulo || "Sin título"}</h1></div>
+      <button className="btn sm ghost" onClick={() => setFragmentos(null)}>Volver</button></div>
+    {fragmentos.chunks.map((c) => (<div className="card flat" key={c.id}>
+      <div className="between"><span className="tag">{SECCION_ES[c.seccion] || c.seccion}</span>
+        <span className="xs muted mono">pág. {c.pagina_inicio}{c.pagina_fin !== c.pagina_inicio ? "-" + c.pagina_fin : ""} · {c.num_tokens} tokens</span></div>
+      <p className="xs" style={{ margin: "7px 0 0", whiteSpace: "pre-wrap" }}>{c.texto}</p>
+    </div>))}
+  </div>);
+
+  return (<div>
+    {estado && !estado.r2 && (<div className="card" style={{ borderColor: "var(--alert)" }}>
+      <span className="tag alert">Almacenamiento sin configurar</span>
+      <p className="sm" style={{ margin: "8px 0 0" }}>Faltan las credenciales de R2 en el servidor. Sin ellas no se puede subir ningún PDF, porque el original hay que conservarlo para poder reprocesar la biblioteca más adelante.</p>
+    </div>)}
+    {estado && estado.r2 && !estado.ia && (<div className="card" style={{ borderColor: "var(--gym)" }}>
+      <p className="sm" style={{ margin: 0 }}>No hay proveedor de IA configurado: los PDF se trocearán igual, pero la ficha habrá que rellenarla a mano.</p>
+    </div>)}
+
+    <div className="card">
+      <h3>Subir un artículo</h3>
+      <p className="xs muted" style={{ margin: "4px 0 10px" }}>
+        PDF con capa de texto, hasta {estado ? Math.round(estado.maxBytes / 1024 / 1024) : 50} MB. Los escaneados sin texto se rechazan: este flujo no hace OCR.
+      </p>
+      <input type="file" accept="application/pdf" disabled={subiendo || (estado && !estado.r2)}
+        onChange={(e) => { subir(e.target.files[0]); e.target.value = ""; }} />
+      {subiendo && <p className="sm" style={{ marginTop: 10 }}>Extrayendo texto, troceando y clasificando… puede tardar medio minuto.</p>}
+      {error && <p className="xs" style={{ color: "var(--alert)", marginTop: 10 }}>{error}</p>}
+    </div>
+
+    {ultima && (<div className="card" style={{ borderColor: "var(--ok)" }}>
+      <span className="tag ok">Procesado</span>
+      <p className="sm" style={{ margin: "8px 0 4px" }}>{ultima.documento.titulo || "Sin título extraído"}</p>
+      <p className="xs muted" style={{ margin: 0 }}>
+        {ultima.numPaginas} páginas · {ultima.chunks} fragmentos · {Object.entries(ultima.secciones).map(([s, n]) => `${SECCION_ES[s] || s}: ${n}`).join(" · ")}
+      </p>
+      {ultima.aviso && <p className="xs" style={{ color: "var(--alert)", margin: "8px 0 0" }}>{ultima.aviso}</p>}
+    </div>)}
+
+    <div className="between" style={{ margin: "16px 0 8px" }}>
+      <h3 style={{ margin: 0 }}>Pendientes de revisión</h3>
+      <button className="btn sm ghost" onClick={cargar}>Actualizar</button>
+    </div>
+    {!pendientes.length && <p className="sm muted">Nada pendiente. Todo lo subido está revisado.</p>}
+    {pendientes.map((d) => (<div className="card" key={d.id} style={{ borderColor: "var(--alert)" }}>
+      <div className="between"><span className="mono sm">{d.autores || "Sin autor"} ({d.anio || "s. f."})</span>
+        <span className="xs muted mono">{d.num_chunks} fragmentos</span></div>
+      <p className="sm" style={{ margin: "6px 0 4px" }}>{d.titulo || "Sin título extraído"}</p>
+      <p className="xs muted" style={{ margin: 0 }}>{d.fuente_revista || "sin fuente"}{d.doi ? " · " + d.doi : ""}</p>
+      <p className="xs" style={{ margin: "6px 0 0", color: d.study_type ? "var(--evid)" : "var(--alert)" }}>
+        {d.study_type ? `${d.study_type} · ${d.evidence_grade || "sin grado"}${d.population_type ? " · " + d.population_type : ""}${d.sample_size ? " · n=" + d.sample_size : ""}` : "Sin clasificar: rellena tipo de estudio y grado al revisar."}
+      </p>
+      <div className="row" style={{ marginTop: 9, gap: 6 }}>
+        <button className="btn primary sm" onClick={() => onRevisar(d)}>Revisar ficha</button>
+        <button className="btn ghost sm" onClick={() => verFragmentos(d)}>Ver fragmentos</button>
+        <a className="btn ghost sm" href={`/api/admin/documents/${encodeURIComponent(d.id)}/pdf`} target="_blank" rel="noreferrer">PDF original</a>
+      </div>
+    </div>))}
+    <p className="xs muted">Un documento sin revisar no participa en las respuestas del coach. Al guardar la ficha queda confirmado y pasa a estar disponible.</p>
+  </div>);
+}
+
 function EditarRef({ r, onSave, onDelete, onCancel }) {
   const [f, setF] = useState(normRef(r));
   const [avanzado, setAvanzado] = useState(!!r.resumenIA);
@@ -2840,6 +2986,21 @@ function EditarRef({ r, onSave, onDelete, onCancel }) {
       <label>Palabras clave (separadas por comas)</label>
       <input value={(f.tags || []).join(", ")} onChange={(e) => s("tags", e.target.value.split(",").map((x) => x.trim()).filter(Boolean))} placeholder="sóleo, tendón, excéntrico" style={{ fontFamily: "'IBM Plex Sans',sans-serif" }} />
       <p className="xs muted" style={{ margin: "5px 0 0" }}>Las usa el buscador interno para decidir qué referencias mandar a la IA en cada consulta.</p>
+      {/* Tipo de estudio y grado son ejes distintos a propósito: el diseño del
+          estudio no determina por sí solo la confianza que merece.          */}
+      <div style={{ height: 9 }} /><label>Tipo de estudio</label>
+      <select value={f.studyType || ""} onChange={(e) => s("studyType", e.target.value || null)}>
+        {STUDY_TYPES_UI.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+      </select>
+      <div style={{ height: 9 }} /><div className="grid2">
+        <div><label>Población (tipo)</label>
+          <select value={f.populationType || ""} onChange={(e) => s("populationType", e.target.value || null)}>
+            {POPULATION_TYPES_UI.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select></div>
+        <div><label>Tamaño de muestra</label>
+          <input type="number" min="1" value={f.sampleSize ?? ""} placeholder="24"
+            onChange={(e) => s("sampleSize", e.target.value === "" ? null : Math.trunc(+e.target.value))} /></div>
+      </div>
       <div style={{ height: 9 }} /><label>Población estudiada</label>
       <input value={f.poblacion} onChange={(e) => s("poblacion", e.target.value)} placeholder="n=24, hombres entrenados, 20-30 años" style={{ fontFamily: "'IBM Plex Sans',sans-serif" }} />
       <div style={{ height: 9 }} /><label>Qué encontró</label>

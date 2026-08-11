@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test src/sync.test.js src/data/documentAdapter.test.js server/jobs/reconciliation.test.js server/routes/sync.persistence.test.js server/ai/providers/providers.test.js server/db/seed-biblio.test.js",
+    "test": "node --test src/sync.test.js src/data/documentAdapter.test.js server/jobs/reconciliation.test.js server/routes/sync.persistence.test.js server/ai/providers/providers.test.js server/db/seed-biblio.test.js server/ingestion/chunker.test.js server/ingestion/pipeline.test.js server/integrations/pdf-extractor.test.js server/integrations/storage/r2.test.js",
     "build": "node build.mjs",
     "start": "node server.js",
     "dev": "node build.mjs --watch & node server.js",
@@ -18,6 +18,7 @@
     "seed:biblio": "node server/db/seed-biblio.js"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1107.0",
     "@node-rs/argon2": "^2.0.2",
     "esbuild": "^0.24.2",
     "express": "^4.21.2",
