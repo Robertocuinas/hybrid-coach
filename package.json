@@ -10,7 +10,12 @@
     "start": "node server.js",
     "dev": "node build.mjs --watch & node server.js",
     "migrate": "node-pg-migrate up --migrations ./server/db/migrations",
-    "migrate:down": "node-pg-migrate down --migrations ./server/db/migrations"
+    "migrate:down": "node-pg-migrate down --migrations ./server/db/migrations",
+    "migration:parse-localstorage": "node migration/scripts/01-parse-localstorage.js",
+    "migration:parse-sheets": "node migration/scripts/02-parse-sheets.js",
+    "migration:transform": "node migration/scripts/03-transform.js",
+    "migration:load": "node migration/scripts/04-load.js",
+    "migration:verify": "node migration/scripts/05-verify.js"
   },
   "dependencies": {
     "esbuild": "^0.24.2",
@@ -22,6 +27,7 @@
     "recharts": "^2.15.0"
   },
   "devDependencies": {
+    "csv-parse": "^6.0.0",
     "node-pg-migrate": "^7.0.0"
   }
 }

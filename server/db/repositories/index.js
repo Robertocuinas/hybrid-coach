@@ -1,2 +1,9 @@
-// Por ahora este módulo es un punto de entrada para repositorios futuros.
-// No exporta nada hasta que haya consultas concretas implementadas.
+export * as users from "./users.js";
+export * as athleteProfiles from "./athleteProfiles.js";
+export * as trainingPlans from "./trainingPlans.js";
+export * as completedSessions from "./completedSessions.js";
+export * as recovery from "./recovery.js";
+export * as documents from "./documents.js";
+export * as aiConversations from "./aiConversations.js";
+export * as nutrition from "./nutrition.js";
+export * as strava from "./strava.js";

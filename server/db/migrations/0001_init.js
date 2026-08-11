@@ -371,9 +371,11 @@ export async function up({ context: query }) {
   await query(`CREATE TABLE IF NOT EXISTS strava_connections (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token text,
+    athlete_id_strava text,
+    access_token text,
     refresh_token text,
     expires_at timestamptz,
+    scope text,
     created_at timestamptz NOT NULL DEFAULT now()
   );`);
 
