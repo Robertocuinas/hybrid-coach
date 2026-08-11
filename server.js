@@ -15,6 +15,11 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkDatabaseStatus } from "./server/db/status.js";
+import authRoutes from "./server/routes/auth.js";
+import apiRoutes from "./server/routes/api.js";
+import { requireAuth } from "./server/middleware/authenticate.js";
+import { requireTrustedOrigin, securityHeaders } from "./server/middleware/security.js";
+import { rateLimit } from "express-rate-limit";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -25,40 +30,38 @@ const {
   APPS_SCRIPT_URL,
   SHEET_ID,
   GOOGLE_SERVICE_ACCOUNT_JSON,
-  APP_PASSWORD,
   STRAVA_CLIENT_ID,
   STRAVA_CLIENT_SECRET,
   MODELO_IA = "claude-sonnet-4-6",
 } = process.env;
 
-app.use(express.json({ limit: "2mb" }));
-app.disable("x-powered-by");
-
-/* ============================================================
-   CONTRASEÑA COMPARTIDA (opcional)
-   Sin ella, cualquiera con la dirección entra y escribe en tu hoja.
-   Con ella, el navegador guarda el pase y no vuelve a pedirlo.
-   No es un sistema de cuentas: es una puerta, no una cerradura seria.
-   ============================================================ */
-function autorizado(req) {
-  if (!APP_PASSWORD) return true;
-  const c = (req.headers.cookie || "").match(/hc_pase=([^;]+)/);
-  return (c && c[1] === APP_PASSWORD) || req.headers["x-hc-pase"] === APP_PASSWORD;
+if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
+  throw new Error("SESSION_SECRET es obligatoria y debe tener al menos 32 caracteres.");
 }
 
-app.post("/api/entrar", (req, res) => {
-  if (!APP_PASSWORD) return res.json({ ok: true });
-  if (req.body?.pase !== APP_PASSWORD) return res.status(401).json({ ok: false, message: "Contraseña incorrecta" });
-  res.setHeader("Set-Cookie", `hc_pase=${APP_PASSWORD}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax`);
-  res.json({ ok: true });
+app.use(express.json({ limit: "2mb" }));
+app.disable("x-powered-by");
+app.use(securityHeaders);
+app.use(requireTrustedOrigin);
+const loginLimiter = rateLimit({
+  windowMs: Number(process.env.AUTH_LOGIN_WINDOW_MINUTES || 15) * 60_000,
+  limit: Number(process.env.AUTH_LOGIN_MAX_ATTEMPTS || 5),
+  standardHeaders: "draft-7", legacyHeaders: false,
+  message: { ok: false, message: "Demasiados intentos. Inténtalo más tarde." },
+  keyGenerator: (req) => `${req.ip}:${String(req.body?.email || "").trim().toLowerCase()}`,
 });
+app.use("/api/auth/login", loginLimiter);
+app.use("/api/auth", authRoutes);
+app.use("/api", apiRoutes);
+
+/* La ruta heredada /api/entrar devuelve 410; no existe fallback de contraseña compartida. */
+app.post("/api/entrar", (_req, res) => res.status(410).json({ ok: false, message: "Usa /api/auth/login" }));
 
 app.get("/api/estado", async (req, res) => {
   const dbStatus = await checkDatabaseStatus();
   res.json({
     ok: true,
-    requierePase: !!APP_PASSWORD,
-    dentro: autorizado(req),
+    requiereLogin: true,
     ia: !!ANTHROPIC_API_KEY,
     hoja: !!(APPS_SCRIPT_URL || (SHEET_ID && GOOGLE_SERVICE_ACCOUNT_JSON)),
     strava: !!(STRAVA_CLIENT_ID && STRAVA_CLIENT_SECRET),
@@ -67,14 +70,10 @@ app.get("/api/estado", async (req, res) => {
   });
 });
 
-const puerta = (req, res, next) => autorizado(req)
-  ? next()
-  : res.status(401).json({ ok: false, message: "Necesitas la contraseña de acceso" });
-
 /* ============================================================
    IA — la clave se queda aquí
    ============================================================ */
-app.post("/api/ia", puerta, async (req, res) => {
+app.post("/api/ia", requireAuth, async (req, res) => {
   if (!ANTHROPIC_API_KEY) {
     return res.status(503).json({ ok: false, message: "Este servidor no tiene clave de IA. La aplicación sigue funcionando sin ella." });
   }
@@ -125,7 +124,7 @@ async function conectarSheets() {
    de versiones viejas que nadie va a limpiar.                                */
 const HOJAS_ESTADO = ["Rutinas", "Ejercicios_Propios", "Decisiones_Plan", "Perfiles", "Nutricion_Catalogo", "Nutricion_Config"];
 
-app.post("/api/sheets", puerta, async (req, res) => {
+app.post("/api/sheets", requireAuth, async (req, res) => {
   const { sheet, rows = [], perfil } = req.body || {};
   if (!sheet) return res.status(400).json({ ok: false, message: "Falta el nombre de la hoja" });
 
@@ -182,7 +181,7 @@ app.post("/api/sheets", puerta, async (req, res) => {
   }
 });
 
-app.get("/api/sheets", puerta, async (req, res) => {
+app.get("/api/sheets", requireAuth, async (req, res) => {
   const sheet = req.query.sheet;
   if (!sheet) return res.status(400).json({ ok: false, message: "Falta el parámetro sheet" });
   if (APPS_SCRIPT_URL) {
@@ -202,7 +201,7 @@ app.get("/api/sheets", puerta, async (req, res) => {
    ============================================================ */
 const strava = { refresh: null, access: null, expira: 0 };
 
-app.get("/api/strava/entrar", puerta, (req, res) => {
+app.get("/api/strava/entrar", requireAuth, (req, res) => {
   if (!STRAVA_CLIENT_ID) return res.status(503).send("Strava no está configurado en este servidor.");
   const vuelta = `${req.protocol}://${req.get("host")}/api/strava/vuelta`;
   res.redirect("https://www.strava.com/oauth/authorize"
@@ -246,7 +245,7 @@ async function tokenStrava() {
   return d.access_token;
 }
 
-app.get("/api/strava/actividades", puerta, async (req, res) => {
+app.get("/api/strava/actividades", requireAuth, async (req, res) => {
   try {
     const desde = req.query.desde || "2026-01-01";
     const after = Math.floor(new Date(desde + "T00:00:00Z").getTime() / 1000);
@@ -288,5 +287,5 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`  IA:     ${ANTHROPIC_API_KEY ? "configurada" : "sin clave (la app funciona igual)"}`);
   console.log(`  Hoja:   ${APPS_SCRIPT_URL ? "vía Apps Script" : SHEET_ID && GOOGLE_SERVICE_ACCOUNT_JSON ? "vía cuenta de servicio" : "sin configurar"}`);
   console.log(`  Strava: ${STRAVA_CLIENT_ID ? "configurado" : "sin configurar"}`);
-  console.log(`  Acceso: ${APP_PASSWORD ? "con contraseña" : "ABIERTO — cualquiera con la dirección entra"}`);
+  console.log("  Acceso: sesiones autenticadas");
 });
