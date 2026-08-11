@@ -1,7 +1,7 @@
 export function securityHeaders(req, res, next) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; connect-src 'self' https://api.anthropic.com https://script.google.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; connect-src 'self' https://script.google.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com");
   next();
 }
 
