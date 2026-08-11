@@ -1,10 +1,13 @@
 import crypto from "node:crypto";
+import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 import { findActiveSession, touchSession } from "../db/repositories/sessions.js";
 
 const COOKIE_NAME = process.env.AUTH_COOKIE_NAME || "hc_session";
 const hash = (value) => crypto.createHash("sha256").update(value).digest("hex");
 const sign = (value) => crypto.createHmac("sha256", process.env.SESSION_SECRET).update(value).digest("base64url");
 
+export const sessionCookieName = COOKIE_NAME;
+export const sessionTokenHash = hash;
 export const packSessionCookie = (token) => `${token}.${sign(token)}`;
 
 export function readSessionToken(req) {
@@ -29,11 +32,16 @@ export async function requireAuth(req, res, next) {
     if (!token) return res.status(401).json({ ok: false, message: "Autenticación requerida" });
     const session = await findActiveSession(hash(token));
     if (!session) return res.status(401).json({ ok: false, message: "Sesión no válida o caducada" });
-    req.auth = { userId: session.user_id, role: session.role, sessionId: session.id, athleteProfileId: session.active_profile_id, token };
+    req.auth = { userId: session.user_id, role: session.role, sessionId: session.id, athleteProfileId: session.active_profile_id };
     void touchSession(session.id);
     next();
   } catch (error) { next(error); }
 }
 
-export const sessionTokenHash = hash;
-export const sessionCookieName = COOKIE_NAME;
+export const loginRateLimiter = rateLimit({
+  windowMs: Number(process.env.AUTH_LOGIN_WINDOW_MINUTES || 15) * 60_000,
+  limit: Number(process.env.AUTH_LOGIN_MAX_ATTEMPTS || 5),
+  standardHeaders: "draft-7", legacyHeaders: false,
+  message: { ok: false, message: "Demasiados intentos. Inténtalo más tarde." },
+  keyGenerator: (req) => `${ipKeyGenerator(req.ip)}:${String(req.body?.email || "").trim().toLowerCase()}`,
+});

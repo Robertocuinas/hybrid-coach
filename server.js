@@ -17,9 +17,8 @@ import { fileURLToPath } from "node:url";
 import { checkDatabaseStatus } from "./server/db/status.js";
 import authRoutes from "./server/routes/auth.js";
 import apiRoutes from "./server/routes/api.js";
-import { requireAuth } from "./server/middleware/authenticate.js";
+import { loginRateLimiter, requireAuth } from "./server/middleware/auth.js";
 import { requireTrustedOrigin, securityHeaders } from "./server/middleware/security.js";
-import { rateLimit } from "express-rate-limit";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -43,15 +42,10 @@ app.use(express.json({ limit: "2mb" }));
 app.disable("x-powered-by");
 app.use(securityHeaders);
 app.use(requireTrustedOrigin);
-const loginLimiter = rateLimit({
-  windowMs: Number(process.env.AUTH_LOGIN_WINDOW_MINUTES || 15) * 60_000,
-  limit: Number(process.env.AUTH_LOGIN_MAX_ATTEMPTS || 5),
-  standardHeaders: "draft-7", legacyHeaders: false,
-  message: { ok: false, message: "Demasiados intentos. Inténtalo más tarde." },
-  keyGenerator: (req) => `${req.ip}:${String(req.body?.email || "").trim().toLowerCase()}`,
-});
-app.use("/api/auth/login", loginLimiter);
+app.use("/api/auth/login", loginRateLimiter);
 app.use("/api/auth", authRoutes);
+app.use("/auth/login", loginRateLimiter);
+app.use("/auth", authRoutes);
 app.use("/api", apiRoutes);
 
 /* La ruta heredada /api/entrar devuelve 410; no existe fallback de contraseña compartida. */

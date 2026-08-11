@@ -5,7 +5,7 @@ import { createPlanVersion, activarPlan, getActivePlan, listWeeksWithSessions } 
 import { createCompletedSession, addRunningDetail, addStrengthSession, addStrengthSet, findOrCreateExercise, listRoutines, addRoutineEntry } from "../db/repositories/completedSessions.js";
 import { upsertRecoveryLog, listRecoveryByProfile, addFeedbackLog, listFeedbackByProfile } from "../db/repositories/recovery.js";
 import { setNutritionTarget, listNutritionTargets, addMealOption, listMealCatalog } from "../db/repositories/nutrition.js";
-import { requireAuth } from "../middleware/authenticate.js";
+import { requireAuth } from "../middleware/auth.js";
 import { requireActiveProfile, ownedProfile, requireAdmin } from "../middleware/authorization.js";
 import { assertPlanInput } from "../domain/training/index.js";
 
@@ -24,7 +24,9 @@ router.patch("/profile", ...active(async (req, res, next) => { try { res.json({ 
 router.get("/profile/injuries", ...active(async (req, res, next) => { try { res.json({ ok: true, injuries: await listActiveInjuries(profileId(req)) }); } catch (e) { next(e); } }));
 router.post("/profile/injuries", ...active(async (req, res, next) => { try { res.status(201).json({ ok: true, injury: await addInjury(profileId(req), req.body || {}) }); } catch (e) { next(e); } }));
 
-router.get("/plan", ...active(async (req, res, next) => { try { const plan = await getActivePlan(profileId(req)); res.json({ ok: true, plan, weeks: plan ? await listWeeksWithSessions(plan.id) : [] }); } catch (e) { next(e); } }));
+const readActivePlan = async (req, res, next) => { try { const plan = await getActivePlan(profileId(req)); res.json({ ok: true, plan, weeks: plan ? await listWeeksWithSessions(plan.id) : [] }); } catch (e) { next(e); } };
+router.get("/plan", ...active(readActivePlan));
+router.get("/plans", ...active(readActivePlan));
 router.post("/plan", ...active(async (req, res, next) => { try { assertPlanInput(req.body?.profile || req.body); const plan = await createPlanVersion(profileId(req), req.body || {}); res.status(201).json({ ok: true, plan: await activarPlan(profileId(req), plan.id) }); } catch (e) { next(e); } }));
 
 router.get("/sessions", ...active(async (req, res, next) => { try { const { rows } = await pool.query(`SELECT cs.*, rs.id AS running_id, rs.distancia_km, rs.duracion_min, rs.rpe, rs.dolor, rs.notas, ss.id AS strength_id, ss.codigo_sesion FROM completed_sessions cs LEFT JOIN running_sessions rs ON rs.completed_session_id=cs.id LEFT JOIN strength_sessions ss ON ss.completed_session_id=cs.id WHERE cs.athlete_profile_id=$1 AND cs.fecha BETWEEN COALESCE($2::date, '-infinity') AND COALESCE($3::date, 'infinity') ORDER BY cs.fecha DESC`, [profileId(req), req.query.from || null, req.query.to || null]); res.json({ ok: true, sessions: rows }); } catch (e) { next(e); } }));
