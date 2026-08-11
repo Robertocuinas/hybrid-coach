@@ -141,7 +141,7 @@ export async function up(pgm) {
     athlete_profile_id uuid NOT NULL REFERENCES athlete_profiles(id) ON DELETE CASCADE,
     fecha date,
     semana int,
-    plan_original jsonb,
+    plan_original text,
     cambio jsonb,
     motivo text,
     origen plan_modification_origen,

@@ -11,14 +11,25 @@ import { TRANSFORMED_FILE, readJson, logStep } from "./lib/util.js";
 
 const EMAIL_INICIAL = process.env.MIGRATION_USER_EMAIL || "atleta@hybridcoach.local";
 
-function cols(obj, keys) { return keys.map((k) => obj[k] ?? null); }
+/* El driver `pg` serializa un array de JS como array de PostgreSQL ({a,b}), no
+   como JSON — lo que rompe cualquier columna jsonb que reciba un array. Estas
+   columnas se serializan explícitamente para que jsonb reciba JSON válido. */
+const COLUMNAS_JSONB = new Set(["cargas", "riesgo_causas", "cambio", "cambio_propuesto"]);
+
+function cols(obj, keys) {
+  return keys.map((k) => {
+    const v = obj[k] ?? null;
+    if (v !== null && COLUMNAS_JSONB.has(k)) return JSON.stringify(v);
+    return v;
+  });
+}
 
 async function upsert(client, tabla, filas, columnas) {
   if (!filas.length) return 0;
   const listaCols = columnas.join(", ");
   const updateSet = columnas.filter((c) => c !== "id").map((c) => `${c} = EXCLUDED.${c}`).join(", ");
+  const placeholders = columnas.map((_, i) => `$${i + 1}`).join(", ");
   for (const fila of filas) {
-    const placeholders = columnas.map((_, i) => `$${i + 1}`).join(", ");
     await client.query(
       `INSERT INTO ${tabla} (${listaCols}) VALUES (${placeholders})
        ON CONFLICT (id) DO UPDATE SET ${updateSet};`,
@@ -43,14 +54,24 @@ export async function run() {
 
     /* legacy_id_map es temporal: existe solo mientras dura la migración y se
        borra al cerrar la Fase 3 (docs/03-modelo-datos.md §9). Por eso se crea
-       aquí y no en una migración de esquema. */
+       aquí y no en una migración de esquema.
+
+       La PK es la tupla completa porque la correspondencia no es 1:1 en
+       ninguno de los dos sentidos:
+         - un mismo old_id puede repetirse entre registros distintos (la app
+           genera `Date.now()`, que colisiona; docs/06-migracion.md §5),
+         - un mismo new_id puede tener varios orígenes, porque un perfil que
+           existía en dos dispositivos se fusiona en una sola fila.
+       Con la clave en solo uno de los lados se colapsaban filas y se perdía
+       la traza en silencio. */
     await client.query(`CREATE TABLE IF NOT EXISTS legacy_id_map (
       source text NOT NULL,
       tabla text NOT NULL,
       old_id text NOT NULL,
       new_id uuid NOT NULL,
-      PRIMARY KEY (source, tabla, old_id)
+      PRIMARY KEY (source, tabla, old_id, new_id)
     );`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_legacy_id_map_new ON legacy_id_map (new_id);`);
 
     /* No hay autenticación real todavía (Fase 3): se crea un único usuario
        propietario al que cuelgan todos los perfiles migrados. */
@@ -118,7 +139,7 @@ export async function run() {
     for (const m of data.legacy_id_map) {
       await client.query(
         `INSERT INTO legacy_id_map (source, tabla, old_id, new_id) VALUES ($1,$2,$3,$4)
-         ON CONFLICT (source, tabla, old_id) DO UPDATE SET new_id = EXCLUDED.new_id;`,
+         ON CONFLICT (source, tabla, old_id, new_id) DO NOTHING;`,
         [m.source, m.table, m.legacy_id, m.new_id]
       );
     }

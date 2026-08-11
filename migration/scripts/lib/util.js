@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 export const ROOT = path.resolve(import.meta.dirname, "..", "..", "..");
@@ -111,4 +112,25 @@ export function inRange(value, min, max) {
 
 export function logStep(nombre) {
   console.log(`\n=== Paso ${nombre} ===`);
+}
+
+/* UUID v5 (determinista) a partir de la clave natural de cada entidad.
+
+   Es lo que hace que la migración sea reejecutable: si los IDs fueran
+   aleatorios, volver a lanzar el paso 03 generaría IDs nuevos y la carga
+   insertaría filas duplicadas en vez de actualizar las existentes. Derivándolos
+   de la clave natural (docs/06-migracion.md §6), el mismo registro de origen
+   produce siempre el mismo UUID, y `ON CONFLICT (id)` se comporta como un
+   UPSERT sobre clave natural — que es justo lo que exige §1. */
+const NAMESPACE = "6f2b1a54-3c47-4f0e-9a1d-2b8e5c7f04a9"; // fijo para este proyecto
+
+export function idDeterminista(tabla, ...partes) {
+  const nombre = [tabla, ...partes.map((p) => (p === null || p === undefined ? "" : String(p)))].join("|");
+  const nsBytes = Buffer.from(NAMESPACE.replace(/-/g, ""), "hex");
+  const hash = createHash("sha1").update(Buffer.concat([nsBytes, Buffer.from(nombre, "utf8")])).digest();
+  const b = Buffer.from(hash.subarray(0, 16));
+  b[6] = (b[6] & 0x0f) | 0x50; // versión 5
+  b[8] = (b[8] & 0x3f) | 0x80; // variante RFC 4122
+  const h = b.toString("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
