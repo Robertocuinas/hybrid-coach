@@ -12,9 +12,15 @@ export class EmbeddingProvider {
   dimensions() { throw new Error("EmbeddingProvider.dimensions() no implementado"); }
 }
 
+/**
+ * rerank() devuelve [{ index, score }] ordenado de más a menos relevante, donde
+ * `index` es la posición en el array `documents` recibido. El score debe estar
+ * en 0-1 y ser comparable entre consultas: sobre él se aplica RAG_MIN_SCORE
+ * para decidir "no hay evidencia suficiente" (docs/05-rag.md §8).
+ */
 export class RerankProvider {
   async rerank(_query, _documents, _topN) { throw new Error("RerankProvider.rerank() no implementado"); }
-  cost() { throw new Error("RerankProvider.cost() no implementado"); }
+  capabilities() { throw new Error("RerankProvider.capabilities() no implementado"); }
 }
 
 export class ProviderError extends Error {
@@ -33,6 +39,16 @@ export function assertLLMProvider(provider) {
   const capabilities = provider.capabilities();
   for (const key of ["reliableStructuredOutput", "nativeJsonMode", "promptCaching", "maxContextTokens", "supportsSystemRole"]) {
     if (!(key in capabilities)) throw new TypeError(`Falta capability LLM: ${key}`);
+  }
+  return provider;
+}
+
+export function assertEmbeddingProvider(provider, expectedDimensions = 1024) {
+  if (!provider || typeof provider.embed !== "function" || typeof provider.dimensions !== "function") {
+    throw new TypeError("El adaptador no cumple EmbeddingProvider { embed(), dimensions() }");
+  }
+  if (provider.dimensions() !== expectedDimensions) {
+    throw new TypeError(`EmbeddingProvider debe producir ${expectedDimensions} dimensiones`);
   }
   return provider;
 }

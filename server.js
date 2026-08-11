@@ -15,6 +15,7 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkDatabaseStatus } from "./server/db/status.js";
+import pool from "./server/db/pool.js";
 import authRoutes from "./server/routes/auth.js";
 import apiRoutes from "./server/routes/api.js";
 import adminRoutes from "./server/routes/admin.js";
@@ -22,7 +23,8 @@ import syncRoutes from "./server/routes/sync.js";
 import { startReconciliationJob } from "./server/jobs/reconciliation.js";
 import { loginRateLimiter, requireAuth } from "./server/middleware/auth.js";
 import { requireTrustedOrigin, securityHeaders } from "./server/middleware/security.js";
-import { createLLMProvider } from "./server/ai/factory.js";
+import { createEmbeddingProvider, createLLMProvider, readEmbeddingConfig } from "./server/ai/factory.js";
+import { getEmbeddingStatus, validateEmbeddingStartup } from "./server/embeddings/index-state.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -40,11 +42,31 @@ if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
   throw new Error("SESSION_SECRET es obligatoria y debe tener al menos 32 caracteres.");
 }
 const llmProvider = createLLMProvider(process.env);
+const embeddingConfig = readEmbeddingConfig(process.env);
+const embeddingProvider = createEmbeddingProvider(process.env);
+if (embeddingConfig.enabled && !process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL es obligatoria cuando los embeddings están activados.");
+}
+await validateEmbeddingStartup(embeddingConfig, pool);
 
 app.use(express.json({ limit: "2mb" }));
 app.disable("x-powered-by");
 app.use(securityHeaders);
 app.use(requireTrustedOrigin);
+app.get("/api/estado", async (_req, res) => {
+  const dbStatus = await checkDatabaseStatus();
+  const embeddings = await getEmbeddingStatus(embeddingConfig, pool);
+  res.json({
+    ok: true,
+    requiereLogin: true,
+    ia: !!llmProvider,
+    hoja: !!(APPS_SCRIPT_URL || (SHEET_ID && GOOGLE_SERVICE_ACCOUNT_JSON)),
+    strava: !!(STRAVA_CLIENT_ID && STRAVA_CLIENT_SECRET),
+    db: dbStatus.db,
+    pgvector: dbStatus.pgvector,
+    embeddings,
+  });
+});
 app.use("/api/auth/login", loginRateLimiter);
 app.use("/api/auth", authRoutes);
 app.use("/auth/login", loginRateLimiter);
@@ -57,19 +79,6 @@ app.use("/api", apiRoutes);
 
 /* La ruta heredada /api/entrar devuelve 410; no existe fallback de contraseña compartida. */
 app.post("/api/entrar", (_req, res) => res.status(410).json({ ok: false, message: "Usa /api/auth/login" }));
-
-app.get("/api/estado", async (req, res) => {
-  const dbStatus = await checkDatabaseStatus();
-  res.json({
-    ok: true,
-    requiereLogin: true,
-    ia: !!llmProvider,
-    hoja: !!(APPS_SCRIPT_URL || (SHEET_ID && GOOGLE_SERVICE_ACCOUNT_JSON)),
-    strava: !!(STRAVA_CLIENT_ID && STRAVA_CLIENT_SECRET),
-    db: dbStatus.db,
-    pgvector: dbStatus.pgvector,
-  });
-});
 
 /* ============================================================
    IA — la clave se queda aquí
@@ -287,6 +296,7 @@ app.get("*", (_req, res) => res.sendFile(path.join(__dirname, "public", "index.h
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Hybrid Coach escuchando en el puerto ${PORT}`);
   console.log(`  IA:     ${llmProvider ? `${process.env.LLM_PROVIDER}/${process.env.LLM_MODEL}` : "sin proveedor (la app funciona igual)"}`);
+  console.log(`  Embed:  ${embeddingProvider ? `${embeddingConfig.provider}/${embeddingConfig.model} (${embeddingConfig.dimensions}d)` : "desactivados"}`);
   console.log(`  Hoja:   ${APPS_SCRIPT_URL ? "vía Apps Script" : SHEET_ID && GOOGLE_SERVICE_ACCOUNT_JSON ? "vía cuenta de servicio" : "sin configurar"}`);
   console.log(`  Strava: ${STRAVA_CLIENT_ID ? "configurado" : "sin configurar"}`);
   console.log("  Acceso: sesiones autenticadas");

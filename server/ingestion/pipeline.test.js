@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { PGlite } from "@electric-sql/pglite";
+import { vector } from "@electric-sql/pglite-pgvector";
 import { ingerirPDF, IngestaError, esPDF, MAX_BYTES } from "./pipeline.js";
 import { storageKeyForHash, sha256 } from "../integrations/storage/r2.js";
 
@@ -93,6 +94,23 @@ async function baseDeDatos() {
   return db;
 }
 
+async function baseDeDatosConEmbeddings() {
+  const db = new PGlite({ extensions: { vector } });
+  await db.exec(`CREATE EXTENSION IF NOT EXISTS vector; ${ESQUEMA}
+    CREATE TABLE chunk_embeddings (
+      id uuid PRIMARY KEY DEFAULT gen_random_uuid(), document_chunk_id uuid REFERENCES document_chunks(id),
+      provider text, model text, dimensions int, embedding vector(1024), created_at timestamptz DEFAULT now()
+    );
+    CREATE UNIQUE INDEX idx_chunk_embeddings_generation ON chunk_embeddings(document_chunk_id,provider,model,dimensions);
+    CREATE TABLE embedding_index_state (
+      provider text, model text, dimensions int, status text, indexed_chunks int, total_chunks int,
+      active boolean, error text, updated_at timestamptz DEFAULT now(), PRIMARY KEY(provider,model,dimensions)
+    );
+    CREATE UNIQUE INDEX idx_embedding_index_one_active ON embedding_index_state(active) WHERE active=true;
+  `);
+  return db;
+}
+
 test("un PDF válido entra con revisado=false, chunks y original en el almacén", async () => {
   const db = await baseDeDatos();
   const storage = almacenFalso();
@@ -124,6 +142,30 @@ test("un PDF válido entra con revisado=false, chunks y original en el almacén"
   assert.equal(doc.storage_key, storageKeyForHash(sha256(PDF_MINIMO)));
   assert.ok(storage.objetos.has(doc.storage_key));
   assert.ok(storage.objetos.get(doc.storage_key).equals(PDF_MINIMO));
+  await db.close();
+});
+
+test("la ingesta vectoriza todos los chunks por lotes y activa el índice", async () => {
+  const db = await baseDeDatosConEmbeddings();
+  const calls = [];
+  const embeddingProvider = {
+    provider: "openai-compatible", model: "bge-m3", dimensions: () => 1024,
+    async embed(texts, { inputType }) {
+      calls.push({ size: texts.length, inputType });
+      return { vectors: texts.map(() => Array(1024).fill(0.5)), dimensions: 1024, usage: { tokens: texts.length } };
+    },
+  };
+  const result = await ingerirPDF(PDF_MINIMO, {
+    db, storage: almacenFalso(), repo: repoSobre(db), provider: proveedorFalso(FICHA), embeddingProvider,
+    extraer: extraccionFalsa(), nombre: "vectorizado.pdf",
+  });
+  const embedded = await db.query(`SELECT count(*)::int total, min(dimensions)::int dimensions FROM chunk_embeddings;`);
+  const active = await db.query(`SELECT model,status,active FROM embedding_index_state WHERE active=true;`);
+  assert.equal(embedded.rows[0].total, result.chunks);
+  assert.equal(embedded.rows[0].dimensions, 1024);
+  assert.equal(result.embeddings, result.chunks);
+  assert.ok(calls.every((call) => call.inputType === "document" && call.size <= 10));
+  assert.deepEqual(active.rows[0], { model: "bge-m3", status: "active", active: true });
   await db.close();
 });
 

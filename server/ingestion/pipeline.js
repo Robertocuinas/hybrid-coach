@@ -7,6 +7,8 @@
 import { sha256 } from "../integrations/storage/r2.js";
 import { extraerDocumento, analizarFicha } from "../integrations/pdf-extractor.js";
 import { trocear } from "./chunker.js";
+import { guardarEmbeddings, vectorizarChunksPorLotes } from "./embedder.js";
+import { activateIndex, refreshIndexProgress } from "../embeddings/index-state.js";
 
 export const MAX_BYTES = Number(process.env.PDF_MAX_BYTES || 50 * 1024 * 1024);
 
@@ -25,12 +27,12 @@ export class IngestaError extends Error {
 
 /**
  * @param buffer   bytes del PDF
- * @param deps     { db, storage, provider, repo, nombre, userId, extraer }
+ * @param deps     { db, storage, provider, embeddingProvider, repo, nombre, userId, extraer }
  *
  * `extraer` se inyecta para poder probar el pipeline sin depender de Python;
  * en producción siempre es extraerDocumento().
  */
-export async function ingerirPDF(buffer, { db, storage, provider, repo, nombre = "documento.pdf", userId = null, extraer = extraerDocumento }) {
+export async function ingerirPDF(buffer, { db, storage, provider, embeddingProvider = null, repo, nombre = "documento.pdf", userId = null, extraer = extraerDocumento }) {
   if (!esPDF(buffer)) throw new IngestaError(415, "El archivo no es un PDF (no empieza por %PDF-)");
   if (buffer.length > MAX_BYTES) throw new IngestaError(413, `El PDF supera el límite de ${Math.round(MAX_BYTES / 1024 / 1024)} MB`);
   if (!storage) throw new IngestaError(503, "El almacenamiento R2 no está configurado en este servidor");
@@ -67,11 +69,25 @@ export async function ingerirPDF(buffer, { db, storage, provider, repo, nombre =
   const chunks = trocear(extraido.parrafos);
   if (!chunks.length) throw new IngestaError(422, "No se pudo trocear el documento: no se extrajo texto aprovechable");
 
-  // 6. Original a R2. Se sube antes de insertar para no dejar en la base de
+  // 6. Embeddings por lotes antes de abrir una transacción. Si no están
+  // configurados, el PDF entra pendiente y el reindexado lo completará.
+  let vectorizados = null;
+  let avisoEmbedding = null;
+  if (embeddingProvider) {
+    try {
+      vectorizados = await vectorizarChunksPorLotes(chunks, { provider: embeddingProvider, inputType: "document" });
+    } catch (error) {
+      throw new IngestaError(502, `No se pudieron generar los embeddings: ${error.message}`);
+    }
+  } else {
+    avisoEmbedding = "Documento guardado sin embeddings: configura el proveedor y ejecuta npm run embeddings:reindex.";
+  }
+
+  // 7. Original a R2. Se sube antes de insertar para no dejar en la base de
   //    datos una storage_key que apunte a un objeto que no existe.
   const storageKey = await storage.guardarPDF(buffer, hash);
 
-  // 7. Persistencia. revisado=false: no participa en retrieval hasta que un
+  // 8. Persistencia. revisado=false: no participa en retrieval hasta que un
   //    admin lo confirma (docs/05-rag.md §2.5).
   const documento = {
     titulo: ficha.titulo ?? null,
@@ -96,7 +112,22 @@ export async function ingerirPDF(buffer, { db, storage, provider, repo, nombre =
     subido_por: userId,
   };
 
-  const guardado = await repo.crearDocumentoConChunks(db, { documento, chunks });
+  const guardado = await repo.crearDocumentoConChunks(db, {
+    documento,
+    chunks,
+    onChunks: vectorizados ? async (transaction, chunkRows) => {
+      await guardarEmbeddings(transaction, {
+        ...vectorizados,
+        items: vectorizados.items.map((item, index) => ({ ...item, chunk: chunkRows[index] })),
+      });
+    } : null,
+  });
+
+  if (vectorizados) {
+    const config = { provider: vectorizados.provider, model: vectorizados.model, dimensions: vectorizados.dimensions };
+    const counts = await refreshIndexProgress(db, config);
+    if (counts.indexed_chunks === counts.total_chunks) await activateIndex(db, config);
+  }
 
   return {
     documento: guardado.documento,
@@ -105,6 +136,8 @@ export async function ingerirPDF(buffer, { db, storage, provider, repo, nombre =
     secciones: resumenSecciones(chunks),
     storageKey,
     aviso: avisoFicha,
+    avisoEmbedding,
+    embeddings: vectorizados?.items.length || 0,
   };
 }
 

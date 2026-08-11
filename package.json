@@ -8,14 +8,15 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test src/sync.test.js src/data/documentAdapter.test.js server/jobs/reconciliation.test.js server/routes/sync.persistence.test.js server/ai/providers/providers.test.js server/db/seed-biblio.test.js server/ingestion/chunker.test.js server/ingestion/pipeline.test.js server/integrations/pdf-extractor.test.js server/integrations/storage/r2.test.js",
+    "test": "node --test src/sync.test.js src/data/documentAdapter.test.js server/jobs/reconciliation.test.js server/routes/sync.persistence.test.js server/ai/providers/providers.test.js server/ai/providers/embeddings/embeddings.test.js server/db/seed-biblio.test.js server/embeddings/index-state.test.js server/ingestion/chunker.test.js server/ingestion/embedder.test.js server/ingestion/pipeline.test.js server/integrations/pdf-extractor.test.js server/integrations/storage/r2.test.js migration/scripts/reindex-embeddings.test.js",
     "build": "node build.mjs",
     "start": "node server.js",
     "dev": "node build.mjs --watch & node server.js",
     "migrate": "node-pg-migrate up --migrations-dir ./server/db/migrations",
     "migrate:down": "node-pg-migrate down --migrations-dir ./server/db/migrations",
     "migrate:data": "node migration/scripts/run.js",
-    "seed:biblio": "node server/db/seed-biblio.js"
+    "seed:biblio": "node server/db/seed-biblio.js",
+    "embeddings:reindex": "node migration/scripts/reindex-embeddings.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1107.0",
@@ -31,6 +32,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.4",
+    "@electric-sql/pglite-pgvector": "^0.0.5",
     "@electric-sql/pglite-socket": "^0.2.7",
     "csv-parse": "^6.0.0",
     "node-pg-migrate": "^7.0.0"

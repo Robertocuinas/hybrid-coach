@@ -125,30 +125,38 @@ export function addChunk(documentId, { chunkIndex, seccion, paginaInicio = null,
    sirve para nada y dejaría basura que el retrieval nunca encontraría. El
    cliente se inyecta (pool en producción, PGlite en las pruebas), igual que
    en replaceProfileState(). */
-export async function crearDocumentoConChunks(client, { documento, chunks = [] }) {
-  await client.query("BEGIN");
+export async function crearDocumentoConChunks(client, { documento, chunks = [], onChunks = null }) {
+  const db = typeof client.connect === "function" ? await client.connect() : client;
+  const release = typeof db.release === "function" ? () => db.release() : () => {};
+  await db.query("BEGIN");
   try {
     const columnas = Object.keys(documento);
     const marcadores = columnas.map((_, i) => `$${i + 1}`).join(", ");
-    const { rows } = await client.query(
+    const { rows } = await db.query(
       `INSERT INTO documents (${columnas.join(", ")}) VALUES (${marcadores}) RETURNING *;`,
       Object.values(documento)
     );
     const creado = rows[0];
+    const chunksCreados = [];
 
     for (const chunk of chunks) {
-      await client.query(
+      const insertado = await db.query(
         `INSERT INTO document_chunks (document_id, chunk_index, seccion, pagina_inicio, pagina_fin, texto, num_tokens)
-         VALUES ($1, $2, $3, $4, $5, $6, $7);`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;`,
         [creado.id, chunk.chunk_index, chunk.seccion, chunk.pagina_inicio, chunk.pagina_fin, chunk.texto, chunk.num_tokens]
       );
+      chunksCreados.push(insertado.rows[0]);
     }
 
-    await client.query("COMMIT");
-    return { documento: creado, chunks: chunks.length };
+    if (onChunks) await onChunks(db, chunksCreados);
+
+    await db.query("COMMIT");
+    return { documento: creado, chunks: chunks.length, chunkRows: chunksCreados };
   } catch (error) {
-    await client.query("ROLLBACK");
+    await db.query("ROLLBACK");
     throw error;
+  } finally {
+    release();
   }
 }
 
@@ -188,20 +196,27 @@ export async function fullTextSearch(consulta, limit = 20) {
 export function addEmbedding(chunkId, { provider, model, dimensions, embedding }) {
   return pool.query(
     `INSERT INTO chunk_embeddings (document_chunk_id, provider, model, dimensions, embedding)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id;`,
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (document_chunk_id, provider, model, dimensions)
+     DO UPDATE SET embedding=EXCLUDED.embedding, created_at=now()
+     RETURNING id;`,
     [chunkId, provider, model, dimensions, comoVector(embedding)]
   ).then((r) => r.rows[0]);
 }
 
 /* Retrieval vectorial vía HNSW. `<=>` es distancia coseno: menor es más similar. */
-export async function vectorSearch(embedding, limit = 8) {
-  const { rows } = await pool.query(
-    `SELECT dc.*, ce.embedding <=> $1 AS distancia
+export async function vectorSearch(embedding, { provider, model, dimensions = 1024, limit = 8 } = {}, db = pool) {
+  if (!provider || !model) throw new Error("vectorSearch requiere provider y model del índice activo");
+  const safeLimit = Math.min(100, Math.max(1, Number(limit) || 8));
+  const { rows } = await db.query(
+    `SELECT dc.*, d.titulo, d.autores, ce.embedding <=> $1 AS distancia
        FROM chunk_embeddings ce
        JOIN document_chunks dc ON dc.id = ce.document_chunk_id
+       JOIN documents d ON d.id = dc.document_id
+      WHERE ce.provider=$2 AND ce.model=$3 AND ce.dimensions=$4 AND d.revisado=true
       ORDER BY ce.embedding <=> $1
-      LIMIT $2;`,
-    [comoVector(embedding), limit]
+      LIMIT $5;`,
+    [comoVector(embedding), provider, model, dimensions, safeLimit]
   );
   return rows;
 }

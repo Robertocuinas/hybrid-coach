@@ -7,7 +7,7 @@ import * as documentsRepo from "../db/repositories/documents.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/authorization.js";
 import { createStorageClient } from "../integrations/storage/r2.js";
-import { createLLMProvider } from "../ai/factory.js";
+import { createEmbeddingProvider, createLLMProvider } from "../ai/factory.js";
 import { ingerirPDF, IngestaError, MAX_BYTES } from "../ingestion/pipeline.js";
 
 const router = express.Router();
@@ -31,6 +31,15 @@ const getProvider = () => {
   }
   return provider;
 };
+let embeddingProvider = null;
+let embeddingProviderIniciado = false;
+const getEmbeddingProvider = () => {
+  if (!embeddingProviderIniciado) {
+    embeddingProvider = createEmbeddingProvider();
+    embeddingProviderIniciado = true;
+  }
+  return embeddingProvider;
+};
 
 /* El PDF llega como cuerpo binario en bruto, no como multipart: no hace falta
    una dependencia de parseo para subir UN archivo, y así no existe siquiera
@@ -53,6 +62,7 @@ router.post("/documents/upload", cuerpoPDF, async (req, res, next) => {
       db: pool,
       storage: getStorage(),
       provider: getProvider(),
+      embeddingProvider: getEmbeddingProvider(),
       repo: documentsRepo,
       nombre: nombreSeguro(req),
       userId: req.auth.userId,
@@ -94,7 +104,7 @@ router.get("/documents/:id/pdf", async (req, res, next) => {
 });
 
 router.get("/storage/estado", (_req, res) => {
-  res.json({ ok: true, r2: !!getStorage(), ia: !!getProvider(), maxBytes: MAX_BYTES });
+  res.json({ ok: true, r2: !!getStorage(), ia: !!getProvider(), embeddings: !!getEmbeddingProvider(), maxBytes: MAX_BYTES });
 });
 
 export default router;
