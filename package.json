@@ -13,15 +13,10 @@
     "dev": "node build.mjs --watch & node server.js",
     "migrate": "node-pg-migrate up --migrations ./server/db/migrations",
     "migrate:down": "node-pg-migrate down --migrations ./server/db/migrations",
-    "migration:parse-localstorage": "node migration/scripts/01-parse-localstorage.js",
-    "migration:parse-sheets": "node migration/scripts/02-parse-sheets.js",
-    "migration:transform": "node migration/scripts/03-transform.js",
-    "migration:load": "node migration/scripts/04-load.js",
-    "migration:verify": "node migration/scripts/05-verify.js"
+    "migrate:data": "node migration/scripts/run.js"
   },
   "dependencies": {
     "@node-rs/argon2": "^2.0.2",
-    "bcryptjs": "^3.0.3",
     "esbuild": "^0.24.2",
     "express": "^4.21.2",
     "express-rate-limit": "^8.6.2",
@@ -32,6 +27,8 @@
     "recharts": "^2.15.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4",
+    "@electric-sql/pglite-socket": "^0.2.7",
     "csv-parse": "^6.0.0",
     "node-pg-migrate": "^7.0.0"
   }
