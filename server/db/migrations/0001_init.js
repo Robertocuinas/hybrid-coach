@@ -14,17 +14,17 @@ const ENUMS = [
   ["routine_origen", ["generada", "editada"]],
 ];
 
-export async function up({ context: query }) {
-  await query("CREATE EXTENSION IF NOT EXISTS pgcrypto;");
-  await query("CREATE EXTENSION IF NOT EXISTS vector;");
+export async function up(pgm) {
+  pgm.sql("CREATE EXTENSION IF NOT EXISTS pgcrypto;");
+  pgm.sql("CREATE EXTENSION IF NOT EXISTS vector;");
 
   for (const [nombre, valores] of ENUMS) {
-    await query(`DO $$ BEGIN
+    pgm.sql(`DO $$ BEGIN
       CREATE TYPE ${nombre} AS ENUM (${valores.map((v) => `'${v}'`).join(", ")});
     EXCEPTION WHEN duplicate_object THEN null; END $$;`);
   }
 
-  await query(`CREATE TABLE IF NOT EXISTS users (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS users (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     email text UNIQUE NOT NULL,
     password_hash text,
@@ -32,7 +32,7 @@ export async function up({ context: query }) {
     created_at timestamptz NOT NULL DEFAULT now()
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS athlete_profiles (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS athlete_profiles (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     nombre text,
@@ -73,7 +73,7 @@ export async function up({ context: query }) {
     updated_at timestamptz NOT NULL DEFAULT now()
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS injuries (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS injuries (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     athlete_profile_id uuid NOT NULL REFERENCES athlete_profiles(id) ON DELETE CASCADE,
     zona text,
@@ -83,7 +83,7 @@ export async function up({ context: query }) {
     created_at timestamptz NOT NULL DEFAULT now()
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS training_plans (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS training_plans (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     athlete_profile_id uuid NOT NULL REFERENCES athlete_profiles(id) ON DELETE CASCADE,
     version int NOT NULL DEFAULT 1,
@@ -100,7 +100,7 @@ export async function up({ context: query }) {
     generado_en timestamptz NOT NULL DEFAULT now()
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS training_weeks (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS training_weeks (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     training_plan_id uuid NOT NULL REFERENCES training_plans(id) ON DELETE CASCADE,
     numero_semana int NOT NULL,
@@ -112,7 +112,7 @@ export async function up({ context: query }) {
     UNIQUE (training_plan_id, numero_semana)
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS planned_sessions (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS planned_sessions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     training_week_id uuid NOT NULL REFERENCES training_weeks(id) ON DELETE CASCADE,
     dia_semana int,
@@ -123,7 +123,7 @@ export async function up({ context: query }) {
     intensidad text
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS plan_decisions (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS plan_decisions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     training_plan_id uuid NOT NULL REFERENCES training_plans(id) ON DELETE CASCADE,
     titulo text,
@@ -136,7 +136,7 @@ export async function up({ context: query }) {
     created_at timestamptz NOT NULL DEFAULT now()
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS plan_modifications (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS plan_modifications (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     athlete_profile_id uuid NOT NULL REFERENCES athlete_profiles(id) ON DELETE CASCADE,
     fecha date,
@@ -148,7 +148,7 @@ export async function up({ context: query }) {
     created_at timestamptz NOT NULL DEFAULT now()
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS availability (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS availability (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     athlete_profile_id uuid NOT NULL REFERENCES athlete_profiles(id) ON DELETE CASCADE,
     vigente_desde date,
@@ -158,7 +158,7 @@ export async function up({ context: query }) {
     min_finde int
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS completed_sessions (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS completed_sessions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     athlete_profile_id uuid NOT NULL REFERENCES athlete_profiles(id) ON DELETE CASCADE,
     planned_session_id uuid REFERENCES planned_sessions(id) ON DELETE SET NULL,
@@ -168,7 +168,7 @@ export async function up({ context: query }) {
     created_at timestamptz NOT NULL DEFAULT now()
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS running_sessions (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS running_sessions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     completed_session_id uuid NOT NULL REFERENCES completed_sessions(id) ON DELETE CASCADE,
     codigo_sesion text,
@@ -186,13 +186,13 @@ export async function up({ context: query }) {
     external_id text
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS strength_sessions (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS strength_sessions (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     completed_session_id uuid NOT NULL REFERENCES completed_sessions(id) ON DELETE CASCADE,
     codigo_sesion text
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS strength_exercises (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS strength_exercises (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     nombre text NOT NULL,
     grupo_muscular text,
@@ -201,7 +201,7 @@ export async function up({ context: query }) {
     athlete_profile_id uuid REFERENCES athlete_profiles(id) ON DELETE CASCADE
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS strength_sets (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS strength_sets (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     strength_session_id uuid NOT NULL REFERENCES strength_sessions(id) ON DELETE CASCADE,
     strength_exercise_id uuid NOT NULL REFERENCES strength_exercises(id) ON DELETE CASCADE,
@@ -213,7 +213,7 @@ export async function up({ context: query }) {
     created_at timestamptz NOT NULL DEFAULT now()
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS routines (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS routines (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     athlete_profile_id uuid NOT NULL REFERENCES athlete_profiles(id) ON DELETE CASCADE,
     codigo_sesion text,
@@ -227,7 +227,7 @@ export async function up({ context: query }) {
     origen routine_origen
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS recovery_logs (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS recovery_logs (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     athlete_profile_id uuid NOT NULL REFERENCES athlete_profiles(id) ON DELETE CASCADE,
     fecha date,
@@ -240,7 +240,7 @@ export async function up({ context: query }) {
     dolor numeric
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS feedback_logs (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS feedback_logs (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     athlete_profile_id uuid NOT NULL REFERENCES athlete_profiles(id) ON DELETE CASCADE,
     fecha date,
@@ -256,7 +256,7 @@ export async function up({ context: query }) {
     created_at timestamptz NOT NULL DEFAULT now()
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS documents (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS documents (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     titulo text,
     autores text,
@@ -281,7 +281,7 @@ export async function up({ context: query }) {
     created_at timestamptz NOT NULL DEFAULT now()
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS document_chunks (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS document_chunks (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     document_id uuid NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     chunk_index int,
@@ -293,7 +293,7 @@ export async function up({ context: query }) {
     tsv tsvector GENERATED ALWAYS AS (to_tsvector('english', coalesce(texto, ''))) STORED
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS chunk_embeddings (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS chunk_embeddings (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     document_chunk_id uuid NOT NULL REFERENCES document_chunks(id) ON DELETE CASCADE,
     provider text,
@@ -303,7 +303,7 @@ export async function up({ context: query }) {
     created_at timestamptz NOT NULL DEFAULT now()
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS plan_decision_citations (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS plan_decision_citations (
     plan_decision_id uuid NOT NULL REFERENCES plan_decisions(id) ON DELETE CASCADE,
     document_chunk_id uuid NOT NULL REFERENCES document_chunks(id) ON DELETE CASCADE,
     similarity_score real,
@@ -311,7 +311,7 @@ export async function up({ context: query }) {
     PRIMARY KEY (plan_decision_id, document_chunk_id)
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS ai_recommendations (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS ai_recommendations (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     athlete_profile_id uuid NOT NULL REFERENCES athlete_profiles(id) ON DELETE CASCADE,
     origen text,
@@ -324,7 +324,7 @@ export async function up({ context: query }) {
     created_at timestamptz NOT NULL DEFAULT now()
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS conversations (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS conversations (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     athlete_profile_id uuid NOT NULL REFERENCES athlete_profiles(id) ON DELETE CASCADE,
     titulo text,
@@ -333,7 +333,7 @@ export async function up({ context: query }) {
     ultimo_mensaje_en timestamptz
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS messages (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS messages (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_id uuid NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     role text,
@@ -343,7 +343,7 @@ export async function up({ context: query }) {
     created_at timestamptz NOT NULL DEFAULT now()
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS nutrition_targets (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS nutrition_targets (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     athlete_profile_id uuid NOT NULL REFERENCES athlete_profiles(id) ON DELETE CASCADE,
     fecha date,
@@ -361,14 +361,14 @@ export async function up({ context: query }) {
     recortado_por_suelo boolean DEFAULT false
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS meal_catalog (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS meal_catalog (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     athlete_profile_id uuid NOT NULL REFERENCES athlete_profiles(id) ON DELETE CASCADE,
     categoria text,
     opcion text
   );`);
 
-  await query(`CREATE TABLE IF NOT EXISTS strava_connections (
+  pgm.sql(`CREATE TABLE IF NOT EXISTS strava_connections (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     athlete_id_strava text,
@@ -384,74 +384,74 @@ export async function up({ context: query }) {
      índice compuesto (athlete_profile_id, <columna temporal>) para listar "lo último
      de este atleta" sin escanear la tabla entera. Donde no hay created_at se usa la
      columna temporal real de la tabla (fecha, generado_en, vigente_desde...). */
-  await query(`CREATE INDEX IF NOT EXISTS idx_athlete_profiles_user_id ON athlete_profiles(user_id);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_athlete_profiles_user_id ON athlete_profiles(user_id);`);
 
-  await query(`CREATE INDEX IF NOT EXISTS idx_injuries_profile_activa ON injuries(athlete_profile_id, activa);`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_injuries_profile_created_at ON injuries(athlete_profile_id, created_at);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_injuries_profile_activa ON injuries(athlete_profile_id, activa);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_injuries_profile_created_at ON injuries(athlete_profile_id, created_at);`);
 
-  await query(`CREATE INDEX IF NOT EXISTS idx_training_plans_profile_activo ON training_plans(athlete_profile_id, activo);`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_training_plans_profile_generado_en ON training_plans(athlete_profile_id, generado_en);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_training_plans_profile_activo ON training_plans(athlete_profile_id, activo);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_training_plans_profile_generado_en ON training_plans(athlete_profile_id, generado_en);`);
 
-  await query(`CREATE INDEX IF NOT EXISTS idx_training_weeks_plan_numero ON training_weeks(training_plan_id, numero_semana);`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_planned_sessions_week_dia ON planned_sessions(training_week_id, dia_semana);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_training_weeks_plan_numero ON training_weeks(training_plan_id, numero_semana);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_planned_sessions_week_dia ON planned_sessions(training_week_id, dia_semana);`);
 
-  await query(`CREATE INDEX IF NOT EXISTS idx_plan_modifications_profile_created_at ON plan_modifications(athlete_profile_id, created_at);`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_availability_profile_vigente_desde ON availability(athlete_profile_id, vigente_desde);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_plan_modifications_profile_created_at ON plan_modifications(athlete_profile_id, created_at);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_availability_profile_vigente_desde ON availability(athlete_profile_id, vigente_desde);`);
 
-  await query(`CREATE INDEX IF NOT EXISTS idx_completed_sessions_profile_fecha ON completed_sessions(athlete_profile_id, fecha DESC);`);
-  await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_running_sessions_external_id ON running_sessions(external_id) WHERE external_id IS NOT NULL;`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_strength_sets_exercise_created_at ON strength_sets(strength_exercise_id, created_at DESC);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_completed_sessions_profile_fecha ON completed_sessions(athlete_profile_id, fecha DESC);`);
+  pgm.sql(`CREATE UNIQUE INDEX IF NOT EXISTS idx_running_sessions_external_id ON running_sessions(external_id) WHERE external_id IS NOT NULL;`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_strength_sets_exercise_created_at ON strength_sets(strength_exercise_id, created_at DESC);`);
 
   /* Un registro de recuperación por día y atleta: la app hace upsert sobre esta
      combinación, no un insert libre. */
-  await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_recovery_logs_profile_fecha ON recovery_logs(athlete_profile_id, fecha);`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_feedback_logs_profile_fecha ON feedback_logs(athlete_profile_id, fecha DESC);`);
+  pgm.sql(`CREATE UNIQUE INDEX IF NOT EXISTS idx_recovery_logs_profile_fecha ON recovery_logs(athlete_profile_id, fecha);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_feedback_logs_profile_fecha ON feedback_logs(athlete_profile_id, fecha DESC);`);
 
-  await query(`CREATE INDEX IF NOT EXISTS idx_documents_tags ON documents USING GIN(tags);`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_document_chunks_doc_chunk ON document_chunks(document_id, chunk_index);`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_document_chunks_tsv ON document_chunks USING GIN(tsv);`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_hnsw ON chunk_embeddings USING hnsw (embedding vector_cosine_ops);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_documents_tags ON documents USING GIN(tags);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_document_chunks_doc_chunk ON document_chunks(document_id, chunk_index);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_document_chunks_tsv ON document_chunks USING GIN(tsv);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_hnsw ON chunk_embeddings USING hnsw (embedding vector_cosine_ops);`);
 
-  await query(`CREATE INDEX IF NOT EXISTS idx_ai_recommendations_profile_created_at ON ai_recommendations(athlete_profile_id, created_at);`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_conversations_profile_ultimo_mensaje ON conversations(athlete_profile_id, ultimo_mensaje_en DESC);`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_messages_conversation_created_at ON messages(conversation_id, created_at);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_ai_recommendations_profile_created_at ON ai_recommendations(athlete_profile_id, created_at);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_conversations_profile_ultimo_mensaje ON conversations(athlete_profile_id, ultimo_mensaje_en DESC);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_messages_conversation_created_at ON messages(conversation_id, created_at);`);
 
-  await query(`CREATE INDEX IF NOT EXISTS idx_nutrition_targets_profile_fecha ON nutrition_targets(athlete_profile_id, fecha);`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_strava_connections_user_id ON strava_connections(user_id);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_nutrition_targets_profile_fecha ON nutrition_targets(athlete_profile_id, fecha);`);
+  pgm.sql(`CREATE INDEX IF NOT EXISTS idx_strava_connections_user_id ON strava_connections(user_id);`);
 }
 
-export async function down({ context: query }) {
-  await query(`DROP TABLE IF EXISTS strava_connections;`);
-  await query(`DROP TABLE IF EXISTS meal_catalog;`);
-  await query(`DROP TABLE IF EXISTS nutrition_targets;`);
-  await query(`DROP TABLE IF EXISTS messages;`);
-  await query(`DROP TABLE IF EXISTS conversations;`);
-  await query(`DROP TABLE IF EXISTS ai_recommendations;`);
-  await query(`DROP TABLE IF EXISTS plan_decision_citations;`);
-  await query(`DROP TABLE IF EXISTS chunk_embeddings;`);
-  await query(`DROP TABLE IF EXISTS document_chunks;`);
-  await query(`DROP TABLE IF EXISTS documents;`);
-  await query(`DROP TABLE IF EXISTS feedback_logs;`);
-  await query(`DROP TABLE IF EXISTS recovery_logs;`);
-  await query(`DROP TABLE IF EXISTS routines;`);
-  await query(`DROP TABLE IF EXISTS strength_sets;`);
-  await query(`DROP TABLE IF EXISTS strength_exercises;`);
-  await query(`DROP TABLE IF EXISTS strength_sessions;`);
-  await query(`DROP TABLE IF EXISTS running_sessions;`);
-  await query(`DROP TABLE IF EXISTS completed_sessions;`);
-  await query(`DROP TABLE IF EXISTS availability;`);
-  await query(`DROP TABLE IF EXISTS plan_modifications;`);
-  await query(`DROP TABLE IF EXISTS plan_decisions;`);
-  await query(`DROP TABLE IF EXISTS planned_sessions;`);
-  await query(`DROP TABLE IF EXISTS training_weeks;`);
-  await query(`DROP TABLE IF EXISTS training_plans;`);
-  await query(`DROP TABLE IF EXISTS injuries;`);
-  await query(`DROP TABLE IF EXISTS athlete_profiles;`);
-  await query(`DROP TABLE IF EXISTS users;`);
+export async function down(pgm) {
+  pgm.sql(`DROP TABLE IF EXISTS strava_connections;`);
+  pgm.sql(`DROP TABLE IF EXISTS meal_catalog;`);
+  pgm.sql(`DROP TABLE IF EXISTS nutrition_targets;`);
+  pgm.sql(`DROP TABLE IF EXISTS messages;`);
+  pgm.sql(`DROP TABLE IF EXISTS conversations;`);
+  pgm.sql(`DROP TABLE IF EXISTS ai_recommendations;`);
+  pgm.sql(`DROP TABLE IF EXISTS plan_decision_citations;`);
+  pgm.sql(`DROP TABLE IF EXISTS chunk_embeddings;`);
+  pgm.sql(`DROP TABLE IF EXISTS document_chunks;`);
+  pgm.sql(`DROP TABLE IF EXISTS documents;`);
+  pgm.sql(`DROP TABLE IF EXISTS feedback_logs;`);
+  pgm.sql(`DROP TABLE IF EXISTS recovery_logs;`);
+  pgm.sql(`DROP TABLE IF EXISTS routines;`);
+  pgm.sql(`DROP TABLE IF EXISTS strength_sets;`);
+  pgm.sql(`DROP TABLE IF EXISTS strength_exercises;`);
+  pgm.sql(`DROP TABLE IF EXISTS strength_sessions;`);
+  pgm.sql(`DROP TABLE IF EXISTS running_sessions;`);
+  pgm.sql(`DROP TABLE IF EXISTS completed_sessions;`);
+  pgm.sql(`DROP TABLE IF EXISTS availability;`);
+  pgm.sql(`DROP TABLE IF EXISTS plan_modifications;`);
+  pgm.sql(`DROP TABLE IF EXISTS plan_decisions;`);
+  pgm.sql(`DROP TABLE IF EXISTS planned_sessions;`);
+  pgm.sql(`DROP TABLE IF EXISTS training_weeks;`);
+  pgm.sql(`DROP TABLE IF EXISTS training_plans;`);
+  pgm.sql(`DROP TABLE IF EXISTS injuries;`);
+  pgm.sql(`DROP TABLE IF EXISTS athlete_profiles;`);
+  pgm.sql(`DROP TABLE IF EXISTS users;`);
 
   for (const [nombre] of ENUMS) {
-    await query(`DROP TYPE IF EXISTS ${nombre};`);
+    pgm.sql(`DROP TYPE IF EXISTS ${nombre};`);
   }
 
-  await query(`DROP EXTENSION IF EXISTS vector;`);
+  pgm.sql(`DROP EXTENSION IF EXISTS vector;`);
 }

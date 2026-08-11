@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Plan de media maratón con base de evidencia y módulo de nutrición",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "node build.mjs",
     "start": "node server.js",
@@ -18,8 +20,10 @@
     "migration:verify": "node migration/scripts/05-verify.js"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "esbuild": "^0.24.2",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.6.2",
     "googleapis": "^144.0.0",
     "pg": "^8.11.0",
     "react": "^18.3.1",

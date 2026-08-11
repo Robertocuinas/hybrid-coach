@@ -7,3 +7,4 @@ export * as documents from "./documents.js";
 export * as aiConversations from "./aiConversations.js";
 export * as nutrition from "./nutrition.js";
 export * as strava from "./strava.js";
+export * as sessions from "./sessions.js";
