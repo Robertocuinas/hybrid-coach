@@ -1618,7 +1618,8 @@ function EvidenceModal({ citation, onClose }) {
   const pagina = citation.paginaInicio
     ? `${citation.paginaInicio}${citation.paginaFin && citation.paginaFin !== citation.paginaInicio ? `–${citation.paginaFin}` : ""}`
     : "No indicada";
-  const score = Number.isFinite(Number(citation.similarityScore)) ? Number(citation.similarityScore).toFixed(3) : null;
+  const score = citation.similarityScore !== null && citation.similarityScore !== undefined && Number.isFinite(Number(citation.similarityScore))
+    ? Number(citation.similarityScore).toFixed(3) : null;
   return (<div className="evidence-overlay" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
     <section className="evidence-modal" role="dialog" aria-modal="true" aria-label="Evidencia citada">
       <div className="between" style={{ alignItems: "flex-start" }}>

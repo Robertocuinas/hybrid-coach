@@ -34,23 +34,23 @@ Evidencia
 
 ## Tareas
 
-- [ ] Ampliar el componente `RefChips` (ya existe y ya abre un modal) para mostrar:
+- [x] Ampliar el componente `RefChips` (ya existe y ya abre un modal) para mostrar:
       fragmento, sección, página, tipo de estudio, grado de evidencia, DOI
-- [ ] Enlace al PDF original en R2, con URL firmada de caducidad corta
-- [ ] Distinguir visualmente citas fuertes de citas de relleno (`_relleno`), usando
+- [x] Enlace al PDF original en R2, con URL firmada de caducidad corta
+- [x] Distinguir visualmente citas fuertes de citas de relleno (`_relleno`), usando
       `similarity_score`
-- [ ] Mostrar el aviso de "sin respaldo" cuando una decisión no tiene citas
-- [ ] Mostrar el nivel de confianza de cada propuesta (ya existe el campo)
-- [ ] Presentar `evidencia_mixta` cuando los estudios discrepan: ambas posturas con sus citas
-- [ ] Mantener visible el aviso sobre las referencias semilla (sin DOI, autoría no verificada)
+- [x] Mostrar el aviso de "sin respaldo" cuando una decisión no tiene citas
+- [x] Mostrar el nivel de confianza de cada propuesta (ya existe el campo)
+- [x] Presentar `evidencia_mixta` cuando los estudios discrepan: ambas posturas con sus citas
+- [x] Mantener visible el aviso sobre las referencias semilla (sin DOI, autoría no verificada)
 
 ## Criterio de terminado
 
-- [ ] Pulsar una cita muestra el fragmento textual real, no solo el título del paper
+- [x] Pulsar una cita muestra el fragmento textual real, no solo el título del paper
 - [ ] La página mostrada corresponde con la del PDF original (verificado a mano en 3 casos)
 - [ ] El PDF original se abre desde la ficha
-- [ ] Una decisión sin respaldo se ve claramente marcada como tal
-- [ ] Un caso de evidencia mixta muestra ambas posturas, no una elegida arbitrariamente
+- [x] Una decisión sin respaldo se ve claramente marcada como tal
+- [x] Un caso de evidencia mixta muestra ambas posturas, no una elegida arbitrariamente
 
 ## Riesgos
 

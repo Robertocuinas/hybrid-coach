@@ -82,6 +82,7 @@ R2_ACCESS_KEY_ID=
 R2_SECRET_ACCESS_KEY=
 R2_BUCKET=
 R2_PUBLIC_BASE_URL=            # opcional, si sirves PDFs por dominio propio
+R2_SIGNED_URL_TTL_SECONDS=300  # enlace temporal al PDF citado; rango permitido 60-900 s
 
 # RAG
 RAG_MIN_SCORE=                 # umbral por debajo del cual se responde "sin evidencia"

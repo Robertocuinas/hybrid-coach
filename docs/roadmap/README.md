@@ -20,7 +20,7 @@ criterio de terminado y riesgos.
 | [6](fase-06-embeddings.md) | Embeddings + pgvector | ☐ pendiente | Media |
 | [7](fase-07-retrieval.md) | Retrieval híbrido y reranking | ☐ pendiente | Media |
 | [8](fase-08-integracion-coach.md) | Integración con el motor de decisiones | ☐ pendiente | Alta |
-| [9](fase-09-citas-ui.md) | Citas y evidencia en la interfaz | ☐ pendiente | Baja |
+| [9](fase-09-citas-ui.md) | Citas y evidencia en la interfaz | ◐ implementada; QA con PDFs pendiente | Baja |
 | [10](fase-10-evaluacion.md) | Evaluación formal y observabilidad | ☐ pendiente | Media |
 | [11](fase-11-retirada-sheets.md) | Retirada de Google Sheets | ☐ pendiente | Baja |
 | [12](fase-12-optimizacion.md) | Optimización y pruebas de proveedores | ☐ pendiente | Baja |

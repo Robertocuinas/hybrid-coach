@@ -13,7 +13,9 @@ router.use(requireAuth, requireActiveProfile);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const storage = createStorageClient();
 
-function dto(row) {
+export const isValidChunkId = (value) => UUID.test(String(value || ""));
+
+export function evidenceDTO(row) {
   return {
     chunkId: row.id,
     documentId: row.document_id,
@@ -38,16 +40,16 @@ function dto(row) {
 
 router.get("/chunks/:chunkId", async (req, res, next) => {
   try {
-    if (!UUID.test(req.params.chunkId)) return res.status(400).json({ ok: false, message: "Identificador de fragmento no válido" });
+    if (!isValidChunkId(req.params.chunkId)) return res.status(400).json({ ok: false, message: "Identificador de fragmento no válido" });
     const chunk = await findReviewedChunkEvidence(req.params.chunkId);
     if (!chunk) return res.status(404).json({ ok: false, message: "Fragmento no encontrado" });
-    res.json({ ok: true, evidence: dto(chunk) });
+    res.json({ ok: true, evidence: evidenceDTO(chunk) });
   } catch (error) { next(error); }
 });
 
 router.get("/chunks/:chunkId/pdf-url", async (req, res, next) => {
   try {
-    if (!UUID.test(req.params.chunkId)) return res.status(400).json({ ok: false, message: "Identificador de fragmento no válido" });
+    if (!isValidChunkId(req.params.chunkId)) return res.status(400).json({ ok: false, message: "Identificador de fragmento no válido" });
     const chunk = await findReviewedChunkEvidence(req.params.chunkId);
     if (!chunk) return res.status(404).json({ ok: false, message: "Fragmento no encontrado" });
     if (!chunk.storage_key) return res.status(404).json({ ok: false, message: "Esta referencia no tiene PDF asociado" });
