@@ -24,7 +24,8 @@ router.post("/register", async (req, res, next) => {
     if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ ok: false, message: "Email no válido" });
     if (password.length < minPasswordLength) return res.status(400).json({ ok: false, message: `La contraseña debe tener al menos ${minPasswordLength} caracteres` });
     if (await findUserByEmail(email)) return res.status(409).json({ ok: false, message: "No se pudo crear la cuenta" });
-    const user = await createUser({ email, passwordHash: await bcrypt.hash(password, 12) });
+    const role = process.env.INITIAL_ADMIN_EMAIL?.trim().toLowerCase() === email ? "admin" : "athlete";
+    const user = await createUser({ email, passwordHash: await bcrypt.hash(password, 12), role });
     const profile = await createProfile(user.id, { nombre: String(req.body?.nombre || "").trim() || null });
     await startSession(res, user, profile.id);
     res.status(201).json({ ok: true, user: { id: user.id, email: user.email, role: user.role }, profile });

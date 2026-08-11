@@ -20,6 +20,7 @@
     "migration:verify": "node migration/scripts/05-verify.js"
   },
   "dependencies": {
+    "@node-rs/argon2": "^2.0.2",
     "bcryptjs": "^3.0.3",
     "esbuild": "^0.24.2",
     "express": "^4.21.2",

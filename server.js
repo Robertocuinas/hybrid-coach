@@ -268,6 +268,12 @@ app.get("/api/strava/actividades", requireAuth, async (req, res) => {
   }
 });
 
+app.use((error, _req, res, _next) => {
+  const status = error.code === "23505" ? 409 : 500;
+  if (status === 500) console.error("Error interno de API:", error.name, error.code || "");
+  res.status(status).json({ ok: false, message: status === 409 ? "El registro ya existe" : "Error interno" });
+});
+
 /* ============================================================
    LA APLICACIÓN
    ============================================================ */

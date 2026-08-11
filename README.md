@@ -32,7 +32,7 @@ En el servicio → pestaña **Variables** → **New Variable**. Ninguna es oblig
 
 | Variable | Para qué | Si la dejas vacía |
 |---|---|---|
-| `APP_PASSWORD` | Contraseña única de acceso | **Entra cualquiera que tenga la dirección** |
+| `SESSION_SECRET` | Secreto de firma de sesiones (mínimo 32 caracteres) | Obligatorio para autenticación |
 | `ANTHROPIC_API_KEY` | Razonamiento sobre el plan, lectura de PDF, coach | La app funciona igual, sin capa de IA |
 | `APPS_SCRIPT_URL` | Puente a tu Google Sheets | No se respalda nada en la hoja |
 | `STRAVA_CLIENT_ID` | Importar carreras | Se registran a mano |
