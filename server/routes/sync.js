@@ -140,7 +140,7 @@ router.post("/sync", async (req, res, next) => {
       VALUES ($1,$2,$3,$4,$5,now()) ON CONFLICT (athlete_profile_id) DO UPDATE SET
       profile_local_id=excluded.profile_local_id,state=excluded.state,local_totals=excluded.local_totals,
       captured_at=excluded.captured_at,received_at=now()`, [req.auth.athleteProfileId, snapshot.profileLocalId,
-      snapshot.profile, snapshot.totals, new Date().toISOString()]);
+      snapshot.profile, snapshot.totals, snapshot.capturedAt || new Date().toISOString()]);
     await client.query("COMMIT");
     res.json({ ok: true, operationId });
   } catch (error) {
@@ -165,10 +165,20 @@ router.post("/reconciliation-snapshot", async (req, res, next) => {
 
 router.get("/reconciliation-status", async (req, res, next) => {
   try {
-    const { rows } = await pool.query(`SELECT status,differences,local_totals,database_totals,checked_at
-      FROM reconciliation_runs WHERE athlete_profile_id=$1 ORDER BY checked_at DESC LIMIT 7`, [req.auth.athleteProfileId]);
+    const { rows } = await pool.query(`SELECT status,differences,local_totals,database_totals,checked_at,day
+      FROM (SELECT DISTINCT ON ((checked_at AT TIME ZONE 'UTC')::date)
+        status,differences,local_totals,database_totals,checked_at,(checked_at AT TIME ZONE 'UTC')::date AS day
+        FROM reconciliation_runs WHERE athlete_profile_id=$1
+        ORDER BY (checked_at AT TIME ZONE 'UTC')::date DESC,checked_at DESC) daily
+      ORDER BY day DESC LIMIT 7`, [req.auth.athleteProfileId]);
     let greenStreak = 0;
-    for (const row of rows) { if (row.status !== "green") break; greenStreak += 1; }
+    let previousDay = null;
+    for (const row of rows) {
+      const day = Date.parse(`${row.day}T00:00:00Z`);
+      if (row.status !== "green" || (previousDay !== null && previousDay - day !== 86400000)) break;
+      greenStreak += 1;
+      previousDay = day;
+    }
     res.json({ ok: true, latest: rows[0] || null, greenStreak, readyForCutover: greenStreak >= 7 });
   } catch (error) { next(error); }
 });

@@ -38,3 +38,20 @@ test("conserva una operación fallida y la reintenta silenciosamente", async () 
   assert.equal(calls, 2);
   assert.equal(sync.readQueue().items.length, 0);
 });
+
+test("un fetch antiguo no pisa un snapshot nuevo", async () => {
+  const storage = new MemoryStorage();
+  let finishRequest;
+  const fetchImpl = () => new Promise((resolve) => { finishRequest = resolve; });
+  const sync = createSyncController({ storage, fetchImpl });
+  sync.enqueue(state);
+  const flushing = sync.flush();
+  await new Promise((resolve) => setImmediate(resolve));
+  const newer = structuredClone(state);
+  newer.perfiles.p1.running[0].distancia_km = 9;
+  sync.enqueue(newer);
+  finishRequest({ ok: true, status: 200 });
+  await flushing;
+  assert.equal(sync.readQueue().items.length, 1);
+  assert.equal(sync.readQueue().items[0].snapshot.totals.km, 9);
+});

@@ -45,7 +45,7 @@ export function createSyncController({ storage, fetchImpl = fetch, now = () => D
       operationId: operationId(),
       profileLocalId: String(profile.id || state.activo),
       kind: "profile.snapshot",
-      snapshot: { profileLocalId: String(profile.id || state.activo), profile, totals },
+      snapshot: { profileLocalId: String(profile.id || state.activo), profile, totals, capturedAt: new Date(now()).toISOString() },
       createdAt: new Date(now()).toISOString(),
       attempts: 0,
       nextAttemptAt: now(),
@@ -63,8 +63,11 @@ export function createSyncController({ storage, fetchImpl = fetch, now = () => D
     if (flushing) return;
     flushing = true;
     try {
-      const queue = parseQueue(storage);
-      for (const item of [...queue.items]) {
+      const pendingAtStart = [...parseQueue(storage).items];
+      for (const original of pendingAtStart) {
+        const currentQueue = parseQueue(storage);
+        const item = currentQueue.items.find((entry) => entry.operationId === original.operationId);
+        if (!item) continue; // Un snapshot más reciente ya lo ha sustituido.
         if (item.nextAttemptAt > now()) continue;
         try {
           const response = await fetchImpl("/api/sync", {
@@ -74,30 +77,45 @@ export function createSyncController({ storage, fetchImpl = fetch, now = () => D
             body: JSON.stringify({ operationId: item.operationId, snapshot: item.snapshot }),
           });
           if (response.ok) {
-            queue.items = queue.items.filter((entry) => entry.operationId !== item.operationId);
-            queue.pausedReason = null;
+            const latest = parseQueue(storage);
+            latest.items = latest.items.filter((entry) => entry.operationId !== item.operationId);
+            latest.pausedReason = null;
+            save(latest);
             continue;
           }
           if (response.status === 401) {
-            queue.pausedReason = "authentication";
+            const latest = parseQueue(storage);
+            latest.pausedReason = "authentication";
+            save(latest);
             break;
           }
           if (![408, 425, 429].includes(response.status) && response.status < 500) {
-            item.lastErrorCode = `HTTP_${response.status}`;
-            item.nextAttemptAt = now() + 6 * 60 * 60 * 1000;
-            queue.pausedReason = "blocked";
+            const latest = parseQueue(storage);
+            const live = latest.items.find((entry) => entry.operationId === item.operationId);
+            if (live) {
+              live.lastErrorCode = `HTTP_${response.status}`;
+              live.nextAttemptAt = now() + 6 * 60 * 60 * 1000;
+            }
+            latest.pausedReason = "blocked";
+            save(latest);
             continue;
           }
           throw Object.assign(new Error("retryable response"), { code: `HTTP_${response.status}` });
         } catch (error) {
-          item.attempts += 1;
-          item.lastErrorCode = error.code || "NETWORK_ERROR";
-          const base = Math.min(6 * 60 * 60 * 1000, 5000 * (2 ** Math.min(item.attempts - 1, 12)));
-          item.nextAttemptAt = now() + Math.round(base * (1 + Math.random() * 0.25));
+          const latest = parseQueue(storage);
+          const live = latest.items.find((entry) => entry.operationId === item.operationId);
+          if (live) {
+            live.attempts += 1;
+            live.lastErrorCode = error.code || "NETWORK_ERROR";
+            const base = Math.min(6 * 60 * 60 * 1000, 5000 * (2 ** Math.min(live.attempts - 1, 12)));
+            live.nextAttemptAt = now() + Math.round(base * (1 + Math.random() * 0.25));
+            save(latest);
+          }
         }
       }
-      queue.lastFlushAt = new Date(now()).toISOString();
-      save(queue);
+      const latest = parseQueue(storage);
+      latest.lastFlushAt = new Date(now()).toISOString();
+      save(latest);
     } finally { flushing = false; }
   }
 
