@@ -6,14 +6,40 @@ function comoVector(embedding) {
   return `[${embedding.join(",")}]`;
 }
 
+const DOCUMENT_COLUMNS = Object.freeze({
+  legacyId: "legacy_id",
+  titulo: "titulo",
+  autores: "autores",
+  anio: "anio",
+  fuenteRevista: "fuente_revista",
+  doi: "doi",
+  hashArchivo: "hash_archivo",
+  studyType: "study_type",
+  evidenceGrade: "evidence_grade",
+  poblacion: "poblacion",
+  populationType: "population_type",
+  sampleSize: "sample_size",
+  temaPrincipal: "tema_principal",
+  tags: "tags",
+  resumen: "resumen",
+  limites: "limites",
+  aplicacionPractica: "aplicacion_practica",
+  storageKey: "storage_key",
+  origen: "origen",
+  revisado: "revisado",
+});
+
+const nullableText = (value) => typeof value === "string" && value.trim() ? value.trim() : null;
+
 export function createDocument(datos = {}) {
   return insertRow("documents", {
+    legacy_id: nullableText(datos.legacyId),
     titulo: datos.titulo ?? null,
     autores: datos.autores ?? null,
     anio: datos.anio ?? null,
     fuente_revista: datos.fuenteRevista ?? null,
-    doi: datos.doi ?? null,
-    hash_archivo: datos.hashArchivo,
+    doi: nullableText(datos.doi),
+    hash_archivo: nullableText(datos.hashArchivo),
     study_type: datos.studyType ?? null,
     evidence_grade: datos.evidenceGrade ?? null,
     poblacion: datos.poblacion ?? null,
@@ -29,6 +55,43 @@ export function createDocument(datos = {}) {
     revisado: datos.revisado ?? false,
     subido_por: datos.subidoPor ?? null,
   });
+}
+
+export async function listDocumentsPaginated({ page = 1, pageSize = 50 } = {}) {
+  const safePage = Math.max(1, Number.parseInt(page, 10) || 1);
+  const safePageSize = Math.min(100, Math.max(1, Number.parseInt(pageSize, 10) || 50));
+  const offset = (safePage - 1) * safePageSize;
+  const [data, count] = await Promise.all([
+    pool.query(
+      `SELECT * FROM documents
+        ORDER BY anio DESC NULLS LAST, titulo ASC NULLS LAST
+        LIMIT $1 OFFSET $2;`,
+      [safePageSize, offset]
+    ),
+    pool.query(`SELECT count(*)::int AS total FROM documents;`),
+  ]);
+  return { documents: data.rows, page: safePage, pageSize: safePageSize, total: count.rows[0].total };
+}
+
+export async function updateDocument(id, datos = {}) {
+  const entries = Object.entries(datos)
+    .filter(([key, value]) => Object.hasOwn(DOCUMENT_COLUMNS, key) && value !== undefined)
+    .map(([key, value]) => [DOCUMENT_COLUMNS[key], key === "doi" || key === "hashArchivo" || key === "legacyId" ? nullableText(value) : value]);
+  if (!entries.length) {
+    const { rows } = await pool.query(`SELECT * FROM documents WHERE id = $1;`, [id]);
+    return rows[0] || null;
+  }
+  const assignments = entries.map(([column], index) => `${column} = $${index + 2}`).join(", ");
+  const { rows } = await pool.query(
+    `UPDATE documents SET ${assignments} WHERE id = $1 RETURNING *;`,
+    [id, ...entries.map(([, value]) => value)]
+  );
+  return rows[0] || null;
+}
+
+export async function deleteDocument(id) {
+  const { rows } = await pool.query(`DELETE FROM documents WHERE id = $1 RETURNING *;`, [id]);
+  return rows[0] || null;
 }
 
 export async function findDocumentByDoi(doi) {

@@ -21,27 +21,40 @@ El chat sigue funcionando exactamente igual que hoy, leyendo esas fichas.
 
 ## Tareas
 
-- [ ] Migración con las tablas `documents`, `document_chunks`, `chunk_embeddings`,
+- [x] Migración con las tablas `documents`, `document_chunks`, `chunk_embeddings`,
       `plan_decision_citations` (si no se crearon ya en la Fase 1)
-- [ ] Definir los enums: `study_type`, `evidence_grade`, `population_type`, `origen`
-- [ ] Migrar `BIBLIO_SEED` (40 referencias) a `documents`
-- [ ] **Rellenar `study_type` a partir del campo `fuente` existente**, que ya contiene la
+- [x] Definir los enums: `study_type`, `evidence_grade`, `population_type`, `origen`
+- [x] Migrar `BIBLIO_SEED` (40 referencias) a `documents`
+- [x] **Rellenar `study_type` a partir del campo `fuente` existente**, que ya contiene la
       información ("meta-análisis", "revisión sistemática", "ECA", "preprint",
       "posicionamiento") — revisión manual de los casos ambiguos
-- [ ] Rellenar `population_type` a partir del campo `poblacion` en texto libre
-- [ ] Rellenar `evidence_grade` desde el campo `grado` actual (mapeo directo)
-- [ ] Endpoint de lectura de la biblioteca desde la base de datos
-- [ ] Adaptar el componente `Biblioteca` para leer del endpoint
-- [ ] Adaptar `refsRelevantes()` para operar sobre los registros de la base de datos
+- [x] Rellenar `population_type` a partir del campo `poblacion` en texto libre
+- [x] Rellenar `evidence_grade` desde el campo `grado` actual (mapeo directo)
+- [x] Endpoint de lectura de la biblioteca desde la base de datos
+- [x] Adaptar el componente `Biblioteca` para leer del endpoint
+- [x] Adaptar `refsRelevantes()` para operar sobre los registros de la base de datos
       (misma lógica léxica por ahora — se sustituye en la Fase 7)
-- [ ] Índices GIN sobre `tags`, únicos sobre `doi` y `hash_archivo`
+- [x] Índices GIN sobre `tags`, únicos sobre `doi` y `hash_archivo`
 
 ## Criterio de terminado
 
-- [ ] Las 40 referencias están en `documents` con `study_type` y `evidence_grade` poblados
-- [ ] La pantalla de bibliografía muestra lo mismo que antes, leyendo de PostgreSQL
-- [ ] El coach sigue citando referencias correctamente
-- [ ] Añadir una referencia a mano desde la UI la persiste en la base de datos
+- [x] Las 40 referencias están en `documents` con `study_type` y `evidence_grade` poblados
+- [x] La pantalla de bibliografía muestra lo mismo que antes, leyendo de PostgreSQL
+- [x] El coach sigue citando referencias correctamente
+- [x] Añadir una referencia a mano desde la UI la persiste en la base de datos
+
+## Ejecución
+
+Con `DATABASE_URL` apuntando a PostgreSQL:
+
+```bash
+npm run migrate
+npm run seed:biblio
+```
+
+`seed:biblio` es idempotente: se puede repetir para aplicar correcciones de clasificación
+sin duplicar referencias. La API expone lectura paginada en
+`GET /api/documents?page=1&pageSize=50`; crear, editar y borrar requieren rol `admin`.
 
 ## Riesgos
 

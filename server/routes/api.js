@@ -8,6 +8,7 @@ import { setNutritionTarget, listNutritionTargets, addMealOption, listMealCatalo
 import { requireAuth } from "../middleware/auth.js";
 import { requireActiveProfile, ownedProfile, requireAdmin } from "../middleware/authorization.js";
 import { assertPlanInput } from "../domain/training/index.js";
+import { createDocument, deleteDocument, listDocumentsPaginated, updateDocument } from "../db/repositories/documents.js";
 
 const router = express.Router();
 router.use(requireAuth);
@@ -60,7 +61,57 @@ router.post("/nutrition/targets", ...active(async (req, res, next) => { try { re
 router.get("/nutrition/meals", ...active(async (req, res, next) => { try { res.json({ ok: true, meals: await listMealCatalog(profileId(req)) }); } catch (e) { next(e); } }));
 router.post("/nutrition/meals", ...active(async (req, res, next) => { try { const d = req.body || {}; res.status(201).json({ ok: true, meal: await addMealOption(profileId(req), d.categoria, d.opcion) }); } catch (e) { next(e); } }));
 
-router.get("/documents", async (_req, res, next) => { try { const { rows } = await pool.query(`SELECT id, titulo, autores, anio, fuente_revista, doi, tema_principal, tags, resumen, limites, aplicacion_practica, revisado FROM documents ORDER BY anio DESC NULLS LAST`); res.json({ ok: true, documents: rows }); } catch (e) { next(e); } });
-router.post("/documents", requireAdmin, async (req, res, next) => { try { const d = req.body || {}; const { rows } = await pool.query(`INSERT INTO documents (titulo, autores, anio, doi, tema_principal, tags, resumen, origen, revisado, subido_por) VALUES ($1,$2,$3,$4,$5,$6,$7,'manual',false,$8) RETURNING *`, [d.titulo || null, d.autores || null, d.anio || null, d.doi || null, d.temaPrincipal || null, d.tags || [], d.resumen || null, req.auth.userId]); res.status(201).json({ ok: true, document: rows[0] }); } catch (e) { next(e); } });
+const DOCUMENT_ENUMS = Object.freeze({
+  studyType: new Set(["meta_analysis", "systematic_review", "rct", "observational", "position_statement", "narrative_review", "preprint"]),
+  evidenceGrade: new Set(["fuerte", "moderada", "debil", "practica"]),
+  populationType: new Set(["runners", "strength_athletes", "general_population", "mixed"]),
+  origen: new Set(["manual", "pdf"]),
+});
+
+const documentFields = (body = {}) => {
+  const source = body && typeof body === "object" ? body : {};
+  return Object.fromEntries([
+  "titulo", "autores", "anio", "fuenteRevista", "doi", "hashArchivo", "studyType",
+  "evidenceGrade", "poblacion", "populationType", "sampleSize", "temaPrincipal", "tags",
+  "resumen", "limites", "aplicacionPractica", "storageKey", "origen", "revisado",
+  ].filter((key) => source[key] !== undefined).map((key) => [key, source[key]]));
+};
+
+function invalidDocumentInput(data, { requireTitle = false } = {}) {
+  if (requireTitle && !String(data.titulo || "").trim()) return "titulo es obligatorio";
+  for (const [key, allowed] of Object.entries(DOCUMENT_ENUMS)) {
+    if (data[key] !== undefined && data[key] !== null && !allowed.has(data[key])) return `${key} no es válido`;
+  }
+  if (data.tags !== undefined && !Array.isArray(data.tags)) return "tags debe ser un array";
+  return null;
+}
+
+router.get("/documents", async (req, res, next) => { try {
+  const result = await listDocumentsPaginated({ page: req.query.page, pageSize: req.query.pageSize });
+  res.json({ ok: true, ...result });
+} catch (e) { next(e); } });
+
+router.post("/documents", requireAdmin, async (req, res, next) => { try {
+  const data = documentFields(req.body);
+  const invalid = invalidDocumentInput(data, { requireTitle: true });
+  if (invalid) return res.status(400).json({ ok: false, message: invalid });
+  const document = await createDocument({ ...data, origen: data.origen || "manual", revisado: data.revisado ?? true, subidoPor: req.auth.userId });
+  res.status(201).json({ ok: true, document });
+} catch (e) { next(e); } });
+
+router.patch("/documents/:id", requireAdmin, async (req, res, next) => { try {
+  const data = documentFields(req.body);
+  const invalid = invalidDocumentInput(data);
+  if (invalid) return res.status(400).json({ ok: false, message: invalid });
+  const document = await updateDocument(req.params.id, data);
+  if (!document) return res.status(404).json({ ok: false, message: "Documento no encontrado" });
+  res.json({ ok: true, document });
+} catch (e) { next(e); } });
+
+router.delete("/documents/:id", requireAdmin, async (req, res, next) => { try {
+  const document = await deleteDocument(req.params.id);
+  if (!document) return res.status(404).json({ ok: false, message: "Documento no encontrado" });
+  res.json({ ok: true, document });
+} catch (e) { next(e); } });
 
 export default router;

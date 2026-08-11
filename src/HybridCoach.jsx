@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { createSyncController } from "./sync.js";
+import { BIBLIO_SEED } from "./data/biblioSeed.js";
+import { documentoDesdeAPI, documentoParaAPI } from "./data/documentAdapter.js";
 
 /* ============================================================
    HYBRID COACH v2 — multiperfil · plan generado · base de evidencia
@@ -156,51 +158,7 @@ const PLANTILLAS = {
 };
 
 /* ---------- BIBLIOGRAFÍA SEMILLA (heredada de la revisión previa) ---------- */
-const BIBLIO_SEED = [
-  { id:"b1",  autores:"Joyner, M. J.", anio:1991, titulo:"Modelización del rendimiento en fondo: VO₂máx, umbral y economía de carrera", fuente:"Journal of Applied Physiology", tema:"Rendimiento", grado:"moderada", aplicacion:"Marco de tres factores: VO₂máx × fracción sostenible × economía. Justifica trabajar economía cuando el volumen es bajo.", doi:"" },
-  { id:"b2",  autores:"Fokkema, T. y cols.", anio:2020, titulo:"Volumen de entrenamiento, tirada larga, rendimiento y lesión en preparación de media y maratón", fuente:"Estudio prospectivo", tema:"Volumen", grado:"moderada", aplicacion:"Más volumen y tirada larga se asocian a mejor rendimiento; la relación con lesión no es lineal. Base para no minimizar la tirada larga.", doi:"" },
-  { id:"b3",  autores:"Videbæk, S. y cols.", anio:2015, titulo:"Incidencia de lesión por 1000 h de carrera según tipo de corredor", fuente:"Sports Medicine (meta-análisis)", tema:"Lesiones", grado:"fuerte", aplicacion:"Incidencia claramente mayor en corredores noveles. Justifica progresiones conservadoras en quien vuelve de un parón.", doi:"" },
-  { id:"b4",  autores:"Alvero-Cruz, J. R. y cols.", anio:2019, titulo:"Predictores de rendimiento en media maratón: laboratorio frente a test de campo", fuente:"Frontiers in Physiology", tema:"Rendimiento", grado:"moderada", aplicacion:"En corredores recreativos el test de campo predice mejor que el laboratorio. Base del test de calibración submáximo.", doi:"" },
-  { id:"b5",  autores:"Wilson, J. M. y cols.", anio:2012, titulo:"Entrenamiento concurrente: meta-análisis del efecto de interferencia", fuente:"J Strength Cond Res", tema:"Concurrente", grado:"fuerte", aplicacion:"La interferencia es dosis-dependiente y mayor con carrera que con ciclismo. Justifica separar modalidades y limitar volumen simultáneo.", doi:"" },
-  { id:"b6",  autores:"Rønnestad, B. R., Hansen, E. A., Raastad, T.", anio:2010, titulo:"Mantenimiento de fuerza en temporada y rendimiento de resistencia", fuente:"Eur J Appl Physiol", tema:"Fuerza", grado:"fuerte", aplicacion:"La fuerza mantenida durante un bloque de resistencia no solo se conserva: mejora el rendimiento.", doi:"" },
-  { id:"b7",  autores:"Ramos-Campo, D. J. y cols.", anio:2024, titulo:"Rutinas divididas frente a full body: revisión sistemática con meta-análisis", fuente:"Revisión sistemática", tema:"Fuerza", grado:"moderada", aplicacion:"Con volumen igualado las diferencias son pequeñas. Con pocas sesiones, full body maximiza frecuencia por grupo muscular.", doi:"" },
-  { id:"b8",  autores:"Ralston, G. W. y cols.", anio:2018, titulo:"Frecuencia semanal de entrenamiento y ganancias de fuerza: meta-análisis", fuente:"Sports Medicine", tema:"Fuerza", grado:"fuerte", aplicacion:"La frecuencia importa sobre todo como mecanismo para distribuir el volumen semanal.", doi:"" },
-  { id:"b9",  autores:"Spiering, B. A. y cols.", anio:2021, titulo:"Volumen mínimo para mantener fuerza y masa muscular", fuente:"Sports Medicine", tema:"Fuerza", grado:"moderada", aplicacion:"El mantenimiento requiere mucho menos volumen que la ganancia si se preserva la intensidad. Recorta series, nunca cargas.", doi:"" },
-  { id:"b10", autores:"Baz-Valle, E. y cols.", anio:2022, titulo:"Volumen semanal por grupo muscular e hipertrofia: revisión", fuente:"Revisión sistemática", tema:"Hipertrofia", grado:"moderada", aplicacion:"Relación dosis-respuesta con rendimientos decrecientes. 8-14 series semanales por grupo grande en fase de carga.", doi:"" },
-  { id:"b11", autores:"Grgic, J. y cols.", anio:2022, titulo:"Efecto del cese del entrenamiento de fuerza sobre el tamaño muscular", fuente:"Meta-análisis", tema:"Detraining", grado:"moderada", aplicacion:"Pérdidas relevantes tras semanas sin estímulo; refuerza no eliminar el gimnasio en fases de mucha carrera.", doi:"" },
-  { id:"b12", autores:"Chen, C. y cols.", anio:2022, titulo:"Dos semanas de desentrenamiento en atletas de resistencia", fuente:"Estudio experimental", tema:"Detraining", grado:"moderada", aplicacion:"Caídas medibles de función cardiopulmonar y muscular en solo dos semanas. Base del diseño del taper.", doi:"" },
-  { id:"b13", autores:"Afonso, J. y cols.", anio:2022, titulo:"Microdosificación del entrenamiento de fuerza", fuente:"Artículo de posición", tema:"Fuerza", grado:"débil", aplicacion:"Repartir el estímulo en dosis pequeñas y frecuentes es una alternativa cuando el tiempo por sesión es limitado.", doi:"" },
-  { id:"b14", autores:"Tavares, F. y cols.", anio:2017, titulo:"Frecuencia de fuerza durante periodos de entrenamiento reducido", fuente:"Estudio experimental", tema:"Fuerza", grado:"moderada", aplicacion:"Apoya el mantenimiento con 1-2 sesiones semanales durante bloques de alta carga de resistencia.", doi:"" },
-  { id:"b15", autores:"Knopp, M. y cols.", anio:2023, titulo:"Análisis cuantitativo de 92 planes de maratón sub-élite (preprint no revisado)", fuente:"Preprint", tema:"Volumen", grado:"débil", aplicacion:"Documenta la práctica habitual: planes de bajo volumen ~44 km/sem con distribución piramidal. Práctica, no evidencia.", doi:"" },
-  { id:"b16", autores:"Consenso metodológico", anio:2023, titulo:"Crítica al ratio carga aguda:crónica (ACWR) como herramienta causal de riesgo", fuente:"Revisión crítica", tema:"Carga", grado:"moderada", aplicacion:"El ACWR está metodológicamente desacreditado como predictor causal. No se usa en este sistema para decidir cargas.", doi:"" },
-  { id:"b17", autores:"Revisión de progresión", anio:2023, titulo:"La 'regla del 10%' de progresión semanal carece de apoyo empírico", fuente:"Revisión", tema:"Progresión", grado:"moderada", aplicacion:"Sustituir reglas fijas por progresión individualizada guiada por síntomas y tolerancia.", doi:"" },
-  { id:"b18", autores:"Revisión de tecnología deportiva", anio:2024, titulo:"Validez de las puntuaciones de 'readiness' de los dispositivos vestibles", fuente:"Revisión", tema:"Monitorización", grado:"débil", aplicacion:"Son algoritmos propietarios no validados para decisiones diarias. Prevalece el registro subjetivo estructurado.", doi:"" },
-  { id:"b19", autores:"Bosquet, L. y cols.", anio:2007, titulo:"Efectos del taper sobre el rendimiento: meta-análisis", fuente:"Med Sci Sports Exerc", tema:"Taper", grado:"fuerte", aplicacion:"Reducir volumen 40-60% manteniendo intensidad durante 1-3 semanas mejora el rendimiento.", doi:"" },
-  { id:"b20", autores:"Morton, R. W. y cols.", anio:2018, titulo:"Proteína y ganancias de masa muscular con entrenamiento de fuerza: meta-análisis", fuente:"Br J Sports Med", tema:"Nutrición", grado:"fuerte", aplicacion:"Ingesta de proteína en torno a 1,6 g/kg cubre a la mayoría; márgenes superiores en déficit o alta carga.", doi:"" },
-  { id:"b21", autores:"Kreider, R. B. y cols.", anio:2017, titulo:"Posición de la ISSN sobre creatina monohidrato", fuente:"J Int Soc Sports Nutr", tema:"Nutrición", grado:"fuerte", aplicacion:"Seguridad y eficacia de 3-5 g/día para fuerza y masa magra.", doi:"" },
-  { id:"b22", autores:"Lauersen, J. B. y cols.", anio:2014, titulo:"Ejercicio preventivo y lesiones deportivas: meta-análisis", fuente:"Br J Sports Med", tema:"Lesiones", grado:"fuerte", aplicacion:"El entrenamiento de fuerza reduce sustancialmente las lesiones por sobreuso. Base para no eliminar el gimnasio.", doi:"" },
-  /* ---------- NUTRICIÓN (añadidas con el módulo dietético) ----------
-     Sin DOI, igual que el resto de la semilla: verifica autoría y año antes
-     de citarlas en cualquier trabajo formal.                                */
-  { id:"n1", autores:"Thomas, D. T., Erdman, K. A., Burke, L. M.", anio:2016, titulo:"Posicionamiento conjunto ACSM / Academy of Nutrition and Dietetics / Dietitians of Canada: nutrición y rendimiento deportivo", fuente:"Med Sci Sports Exerc · posicionamiento", tema:"Nutrición", grado:"fuerte", tags:["calorias","carbohidrato","proteina","disponibilidad energetica","periodizacion","hidratacion"], poblacion:"Deportistas de resistencia y fuerza, ambos sexos", resumenIA:"Marco de referencia: 3-5 g/kg/día de carbohidrato en carga baja, 5-7 en moderada, 6-10 en alta; 1,2-2,0 g/kg de proteína; grasa no por debajo del 20% de la energía. Insiste en la disponibilidad energética como variable central.", limites:"Documento de consenso, no un experimento. Los rangos son poblacionales y hay mucha variabilidad individual.", aplicacion:"Base de todos los objetivos de macronutrientes del módulo. El carbohidrato se escala con la carga del día; la proteína no.", doi:"" },
-  { id:"n2", autores:"Burke, L. M. y cols.", anio:2011, titulo:"Carbohidratos para el entrenamiento y la competición", fuente:"J Sports Sci · revisión", tema:"Nutrición", grado:"fuerte", tags:["carbohidrato","glucogeno","tirada larga","competicion","recarga"], poblacion:"Deportistas de resistencia", resumenIA:"Establece la escala de ingesta de carbohidrato según la carga diaria y la necesidad de disponibilidad alta en sesiones de calidad y competición.", limites:"Orientado a rendimiento; no aborda objetivos simultáneos de composición corporal.", aplicacion:"Justifica subir el carbohidrato los días de tirada larga o calidad y bajarlo en descanso y descarga.", doi:"" },
-  { id:"n3", autores:"Jeukendrup, A. E.", anio:2014, titulo:"Hacia una nutrición deportiva personalizada: ingesta de carbohidrato durante el ejercicio", fuente:"Sports Medicine · revisión", tema:"Nutrición", grado:"fuerte", tags:["durante","intraentreno","carbohidrato","gel","bebida","tirada larga"], poblacion:"Deportistas de resistencia", resumenIA:"Por debajo de 45-60 min no hace falta carbohidrato durante; entre 60 y 150 min, 30-60 g/h; por encima, hasta 90 g/h con mezcla glucosa-fructosa. El intestino se entrena.", limites:"Las tasas altas requieren adaptación progresiva; aplicar la cifra máxima sin entrenarla causa problemas digestivos.", aplicacion:"Regla del carbohidrato durante la sesión: el módulo solo lo prescribe cuando la sesión supera los 75 min.", doi:"" },
-  { id:"n4", autores:"Kerksick, C. M. y cols.", anio:2017, titulo:"Posicionamiento de la ISSN sobre el timing de nutrientes", fuente:"J Int Soc Sports Nutr · posicionamiento", tema:"Nutrición", grado:"moderada", tags:["timing","pre entreno","post entreno","ventana","ayunas"], poblacion:"Deportistas recreativos y entrenados", resumenIA:"La ingesta total diaria pesa más que el momento exacto, pero el timing importa cuando hay poco tiempo entre sesiones o se entrena en ayunas.", limites:"Matiza y en parte desmonta la idea de la ventana anabólica estrecha. No exageres la urgencia del post-entreno.", aplicacion:"Base del cronograma diario: se recomiendan ventanas amplias, no minutos exactos, salvo cuando hay dos sesiones cercanas.", doi:"" },
-  { id:"n5", autores:"Aragon, A. A., Schoenfeld, B. J.", anio:2013, titulo:"Revisión del timing de nutrientes: ¿existe una ventana anabólica post-ejercicio?", fuente:"J Int Soc Sports Nutr · revisión", tema:"Nutrición", grado:"moderada", tags:["ventana anabolica","post entreno","proteina","timing"], poblacion:"Sujetos entrenados en fuerza", resumenIA:"La supuesta ventana de 30-60 min no está bien sustentada. Lo relevante es el intervalo entre la comida previa y la posterior, que puede llegar a varias horas.", limites:"Si se entrena en ayunas, el post-entreno sí gana importancia real.", aplicacion:"Justifica no meter prisa artificial tras el gimnasio, pero sí priorizar la toma posterior cuando se entrena temprano sin desayunar.", doi:"" },
-  { id:"n6", autores:"Schoenfeld, B. J., Aragon, A. A.", anio:2018, titulo:"¿Cuánta proteína puede usar el cuerpo en una sola comida?", fuente:"J Int Soc Sports Nutr · revisión", tema:"Nutrición", grado:"moderada", tags:["proteina","reparto","comida","dosis","leucina"], poblacion:"Adultos entrenados en fuerza", resumenIA:"Recomiendan repartir la proteína en 3-4 tomas de aproximadamente 0,4 g/kg para maximizar la síntesis proteica diaria.", limites:"Extrapolado de estudios agudos de síntesis proteica, no de ensayos largos de hipertrofia.", aplicacion:"El módulo reparte el objetivo diario de proteína en 4-5 tomas en lugar de dejarlo como una cifra global.", doi:"" },
-  { id:"n7", autores:"Areta, J. L. y cols.", anio:2013, titulo:"Distribución temporal de la ingesta de proteína y síntesis proteica muscular tras ejercicio de fuerza", fuente:"J Physiol · ensayo controlado", tema:"Nutrición", grado:"moderada", tags:["proteina","reparto","sintesis","frecuencia"], poblacion:"n=24, hombres jóvenes entrenados", resumenIA:"Con la misma cantidad total, 4 tomas de 20 g cada 3 h superaron a 2 tomas de 40 g y a 8 de 10 g en síntesis proteica durante 12 h.", limites:"Muestra pequeña, hombres jóvenes, medición aguda de síntesis y no de hipertrofia real.", aplicacion:"Apoya el reparto en 4 tomas espaciadas frente a concentrar la proteína en una o dos comidas grandes.", doi:"" },
-  { id:"n8", autores:"Jäger, R. y cols.", anio:2017, titulo:"Posicionamiento de la ISSN sobre proteína y ejercicio", fuente:"J Int Soc Sports Nutr · posicionamiento", tema:"Nutrición", grado:"fuerte", tags:["proteina","masa muscular","recuperacion","calidad proteica"], poblacion:"Deportistas de fuerza y resistencia", resumenIA:"1,4-2,0 g/kg/día cubren a la mayoría; márgenes superiores en déficit calórico o carga alta. La proteína previa al sueño aporta un beneficio adicional modesto.", limites:"Documento de consenso con autores vinculados a la industria de suplementos.", aplicacion:"Sostiene el objetivo de proteína del módulo y la toma antes de dormir en días de doble carga.", doi:"" },
-  { id:"n9", autores:"Murphy, C. H., Hector, A. J., Phillips, S. M.", anio:2015, titulo:"Consideraciones sobre la proteína para optimizar la masa muscular en déficit energético", fuente:"Eur J Sport Sci · revisión", tema:"Nutrición", grado:"moderada", tags:["deficit","recomposicion","proteina","masa magra","perdida grasa"], poblacion:"Deportistas en restricción energética", resumenIA:"En déficit, subir la proteína hacia 2,0-2,4 g/kg y mantener el entrenamiento de fuerza protege la masa magra.", limites:"La recomposición es más probable en quien viene de un parón o tiene margen de grasa; no es indefinida.", aplicacion:"Justifica el margen alto de proteína del plan y que el módulo suba la proteína, no la baje, si el objetivo es composición corporal.", doi:"" },
-  { id:"n10", autores:"Impey, S. G. y cols.", anio:2018, titulo:"Combustible para el trabajo requerido: una perspectiva teórica sobre la periodización del carbohidrato", fuente:"Sports Medicine · revisión", tema:"Nutrición", grado:"moderada", tags:["periodizacion","carbohidrato","disponibilidad","adaptacion","dia facil"], poblacion:"Deportistas de resistencia", resumenIA:"Propone ajustar el carbohidrato a la demanda de cada sesión en lugar de mantener una ingesta uniforme.", limites:"Marco teórico. La evidencia de que mejore el rendimiento final es limitada y hay riesgo de baja disponibilidad energética.", aplicacion:"Base conceptual del ajuste diario de carbohidrato del módulo. Se aplica con prudencia: nunca por debajo del suelo calórico.", doi:"" },
-  { id:"n11", autores:"Guest, N. S. y cols.", anio:2021, titulo:"Posicionamiento de la ISSN sobre cafeína y rendimiento", fuente:"J Int Soc Sports Nutr · posicionamiento", tema:"Nutrición", grado:"fuerte", tags:["cafeina","pre entreno","rendimiento","sueño"], poblacion:"Deportistas de ambos sexos", resumenIA:"3-6 mg/kg entre 30 y 60 min antes mejoran el rendimiento de resistencia; por encima de 9 mg/kg no aporta más y aumenta los efectos adversos.", limites:"Respuesta muy variable según genética y tolerancia. Interfiere con el sueño hasta 6-8 h después.", aplicacion:"Solo se sugiere en sesiones de calidad y competición, y nunca en entrenos de tarde por su efecto sobre el sueño.", doi:"" },
-  { id:"n12", autores:"de Oliveira, E. P., Burini, R. C., Jeukendrup, A.", anio:2014, titulo:"Molestias gastrointestinales durante el ejercicio: prevalencia, causas y recomendaciones nutricionales", fuente:"Sports Medicine · revisión", tema:"Nutrición", grado:"moderada", tags:["digestivo","fibra","grasa","intestino","molestias","pre entreno"], poblacion:"Deportistas de resistencia; prevalencia del 30-90% según el estudio", resumenIA:"La fibra, la grasa, la proteína concentrada y las soluciones muy concentradas antes del ejercicio aumentan las molestias digestivas, sobre todo al correr.", limites:"Mucha variabilidad individual. Correr genera más síntomas que el ciclismo por el impacto mecánico.", aplicacion:"Fundamento del aviso de fibra: las comidas dentro de las 2-3 h previas a correr deben ir bajas en fibra y grasa, aunque el resto del día sea alto en ambas.", doi:"" },
-  { id:"n13", autores:"Sawka, M. N. y cols.", anio:2007, titulo:"Posicionamiento del ACSM: ejercicio y reposición de líquidos", fuente:"Med Sci Sports Exerc · posicionamiento", tema:"Nutrición", grado:"fuerte", tags:["hidratacion","liquidos","sodio","deshidratacion","calor"], poblacion:"Deportistas en distintas condiciones ambientales", resumenIA:"Recomienda beber según sed y pérdidas individuales, evitando pérdidas superiores al 2% del peso corporal y también la sobrehidratación.", limites:"Las cifras genéricas de mililitros por hora son orientativas: la tasa de sudoración varía enormemente entre personas.", aplicacion:"Sostiene la pauta de líquidos en tiradas largas y la recomendación de pesarse antes y después para calcular la propia tasa de sudoración.", doi:"" },
-  { id:"n14", autores:"Slavin, J.", anio:2013, titulo:"Fibra y prebióticos: mecanismos y beneficios para la salud", fuente:"Nutrients · revisión", tema:"Nutrición", grado:"moderada", tags:["fibra","prebiotico","microbiota","digestivo","salud"], poblacion:"Población general adulta", resumenIA:"La fibra fermentable modifica la composición de la microbiota y la producción de ácidos grasos de cadena corta. Recomienda 25-38 g/día.", limites:"Población general, no deportistas. No aborda el efecto de la fibra sobre las molestias digestivas durante el ejercicio.", aplicacion:"Apoya el objetivo de fibra alta del plan, pero debe combinarse con [de Oliveira 2014] para decidir CUÁNDO tomarla.", doi:"" },
-  { id:"n15", autores:"Birt, D. F. y cols.", anio:2013, titulo:"Almidón resistente: promesa para la mejora de la salud humana", fuente:"Advances in Nutrition · revisión", tema:"Nutrición", grado:"débil", tags:["almidon resistente","enfriado","patata","arroz","microbiota","butirato"], poblacion:"Estudios in vitro, animales y humanos de corta duración", resumenIA:"Cocinar y enfriar patata, arroz o pasta aumenta su contenido en almidón resistente, que fermenta en el colon produciendo butirato.", limites:"El aumento real de almidón resistente al enfriar es modesto y muy variable. Los efectos clínicos en humanos están poco establecidos.", aplicacion:"Justifica la práctica de cocinar y enfriar del plan, pero como mejora marginal y no como pilar. Evidencia débil: dilo si te preguntan.", doi:"" },
-  { id:"n16", autores:"Rothschild, J. A. y cols.", anio:2020, titulo:"¿Qué debo comer antes de entrenar? Nutrición previa al ejercicio y respuesta al entrenamiento", fuente:"Nutrients · revisión", tema:"Nutrición", grado:"moderada", tags:["pre entreno","ayunas","desayuno","carbohidrato","adaptacion"], poblacion:"Deportistas de resistencia y fuerza", resumenIA:"La comida previa influye sobre todo en sesiones largas o de alta intensidad; en sesiones cortas y fáciles el efecto es pequeño.", limites:"La respuesta al entreno en ayunas varía mucho entre personas y según la sesión.", aplicacion:"Regla del pre-entreno: obligatorio antes de calidad y tirada larga, opcional antes de rodajes cortos y fáciles.", doi:"" },
-  { id:"n17", autores:"Helms, E. R., Aragon, A. A., Fitschen, P. J.", anio:2014, titulo:"Recomendaciones basadas en la evidencia para preparación de culturismo natural: nutrición y suplementación", fuente:"J Int Soc Sports Nutr · revisión", tema:"Nutrición", grado:"moderada", tags:["composicion corporal","deficit","proteina","grasa","ritmo de perdida"], poblacion:"Culturistas naturales y deportistas de físico", resumenIA:"Sitúa el ritmo sostenible de pérdida en torno al 0,5-1% del peso corporal por semana y avisa de la pérdida de masa magra por encima de eso.", limites:"Población muy específica con objetivos estéticos y grasa corporal muy baja.", aplicacion:"Sostiene el suelo calórico del módulo: no se permite proponer déficits agresivos aunque el objetivo sea composición corporal.", doi:"" },
-  { id:"n18", autores:"Melin, A. K. y cols.", anio:2019, titulo:"Baja disponibilidad energética en el deporte: consecuencias sobre salud y rendimiento", fuente:"Revisión", tema:"Nutrición", grado:"moderada", tags:["disponibilidad energetica","reds","hueso","hormonal","salud","riesgo"], poblacion:"Deportistas de ambos sexos, sobre todo de resistencia", resumenIA:"La disponibilidad energética por debajo de 30 kcal/kg de masa magra se asocia a alteraciones hormonales, óseas e inmunitarias y a peor rendimiento.", limites:"La mayoría de la evidencia procede de mujeres deportistas; en hombres está peor caracterizada.", aplicacion:"Define el suelo por debajo del cual el módulo se niega a bajar y muestra una advertencia en lugar de una recomendación.", doi:"" },
-];
+
 
 /* ============================================================
    BIBLIOTECA v2 — MODELO, NORMALIZACIÓN Y BÚSQUEDA POR RELEVANCIA
@@ -215,6 +173,7 @@ const TEMAS_SUG = ["Rendimiento","Volumen","Lesiones","Concurrente","Fuerza","Hi
 function normRef(r) {
   return {
     id: r.id || uid(),
+    _dbId: r._dbId || "",
     autores: r.autores || "", anio: +r.anio || new Date().getFullYear(),
     titulo: r.titulo || "", fuente: r.fuente || "", tema: r.tema || "",
     grado: GRADOS.includes(r.grado) ? r.grado : "moderada",
@@ -229,6 +188,9 @@ function normRef(r) {
     paginas: +r.paginas || 0,
     revisado: r.revisado === undefined ? true : !!r.revisado, // false = propuesto por IA, sin confirmar
     creado: r.creado || iso(new Date()),
+    studyType: r.studyType || "narrative_review",
+    populationType: r.populationType || null,
+    sampleSize: Number.isInteger(r.sampleSize) ? r.sampleSize : null,
   };
 }
 
@@ -1288,6 +1250,22 @@ async function loadState() {
   return prep({ ...EMPTY });
 }
 async function saveState(s) { try { await store.set(KEY, JSON.stringify(s)); return true; } catch { return false; } }
+async function cargarBibliografiaAPI() {
+  const documents = [];
+  let page = 1;
+  let total = Infinity;
+  while (documents.length < total) {
+    const response = await fetch(`/api/documents?page=${page}&pageSize=100`, { credentials: "same-origin" });
+    if (!response.ok) throw new Error(`Biblioteca API: HTTP ${response.status}`);
+    const data = await response.json();
+    const batch = Array.isArray(data.documents) ? data.documents : [];
+    documents.push(...batch);
+    total = Number(data.total) || documents.length;
+    if (!batch.length) break;
+    page += 1;
+  }
+  return documents.map(documentoDesdeAPI).map(normRef);
+}
 async function pushToSheets(url, sheet, rows, perfil) {
   if (!url) return { ok: false, msg: "Sin URL de Apps Script configurada" };
   try {
@@ -1335,7 +1313,20 @@ export default function HybridCoach() {
     syncRef.current = createSyncController({ storage: window.localStorage, fetchImpl: window.fetch.bind(window) });
   }
 
-  useEffect(() => { loadState().then(setSt); }, []);
+  useEffect(() => {
+    let active = true;
+    loadState().then(async (localState) => {
+      if (!active) return;
+      setSt(localState);
+      try {
+        const biblio = await cargarBibliografiaAPI();
+        if (active && biblio.length) setSt((current) => current ? { ...current, biblio } : current);
+      } catch {
+        // Sin sesión, sin red o antes del seed: se conserva la copia local intacta.
+      }
+    });
+    return () => { active = false; };
+  }, []);
   useEffect(() => { if (toast) { const t = setTimeout(() => setToast(null), 2800); return () => clearTimeout(t); } }, [toast]);
   useEffect(() => {
     const sync = syncRef.current;
@@ -2195,13 +2186,42 @@ function Biblioteca({ st, P, update, notify, onClose }) {
     return l.sort((a, b) => b.anio - a.anio);
   }, [st.biblio, filtro, q]);
 
-  const guardar = (r) => {
-    const ref = normRef({ ...r, revisado: true });
-    update((s) => { const i = s.biblio.findIndex((x) => x.id === ref.id);
-      if (i >= 0) s.biblio[i] = ref; else s.biblio.unshift(ref); return s; });
-    notify("Referencia guardada."); setEdit(null);
+  const guardar = async (r) => {
+    try {
+      const method = r._dbId ? "PATCH" : "POST";
+      const url = r._dbId ? `/api/documents/${encodeURIComponent(r._dbId)}` : "/api/documents";
+      const response = await fetch(url, {
+        method,
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(documentoParaAPI(r)),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
+      const ref = normRef(documentoDesdeAPI(data.document));
+      update((s) => {
+        const i = s.biblio.findIndex((item) => item._dbId === ref._dbId || item.id === ref.id);
+        if (i >= 0) s.biblio[i] = ref; else s.biblio.unshift(ref);
+        return s;
+      });
+      notify("Referencia guardada."); setEdit(null);
+    } catch (error) {
+      notify("No se pudo guardar: " + error.message);
+    }
   };
-  const borrar = (id) => { update((s) => { s.biblio = s.biblio.filter((x) => x.id !== id); return s; }); notify("Referencia eliminada."); setEdit(null); };
+  const borrar = async (id) => {
+    const ref = st.biblio.find((item) => item.id === id);
+    if (!ref?._dbId) return notify("La referencia aún no existe en Postgres.");
+    try {
+      const response = await fetch(`/api/documents/${encodeURIComponent(ref._dbId)}`, { method: "DELETE", credentials: "same-origin" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
+      update((s) => { s.biblio = s.biblio.filter((item) => item._dbId !== ref._dbId); return s; });
+      notify("Referencia eliminada."); setEdit(null);
+    } catch (error) {
+      notify("No se pudo eliminar: " + error.message);
+    }
+  };
 
   if (importando) return <ImportarPDF notify={notify} onCancel={() => setImportando(false)}
     onListo={(ref, meta) => { setImportando(false); setEdit({ ...ref, _nuevo: true, _meta: meta }); }} />;
