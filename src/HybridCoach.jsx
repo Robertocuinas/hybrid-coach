@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { createSyncController } from "./sync.js";
 
 /* ============================================================
    HYBRID COACH v2 — multiperfil · plan generado · base de evidencia
@@ -1331,11 +1332,34 @@ export default function HybridCoach() {
   const [pantalla, setPantalla] = useState(null); // wizard | perfiles | biblio | ajustes
   const [today] = useState(() => iso(new Date()));
   const [toast, setToast] = useState(null);
+  const syncRef = useRef(null);
+  if (!syncRef.current && typeof window !== "undefined") {
+    syncRef.current = createSyncController({ storage: window.localStorage, fetchImpl: window.fetch.bind(window) });
+  }
 
   useEffect(() => { loadState().then(setSt); }, []);
   useEffect(() => { if (toast) { const t = setTimeout(() => setToast(null), 2800); return () => clearTimeout(t); } }, [toast]);
+  useEffect(() => {
+    const sync = syncRef.current;
+    if (!sync) return undefined;
+    const flush = () => { void sync.flush(); };
+    window.addEventListener("online", flush);
+    window.addEventListener("visibilitychange", flush);
+    const timer = window.setInterval(flush, 30000);
+    flush();
+    return () => { window.removeEventListener("online", flush); window.removeEventListener("visibilitychange", flush); window.clearInterval(timer); };
+  }, []);
+  useEffect(() => {
+    if (st && syncRef.current) void syncRef.current.reportDaily(st).catch(() => {});
+  }, [st]);
 
-  const update = (fn) => setSt((prev) => { const next = fn(JSON.parse(JSON.stringify(prev))); saveState(next); return next; });
+  const update = (fn) => setSt((prev) => {
+    const next = fn(JSON.parse(JSON.stringify(prev)));
+    saveState(next); // La escritura local sigue siendo inmediata y autoritativa durante 3b.
+    syncRef.current?.enqueue(next);
+    void syncRef.current?.flush();
+    return next;
+  });
   const notify = (m) => setToast(m);
 
   if (!st) return (<div className="hc"><style>{CSS}</style><div className="wrap" style={{ paddingTop: 60 }}><p className="eyebrow">Cargando…</p></div></div>);

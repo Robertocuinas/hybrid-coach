@@ -8,11 +8,12 @@
     "node": ">=20"
   },
   "scripts": {
+    "test": "node --test src/sync.test.js server/jobs/reconciliation.test.js server/routes/sync.persistence.test.js",
     "build": "node build.mjs",
     "start": "node server.js",
     "dev": "node build.mjs --watch & node server.js",
-    "migrate": "node-pg-migrate up --migrations ./server/db/migrations",
-    "migrate:down": "node-pg-migrate down --migrations ./server/db/migrations",
+    "migrate": "node-pg-migrate up --migrations-dir ./server/db/migrations",
+    "migrate:down": "node-pg-migrate down --migrations-dir ./server/db/migrations",
     "migrate:data": "node migration/scripts/run.js"
   },
   "dependencies": {
