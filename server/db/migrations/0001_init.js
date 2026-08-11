@@ -1,8 +1,28 @@
 export const shorthands = undefined;
 
+/* Los "origen" de documents / running_sessions / plan_modifications / routines son
+   dominios de valores distintos (un paper no viene "de Strava", una rutina no se
+   "regenera"). Un enum por tabla en vez de un enum origen compartido evita que la
+   base de datos acepte una combinación que no tiene sentido. */
+const ENUMS = [
+  ["study_type", ["meta_analysis", "systematic_review", "rct", "observational", "position_statement", "narrative_review", "preprint"]],
+  ["evidence_grade", ["fuerte", "moderada", "debil", "practica"]],
+  ["population_type", ["runners", "strength_athletes", "general_population", "mixed"]],
+  ["document_origen", ["semilla", "manual", "pdf"]],
+  ["running_origen", ["manual", "strava"]],
+  ["plan_modification_origen", ["usuario", "coach_ia", "regenerado"]],
+  ["routine_origen", ["generada", "editada"]],
+];
+
 export async function up({ context: query }) {
   await query("CREATE EXTENSION IF NOT EXISTS pgcrypto;");
   await query("CREATE EXTENSION IF NOT EXISTS vector;");
+
+  for (const [nombre, valores] of ENUMS) {
+    await query(`DO $$ BEGIN
+      CREATE TYPE ${nombre} AS ENUM (${valores.map((v) => `'${v}'`).join(", ")});
+    EXCEPTION WHEN duplicate_object THEN null; END $$;`);
+  }
 
   await query(`CREATE TABLE IF NOT EXISTS users (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -124,7 +144,7 @@ export async function up({ context: query }) {
     plan_original jsonb,
     cambio jsonb,
     motivo text,
-    origen text,
+    origen plan_modification_origen,
     created_at timestamptz NOT NULL DEFAULT now()
   );`);
 
@@ -162,7 +182,7 @@ export async function up({ context: query }) {
     rpe int,
     dolor int,
     notas text,
-    origen text,
+    origen running_origen,
     external_id text
   );`);
 
@@ -204,7 +224,7 @@ export async function up({ context: query }) {
     rir int,
     prioritario boolean DEFAULT false,
     nota text,
-    origen text
+    origen routine_origen
   );`);
 
   await query(`CREATE TABLE IF NOT EXISTS recovery_logs (
@@ -244,10 +264,10 @@ export async function up({ context: query }) {
     fuente_revista text,
     doi text UNIQUE,
     hash_archivo text UNIQUE,
-    study_type text,
-    evidence_grade text,
+    study_type study_type,
+    evidence_grade evidence_grade,
     poblacion text,
-    population_type text,
+    population_type population_type,
     sample_size int,
     tema_principal text,
     tags text[],
@@ -255,7 +275,7 @@ export async function up({ context: query }) {
     limites text,
     aplicacion_practica text,
     storage_key text,
-    origen text,
+    origen document_origen,
     revisado boolean DEFAULT false,
     subido_por uuid REFERENCES users(id) ON DELETE SET NULL,
     created_at timestamptz NOT NULL DEFAULT now()
@@ -357,21 +377,45 @@ export async function up({ context: query }) {
     created_at timestamptz NOT NULL DEFAULT now()
   );`);
 
+  /* Índices críticos: además de los que exige cada consulta concreta (documentados
+     en 03-modelo-datos.md §10), toda tabla que cuelga de athlete_profile_id lleva un
+     índice compuesto (athlete_profile_id, <columna temporal>) para listar "lo último
+     de este atleta" sin escanear la tabla entera. Donde no hay created_at se usa la
+     columna temporal real de la tabla (fecha, generado_en, vigente_desde...). */
   await query(`CREATE INDEX IF NOT EXISTS idx_athlete_profiles_user_id ON athlete_profiles(user_id);`);
+
   await query(`CREATE INDEX IF NOT EXISTS idx_injuries_profile_activa ON injuries(athlete_profile_id, activa);`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_injuries_profile_created_at ON injuries(athlete_profile_id, created_at);`);
+
   await query(`CREATE INDEX IF NOT EXISTS idx_training_plans_profile_activo ON training_plans(athlete_profile_id, activo);`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_training_plans_profile_generado_en ON training_plans(athlete_profile_id, generado_en);`);
+
   await query(`CREATE INDEX IF NOT EXISTS idx_training_weeks_plan_numero ON training_weeks(training_plan_id, numero_semana);`);
   await query(`CREATE INDEX IF NOT EXISTS idx_planned_sessions_week_dia ON planned_sessions(training_week_id, dia_semana);`);
+
+  await query(`CREATE INDEX IF NOT EXISTS idx_plan_modifications_profile_created_at ON plan_modifications(athlete_profile_id, created_at);`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_availability_profile_vigente_desde ON availability(athlete_profile_id, vigente_desde);`);
+
   await query(`CREATE INDEX IF NOT EXISTS idx_completed_sessions_profile_fecha ON completed_sessions(athlete_profile_id, fecha DESC);`);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_running_sessions_external_id ON running_sessions(external_id) WHERE external_id IS NOT NULL;`);
   await query(`CREATE INDEX IF NOT EXISTS idx_strength_sets_exercise_created_at ON strength_sets(strength_exercise_id, created_at DESC);`);
-  await query(`CREATE INDEX IF NOT EXISTS idx_recovery_logs_profile_fecha ON recovery_logs(athlete_profile_id, fecha);`);
+
+  /* Un registro de recuperación por día y atleta: la app hace upsert sobre esta
+     combinación, no un insert libre. */
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_recovery_logs_profile_fecha ON recovery_logs(athlete_profile_id, fecha);`);
   await query(`CREATE INDEX IF NOT EXISTS idx_feedback_logs_profile_fecha ON feedback_logs(athlete_profile_id, fecha DESC);`);
+
   await query(`CREATE INDEX IF NOT EXISTS idx_documents_tags ON documents USING GIN(tags);`);
   await query(`CREATE INDEX IF NOT EXISTS idx_document_chunks_doc_chunk ON document_chunks(document_id, chunk_index);`);
   await query(`CREATE INDEX IF NOT EXISTS idx_document_chunks_tsv ON document_chunks USING GIN(tsv);`);
   await query(`CREATE INDEX IF NOT EXISTS idx_chunk_embeddings_hnsw ON chunk_embeddings USING hnsw (embedding vector_cosine_ops);`);
+
+  await query(`CREATE INDEX IF NOT EXISTS idx_ai_recommendations_profile_created_at ON ai_recommendations(athlete_profile_id, created_at);`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_conversations_profile_ultimo_mensaje ON conversations(athlete_profile_id, ultimo_mensaje_en DESC);`);
   await query(`CREATE INDEX IF NOT EXISTS idx_messages_conversation_created_at ON messages(conversation_id, created_at);`);
+
+  await query(`CREATE INDEX IF NOT EXISTS idx_nutrition_targets_profile_fecha ON nutrition_targets(athlete_profile_id, fecha);`);
+  await query(`CREATE INDEX IF NOT EXISTS idx_strava_connections_user_id ON strava_connections(user_id);`);
 }
 
 export async function down({ context: query }) {
@@ -402,5 +446,10 @@ export async function down({ context: query }) {
   await query(`DROP TABLE IF EXISTS injuries;`);
   await query(`DROP TABLE IF EXISTS athlete_profiles;`);
   await query(`DROP TABLE IF EXISTS users;`);
+
+  for (const [nombre] of ENUMS) {
+    await query(`DROP TYPE IF EXISTS ${nombre};`);
+  }
+
   await query(`DROP EXTENSION IF EXISTS vector;`);
 }
