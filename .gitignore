@@ -8,3 +8,5 @@ migration/source/
 migration/parsed/
 migration/transformed/
 .tmp-pgtest/
+migration/parsed/
+migration/transformed/

@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test src/sync.test.js server/jobs/reconciliation.test.js server/routes/sync.persistence.test.js",
+    "test": "node --test src/sync.test.js server/jobs/reconciliation.test.js server/routes/sync.persistence.test.js server/ai/providers/providers.test.js",
     "build": "node build.mjs",
     "start": "node server.js",
     "dev": "node build.mjs --watch & node server.js",

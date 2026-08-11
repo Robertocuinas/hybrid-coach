@@ -15,11 +15,10 @@
    estructura derivada.
 */
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import {
   PARSED_LOCAL_DIR, TRANSFORMED_FILE, listFiles, readJson, writeJson, logStep,
   normalizeValue, toNumber, normalizeExerciseName, titleCase, normalizeEvidenceGrade,
-  normalizeProfileName, isoDate, inRange,
+  normalizeProfileName, isoDate, inRange, idDeterminista,
 } from "./lib/util.js";
 
 /* "5:23" (min:seg / km) → 5.383 (decimal). El motor guarda el ritmo ya
@@ -64,8 +63,11 @@ export async function run() {
   const duplicados = new Contador();
   const rechazados = [];
   const legacyMap = []; // { source, table, legacy_id, new_id }
-  const nuevoId = (source, table, legacyId) => {
-    const id = randomUUID();
+
+  /* El id sale de la clave natural, no de un aleatorio: ver idDeterminista().
+     `legacyId` solo se usa para la traza en legacy_id_map, nunca para el id. */
+  const nuevoId = (source, table, legacyId, ...clave) => {
+    const id = idDeterminista(table, ...clave);
     if (legacyId !== undefined && legacyId !== null) legacyMap.push({ source, table, legacy_id: String(legacyId), new_id: id });
     return id;
   };
@@ -92,7 +94,7 @@ export async function run() {
       const clave = `${(ref.titulo || "").trim().toLowerCase()}|${ref.anio || ""}`;
       if (vistosDoc.has(clave)) { duplicados.add("documents"); continue; }
       vistosDoc.add(clave);
-      const id = nuevoId(file, "documents", ref.id);
+      const id = nuevoId(file, "documents", ref.id, clave);
       out.documents.push({
         id, titulo: normalizeValue(ref.titulo), autores: normalizeValue(ref.autores),
         anio: toNumber(ref.anio), fuente_revista: normalizeValue(ref.fuente),
@@ -107,7 +109,7 @@ export async function run() {
 
   // --- 3. Un perfil lógico por grupo (mismo nombre normalizado en distintos dispositivos) ---
   for (const [clave, entradas] of grupos) {
-    const profileId = randomUUID();
+    const profileId = idDeterminista("athlete_profiles", clave);
     for (const e of entradas) legacyMap.push({ source: e.file, table: "athlete_profiles", legacy_id: String(e.legacyId), new_id: profileId });
 
     // La entrada "principal" (para el perfil escalar) es la de fecha de creación más antigua.
@@ -124,7 +126,7 @@ export async function run() {
     // Disponibilidad: estado actual, no histórico — se toma de la entrada principal.
     if (perfilOrigen.dias || perfilOrigen.minGym || perfilOrigen.minRun || perfilOrigen.finde) {
       out.availability.push({
-        id: randomUUID(), athlete_profile_id: profileId,
+        id: idDeterminista("availability", profileId), athlete_profile_id: profileId,
         vigente_desde: isoDate(principal.profileData.creado) || isoDate(new Date().toISOString()),
         dias: perfilOrigen.dias || null,
         min_gym: toNumber(perfilOrigen.minGym), min_run: toNumber(perfilOrigen.minRun), min_finde: toNumber(perfilOrigen.finde),
@@ -138,7 +140,7 @@ export async function run() {
       if (vistasLesion.has(k)) { duplicados.add("injuries"); continue; }
       vistasLesion.add(k);
       out.injuries.push({
-        id: nuevoId(e.file, "injuries", l.id), athlete_profile_id: profileId,
+        id: nuevoId(e.file, "injuries", l.id, profileId, k), athlete_profile_id: profileId,
         zona: normalizeValue(l.zona), recurrente: !!l.recurrente, contexto: normalizeValue(l.cuando), activa: true,
       });
     }
@@ -149,7 +151,7 @@ export async function run() {
       const nombre = titleCase(ej.full || ej.basico || ej.casa);
       const norm = normalizeExerciseName(nombre);
       if (!norm || registroEjercicios.has(norm)) { if (norm) duplicados.add("strength_exercises"); continue; }
-      const id = nuevoId(e.file, "strength_exercises", legacyEjId);
+      const id = nuevoId(e.file, "strength_exercises", legacyEjId, profileId, norm);
       registroEjercicios.set(norm, id);
       out.strength_exercises.push({
         id, nombre, grupo_muscular: normalizeValue(ej.g), patron: null,
@@ -160,7 +162,7 @@ export async function run() {
       const norm = normalizeExerciseName(nombreCrudo);
       if (!norm) return null;
       if (registroEjercicios.has(norm)) return registroEjercicios.get(norm);
-      const id = nuevoId(file, "strength_exercises", null);
+      const id = nuevoId(file, "strength_exercises", null, profileId, norm);
       registroEjercicios.set(norm, id);
       out.strength_exercises.push({
         id, nombre: titleCase(nombreCrudo), grupo_muscular: null, patron: null,
@@ -178,10 +180,10 @@ export async function run() {
       if (vistasRun.has(clave2)) { duplicados.add("running_sessions"); continue; }
       if (!inRange(r.rpe, 1, 10) || !inRange(r.dolor, 0, 10)) { rechazados.push({ tipo: "running", motivo: "rpe/dolor fuera de rango", fila: r }); continue; }
       vistasRun.add(clave2);
-      const completedId = nuevoId(e.file, "completed_sessions", null);
+      const completedId = nuevoId(e.file, "completed_sessions", null, profileId, "run", clave2);
       out.completed_sessions.push({ id: completedId, athlete_profile_id: profileId, planned_session_id: null, fecha, tipo: "run", semana: toNumber(r.semana) });
       out.running_sessions.push({
-        id: nuevoId(e.file, "running_sessions", r.id), completed_session_id: completedId,
+        id: nuevoId(e.file, "running_sessions", r.id, completedId), completed_session_id: completedId,
         codigo_sesion: normalizeValue(r.session_code), distancia_km: toNumber(r.distancia_km),
         duracion_min: toNumber(r.duracion_min), ritmo: paceToDecimal(r.ritmo),
         fc_media: toNumber(r.fc_media), fc_max: toNumber(r.fc_max), desnivel: toNumber(r.desnivel),
@@ -205,15 +207,15 @@ export async function run() {
       grupo.sets.push(s);
     }
     for (const grupo of gruposFuerza.values()) {
-      const completedId = nuevoId(grupo.file, "completed_sessions", null);
+      const completedId = nuevoId(grupo.file, "completed_sessions", null, profileId, "gym", grupo.fecha, grupo.codigo_sesion);
       out.completed_sessions.push({ id: completedId, athlete_profile_id: profileId, planned_session_id: null, fecha: grupo.fecha, tipo: "gym", semana: toNumber(grupo.semana) });
-      const strengthSessionId = nuevoId(grupo.file, "strength_sessions", null);
+      const strengthSessionId = nuevoId(grupo.file, "strength_sessions", null, completedId);
       out.strength_sessions.push({ id: strengthSessionId, completed_session_id: completedId, codigo_sesion: normalizeValue(grupo.codigo_sesion) });
       for (const s of grupo.sets) {
         const exId = resolverEjercicio(s.exercise, grupo.file);
         if (!exId) { rechazados.push({ tipo: "strength_set", motivo: "sin nombre de ejercicio", fila: s }); continue; }
         out.strength_sets.push({
-          id: nuevoId(grupo.file, "strength_sets", s.id), strength_session_id: strengthSessionId,
+          id: nuevoId(grupo.file, "strength_sets", s.id, strengthSessionId, exId, s.set), strength_session_id: strengthSessionId,
           strength_exercise_id: exId, orden: toNumber(s.set), peso_kg: toNumber(s.weight),
           reps: toNumber(s.reps), rir: toNumber(s.rir), notas: normalizeValue(s.notes),
         });
@@ -230,7 +232,7 @@ export async function run() {
     }
     for (const [fecha, { e, r }] of recPorFecha) {
       out.recovery_logs.push({
-        id: nuevoId(e.file, "recovery_logs", null), athlete_profile_id: profileId, fecha,
+        id: nuevoId(e.file, "recovery_logs", null, profileId, fecha), athlete_profile_id: profileId, fecha,
         horas_sueno: toNumber(r.sueno), calidad_sueno: toNumber(r.calidad), fatiga: toNumber(r.fatiga),
         agujetas: toNumber(r.agujetas), estres: toNumber(r.estres), motivacion: toNumber(r.motivacion),
         dolor: toNumber(r.dolor),
@@ -247,7 +249,7 @@ export async function run() {
       if (!inRange(c.rpe, 1, 10) || !inRange(c.dolor, 0, 10)) { rechazados.push({ tipo: "checkin", motivo: "rpe/dolor fuera de rango", fila: c }); continue; }
       vistoCheckin.add(k);
       out.feedback_logs.push({
-        id: nuevoId(e.file, "feedback_logs", null), athlete_profile_id: profileId, fecha,
+        id: nuevoId(e.file, "feedback_logs", null, profileId, k), athlete_profile_id: profileId, fecha,
         semana: toNumber(c.semana), rpe: toNumber(c.rpe), sensacion: normalizeValue(c.feelTxt),
         dolor: toNumber(c.dolor), zona_dolor: normalizeValue(c.loc), tipo_dolor: normalizeValue(c.tipo),
         cuando_aparece: normalizeValue(c.cuando), energia: toNumber(c.energia), comentario: normalizeValue(c.comentario),
@@ -258,7 +260,7 @@ export async function run() {
     for (const e of entradas) for (const ch of e.profileData?.changes || []) {
       const motivo = [normalizeValue(ch.motivo), normalizeValue(ch.datos)].filter(Boolean).join(" — ") || null;
       out.plan_modifications.push({
-        id: nuevoId(e.file, "plan_modifications", null), athlete_profile_id: profileId,
+        id: nuevoId(e.file, "plan_modifications", null, profileId, ch.fecha, ch.semana, ch.cambio), athlete_profile_id: profileId,
         fecha: isoDate(ch.fecha), semana: toNumber(ch.semana),
         plan_original: normalizeValue(ch.plan_original), cambio: normalizeValue(ch.cambio),
         motivo, origen: "usuario",
@@ -272,7 +274,7 @@ export async function run() {
         const k = `${categoria}|${opcion}`;
         if (vistaComida.has(k)) { duplicados.add("meal_catalog"); continue; }
         vistaComida.add(k);
-        out.meal_catalog.push({ id: nuevoId(e.file, "meal_catalog", null), athlete_profile_id: profileId, categoria, opcion });
+        out.meal_catalog.push({ id: nuevoId(e.file, "meal_catalog", null, profileId, k), athlete_profile_id: profileId, categoria, opcion });
       }
     }
 
@@ -282,7 +284,7 @@ export async function run() {
     // solo para respetar el orden — no representan la hora real del mensaje.
     const chatOrigen = principal.profileData?.chat || [];
     if (chatOrigen.length) {
-      const conversationId = nuevoId(principal.file, "conversations", null);
+      const conversationId = nuevoId(principal.file, "conversations", null, profileId);
       const base = new Date((isoDate(principal.profileData.creado) || new Date().toISOString().slice(0, 10)) + "T12:00:00Z").getTime();
       out.conversations.push({
         id: conversationId, athlete_profile_id: profileId, titulo: "Historial migrado",
@@ -290,7 +292,7 @@ export async function run() {
       });
       chatOrigen.forEach((m, i) => {
         out.messages.push({
-          id: nuevoId(principal.file, "messages", null), conversation_id: conversationId,
+          id: nuevoId(principal.file, "messages", null, conversationId, i), conversation_id: conversationId,
           role: m.role === "assistant" ? "assistant" : "user", contenido: normalizeValue(m.content),
           cambio_propuesto: m.cambio || null, citas: null,
           created_at: new Date(base + i * 1000).toISOString(),
@@ -303,7 +305,7 @@ export async function run() {
     if (conPlan.length) {
       const p = conPlan[0].profileData.plan;
       out.training_plans.push({
-        id: nuevoId(conPlan[0].file, "training_plans", null), athlete_profile_id: profileId, version: 1,
+        id: nuevoId(conPlan[0].file, "training_plans", null, profileId, 1), athlete_profile_id: profileId, version: 1,
         distancia_objetivo: normalizeValue(perfilOrigen.distancia), fecha_carrera: isoDate(perfilOrigen.fechaCarrera),
         total_semanas: toNumber(p.totalSemanas), taper_semanas: toNumber(p.taper),
         run_dias: toNumber(p.runDias), gym_dias: toNumber(p.gymDias), techo_tirada_larga_min: toNumber(p.techo),

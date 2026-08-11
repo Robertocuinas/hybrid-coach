@@ -965,7 +965,7 @@ function nutricionDia(st, P, w, dayIdx) {
    CAPA DE IA — LLAMADA, RAZONAMIENTO Y GUARDARRAÍLES
    ============================================================ */
 
-const MODELO = "claude-sonnet-4-6";
+const MODELO = "configurado-en-servidor";
 
 /* Llamada única a la API. Dentro de un artifact de claude.ai esta petición se
    intercepta y no necesita API key; fuera de ahí fallará, y todo lo que la usa
@@ -974,18 +974,16 @@ async function llamarIA({ system, messages, max_tokens = 1400 }) {
   /* Dentro de un artifact de claude.ai la petición a la API se intercepta sola.
      Desplegada en un servidor, va por /api/ia y la clave vive en el servidor:
      así no se puede leer desde el navegador de quien use la aplicación.      */
-  const enArtifact = typeof window !== "undefined" && !!window.storage;
-  const destino = enArtifact ? "https://api.anthropic.com/v1/messages" : "/api/ia";
-  const r = await fetch(destino, {
+  const r = await fetch("/api/ia", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: MODELO, max_tokens, system, messages }),
+    body: JSON.stringify({ max_tokens, system, messages }),
   });
   if (!r.ok) {
     let d = ""; try { d = (await r.json()).message || ""; } catch { }
     throw new Error(r.status === 503 ? (d || "El servidor no tiene clave de IA configurada") : "La API respondió " + r.status);
   }
   const data = await r.json();
-  const txt = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+  const txt = data.text || (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
   if (!txt) throw new Error("Respuesta vacía");
   return txt;
 }

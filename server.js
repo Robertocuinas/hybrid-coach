@@ -21,24 +21,24 @@ import syncRoutes from "./server/routes/sync.js";
 import { startReconciliationJob } from "./server/jobs/reconciliation.js";
 import { loginRateLimiter, requireAuth } from "./server/middleware/auth.js";
 import { requireTrustedOrigin, securityHeaders } from "./server/middleware/security.js";
+import { createLLMProvider } from "./server/ai/factory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 const {
-  ANTHROPIC_API_KEY,
   APPS_SCRIPT_URL,
   SHEET_ID,
   GOOGLE_SERVICE_ACCOUNT_JSON,
   STRAVA_CLIENT_ID,
   STRAVA_CLIENT_SECRET,
-  MODELO_IA = "claude-sonnet-4-6",
 } = process.env;
 
 if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
   throw new Error("SESSION_SECRET es obligatoria y debe tener al menos 32 caracteres.");
 }
+const llmProvider = createLLMProvider(process.env);
 
 app.use(express.json({ limit: "2mb" }));
 app.disable("x-powered-by");
@@ -59,7 +59,7 @@ app.get("/api/estado", async (req, res) => {
   res.json({
     ok: true,
     requiereLogin: true,
-    ia: !!ANTHROPIC_API_KEY,
+    ia: !!llmProvider,
     hoja: !!(APPS_SCRIPT_URL || (SHEET_ID && GOOGLE_SERVICE_ACCOUNT_JSON)),
     strava: !!(STRAVA_CLIENT_ID && STRAVA_CLIENT_SECRET),
     db: dbStatus.db,
@@ -71,27 +71,22 @@ app.get("/api/estado", async (req, res) => {
    IA — la clave se queda aquí
    ============================================================ */
 app.post("/api/ia", requireAuth, async (req, res) => {
-  if (!ANTHROPIC_API_KEY) {
-    return res.status(503).json({ ok: false, message: "Este servidor no tiene clave de IA. La aplicación sigue funcionando sin ella." });
+  if (!llmProvider) {
+    return res.status(503).json({ ok: false, message: "Este servidor no tiene proveedor de IA configurado. La aplicación sigue funcionando sin él." });
   }
   try {
-    const r = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: req.body?.model || MODELO_IA,
-        max_tokens: Math.min(+req.body?.max_tokens || 1400, 4000),
-        system: req.body?.system,
-        messages: req.body?.messages || [],
-      }),
+    const result = await llmProvider.call({
+      system: req.body?.system,
+      messages: req.body?.messages || [],
+      maxTokens: Math.min(+req.body?.max_tokens || 1400, 4000),
+      temperature: req.body?.temperature,
+      responseFormat: req.body?.response_format,
+      stopSequences: req.body?.stop_sequences,
     });
-    res.status(r.status).json(await r.json());
+    res.json(result);
   } catch (e) {
-    res.status(502).json({ ok: false, message: "No se pudo hablar con la API: " + e.message });
+    const status = e.status >= 400 && e.status < 600 ? e.status : 502;
+    res.status(status).json({ ok: false, message: e.message || "No se pudo hablar con el proveedor de IA" });
   }
 });
 
@@ -287,7 +282,7 @@ app.get("*", (_req, res) => res.sendFile(path.join(__dirname, "public", "index.h
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Hybrid Coach escuchando en el puerto ${PORT}`);
-  console.log(`  IA:     ${ANTHROPIC_API_KEY ? "configurada" : "sin clave (la app funciona igual)"}`);
+  console.log(`  IA:     ${llmProvider ? `${process.env.LLM_PROVIDER}/${process.env.LLM_MODEL}` : "sin proveedor (la app funciona igual)"}`);
   console.log(`  Hoja:   ${APPS_SCRIPT_URL ? "vía Apps Script" : SHEET_ID && GOOGLE_SERVICE_ACCOUNT_JSON ? "vía cuenta de servicio" : "sin configurar"}`);
   console.log(`  Strava: ${STRAVA_CLIENT_ID ? "configurado" : "sin configurar"}`);
   console.log("  Acceso: sesiones autenticadas");
