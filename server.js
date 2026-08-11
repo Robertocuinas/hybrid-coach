@@ -14,6 +14,7 @@
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { checkDatabaseStatus } from "./server/db/status.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -52,14 +53,19 @@ app.post("/api/entrar", (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/api/estado", (req, res) => res.json({
-  ok: true,
-  requierePase: !!APP_PASSWORD,
-  dentro: autorizado(req),
-  ia: !!ANTHROPIC_API_KEY,
-  hoja: !!(APPS_SCRIPT_URL || (SHEET_ID && GOOGLE_SERVICE_ACCOUNT_JSON)),
-  strava: !!(STRAVA_CLIENT_ID && STRAVA_CLIENT_SECRET),
-}));
+app.get("/api/estado", async (req, res) => {
+  const dbStatus = await checkDatabaseStatus();
+  res.json({
+    ok: true,
+    requierePase: !!APP_PASSWORD,
+    dentro: autorizado(req),
+    ia: !!ANTHROPIC_API_KEY,
+    hoja: !!(APPS_SCRIPT_URL || (SHEET_ID && GOOGLE_SERVICE_ACCOUNT_JSON)),
+    strava: !!(STRAVA_CLIENT_ID && STRAVA_CLIENT_SECRET),
+    db: dbStatus.db,
+    pgvector: dbStatus.pgvector,
+  });
+});
 
 const puerta = (req, res, next) => autorizado(req)
   ? next()

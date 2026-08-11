@@ -2,3 +2,6 @@ node_modules/
 public/app.js
 .env
 .DS_Store
+
+# Datos de salud reales — nunca al repositorio (ver migration/, Fase 0 de docs/roadmap/)
+migration/source/

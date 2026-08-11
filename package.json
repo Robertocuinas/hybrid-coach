@@ -8,14 +8,20 @@
   "scripts": {
     "build": "node build.mjs",
     "start": "node server.js",
-    "dev": "node build.mjs --watch & node server.js"
+    "dev": "node build.mjs --watch & node server.js",
+    "migrate": "node-pg-migrate up --migrations ./server/db/migrations",
+    "migrate:down": "node-pg-migrate down --migrations ./server/db/migrations"
   },
   "dependencies": {
     "esbuild": "^0.24.2",
     "express": "^4.21.2",
     "googleapis": "^144.0.0",
+    "pg": "^8.11.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.15.0"
+  },
+  "devDependencies": {
+    "node-pg-migrate": "^7.0.0"
   }
 }
