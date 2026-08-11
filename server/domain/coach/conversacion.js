@@ -76,7 +76,7 @@ export async function compactarSiHaceFalta(conversationId, { db = pool, llmProvi
     `SELECT id, role, contenido FROM messages
       WHERE conversation_id = $1
       ORDER BY created_at
-      LIMIT GREATEST($2 - $3, 0);`,
+      LIMIT GREATEST($2::int - $3::int, 0);`,
     [conversationId, total, literales]
   );
   if (!antiguos.length) return { compactado: false, total };

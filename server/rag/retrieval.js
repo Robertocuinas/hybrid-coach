@@ -137,7 +137,7 @@ export async function recuperar(consulta, {
       hayEvidencia: conScores.length > 0,
       mensaje: conScores.length ? undefined : SIN_EVIDENCIA,
       consulta: ampliada,
-      chunks: conScores.slice(0, config.topKFinal).map((item) => formatear(item, config, false)),
+      chunks: conScores.slice(0, config.topKFinal).map((item) => formatear(item, config, false, modoUmbral)),
       diagnostico: { ...diagnostico({ vectorial, lexico, fusionados, inicio, config }), modoUmbral,
         aviso: "Sin componente vectorial: RAG_MIN_SCORE no se aplica. Configura EMBEDDING_PROVIDER." },
     };
@@ -158,7 +158,7 @@ export async function recuperar(consulta, {
       motivo: Number.isFinite(mejor)
         ? `mejor score ${mejor.toFixed(4)} < RAG_MIN_SCORE ${config.minScore}`
         : "ningún candidato con score comparable",
-      candidatos: conScores.slice(0, config.topKFinal).map((item) => formatear(item, config, false)),
+      candidatos: conScores.slice(0, config.topKFinal).map((item) => formatear(item, config, false, modoUmbral)),
     });
   }
 
@@ -170,13 +170,13 @@ export async function recuperar(consulta, {
      en el prompt fragmentos irrelevantes cuando ya hay evidencia buena —
      tokens pagados y ruido para el modelo. --- */
   const superan = conScores.filter((item) => (item.scoreUmbral ?? -Infinity) >= config.minScore);
-  const finales = superan.slice(0, config.topKFinal).map((item) => formatear(item, config, false));
+  const finales = superan.slice(0, config.topKFinal).map((item) => formatear(item, config, false, modoUmbral));
 
   if (finales.length < config.minResults) {
     const relleno = conScores
       .filter((item) => !superan.includes(item))
       .slice(0, config.minResults - finales.length)
-      .map((item) => formatear(item, config, true));
+      .map((item) => formatear(item, config, true, modoUmbral));
     finales.push(...relleno);
   }
 
@@ -189,7 +189,7 @@ export async function recuperar(consulta, {
   };
 }
 
-function formatear(item, config, esRelleno) {
+function formatear(item, config, esRelleno, scoreType = null) {
   const { chunk } = item;
   return {
     id: chunk.id,
@@ -201,6 +201,7 @@ function formatear(item, config, esRelleno) {
     fuente: chunk.fuente_revista,
     studyType: chunk.study_type,
     evidenceGrade: chunk.evidence_grade,
+    poblacion: chunk.poblacion,
     populationType: chunk.population_type,
     sampleSize: chunk.sample_size,
     seccion: chunk.seccion,
@@ -209,6 +210,8 @@ function formatear(item, config, esRelleno) {
     texto: chunk.texto,
     numTokens: chunk.num_tokens,
     storageKey: chunk.storage_key,
+    origen: chunk.origen,
+    scoreType,
     _relleno: esRelleno,
     scores: {
       similitudCoseno: numero(chunk.similitud),

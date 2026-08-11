@@ -42,7 +42,7 @@ async function baseConCorpus() {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(), titulo text, autores text, anio int,
       fuente_revista text, doi text, study_type study_type, evidence_grade evidence_grade,
       poblacion text, population_type population_type, sample_size int, tema_principal text,
-      storage_key text, revisado boolean DEFAULT false
+      storage_key text, origen text DEFAULT 'manual', revisado boolean DEFAULT false
     );
     CREATE TABLE document_chunks (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

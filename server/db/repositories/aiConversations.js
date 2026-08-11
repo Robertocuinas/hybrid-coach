@@ -1,16 +1,15 @@
 import { pool, insertRow } from "./_helpers.js";
 
-export function createRecommendation(profileId, { origen, tipo, contenido, confianza, estado = "pendiente", provider = null, model = null }) {
-  return insertRow("ai_recommendations", {
-    athlete_profile_id: profileId,
-    origen,
-    tipo,
-    contenido,
-    confianza,
-    estado,
-    provider,
-    model,
-  });
+/* `db` inyectable: el coach recibe un cliente por dependencia (y las pruebas
+   le pasan PGlite). Sin este parámetro la escritura se iba al pool global y
+   se saltaba la conexión con la que trabaja el resto de la operación. */
+export async function createRecommendation(profileId, { origen, tipo, contenido, confianza, estado = "pendiente", provider = null, model = null }, db = pool) {
+  const { rows } = await db.query(
+    `INSERT INTO ai_recommendations (athlete_profile_id, origen, tipo, contenido, confianza, estado, provider, model)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *;`,
+    [profileId, origen, tipo, contenido === null || contenido === undefined ? null : JSON.stringify(contenido), confianza, estado, provider, model]
+  );
+  return rows[0];
 }
 
 export async function listRecommendationsByProfile(profileId, limit = 20) {

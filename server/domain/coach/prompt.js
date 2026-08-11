@@ -60,7 +60,12 @@ Devuelves SOLO un objeto JSON con esta forma exacta:
   "adaptaciones": [ { "z": "zona o factor", "a": "qué se cambia exactamente y por qué" } ],
   "ajustes": [ { "campo": "${AJUSTES_PERMITIDOS.join("|")}", "valor": "texto breve", "motivo": "una frase" } ],
   "sin_respaldo": ["afirmación que has hecho y que es práctica habitual sin evidencia sólida detrás"],
-  "evidencia_mixta": [ { "tema": "sobre qué discrepan los estudios", "posiciones": "qué dice cada uno", "refs": ["id", "id"] } ]
+  "evidencia_mixta": [
+    { "tema": "sobre qué discrepan los estudios", "posiciones": [
+      { "resumen": "primera posición", "refs": ["id"] },
+      { "resumen": "posición contraria", "refs": ["id"] }
+    ] }
+  ]
 }
 
 ${REGLAS_CITA}

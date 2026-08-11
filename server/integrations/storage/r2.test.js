@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { createStorageClient, readStorageConfig, storageKeyForHash, sha256 } from "./r2.js";
+import { createStorageClient, readStorageConfig, signedURLTTL, storageKeyForHash, sha256 } from "./r2.js";
 
 test("sin credenciales el almacenamiento queda deshabilitado, no a medias", () => {
   assert.equal(readStorageConfig({}).enabled, false);
@@ -81,4 +81,28 @@ test("urlPublica solo existe si hay dominio propio configurado", () => {
   assert.equal(createStorageClient(base).urlPublica("documents/aa/bb.pdf"), null);
   const conDominio = createStorageClient({ ...base, R2_PUBLIC_BASE_URL: "https://papers.example.com/" });
   assert.equal(conDominio.urlPublica("documents/aa/bb.pdf"), "https://papers.example.com/documents/aa/bb.pdf");
+});
+
+test("la URL firmada usa la clave resuelta por servidor y una caducidad corta", async () => {
+  const base = {
+    R2_ENDPOINT: "http://127.0.0.1:1", R2_ACCESS_KEY_ID: "k",
+    R2_SECRET_ACCESS_KEY: "s", R2_BUCKET: "papers", R2_SIGNED_URL_TTL_SECONDS: "420",
+  };
+  let llamada;
+  const storage = createStorageClient(base, {
+    clientFactory: () => ({ destroy() {} }),
+    signer: async (_client, command, options) => {
+      llamada = { input: command.input, options };
+      return "https://firmada.example/pdf?expira=420";
+    },
+  });
+  const url = await storage.urlFirmada("documents/aa/paper.pdf");
+
+  assert.equal(url, "https://firmada.example/pdf?expira=420");
+  assert.equal(llamada.input.Bucket, "papers");
+  assert.equal(llamada.input.Key, "documents/aa/paper.pdf");
+  assert.equal(llamada.input.ResponseContentType, "application/pdf");
+  assert.equal(llamada.options.expiresIn, 420);
+  assert.equal(signedURLTTL({ R2_SIGNED_URL_TTL_SECONDS: "99999" }), 900);
+  assert.equal(signedURLTTL({ R2_SIGNED_URL_TTL_SECONDS: "1" }), 60);
 });

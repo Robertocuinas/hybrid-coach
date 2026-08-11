@@ -66,7 +66,7 @@ export async function responder(profileId, consulta, deps) {
       await createRecommendation(profileId, {
         origen: "coach_chat", tipo: cambio.tipo, contenido: cambio, confianza: "media",
         provider: respuesta.provider || null, model: respuesta.model || null,
-      });
+      }, db);
     }
     await compactarSiHaceFalta(conversacion.id, { db, llmProvider });
   }

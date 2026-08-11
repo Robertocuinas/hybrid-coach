@@ -33,6 +33,34 @@ export function validarPropuesta(propuesta = {}, { entregados = [] } = {}) {
       return false;
     });
 
+  const resolverCitas = (refs) => refs.map((id, indice) => {
+    const chunk = porId.get(id);
+    return {
+      chunkId: id,
+      documentId: chunk?.documentId ?? null,
+      rank: indice + 1,
+      similarityScore: chunk?.scores?.umbral ?? chunk?.scores?.similitudCoseno ?? null,
+      scoreType: chunk?.scoreType ?? null,
+      relleno: !!chunk?._relleno,
+      texto: chunk?.texto ?? null,
+      seccion: chunk?.seccion ?? null,
+      paginaInicio: chunk?.paginaInicio ?? null,
+      paginaFin: chunk?.paginaFin ?? null,
+      titulo: chunk?.titulo ?? null,
+      autores: chunk?.autores ?? null,
+      anio: chunk?.anio ?? null,
+      fuente: chunk?.fuente ?? null,
+      studyType: chunk?.studyType ?? null,
+      evidenceGrade: chunk?.evidenceGrade ?? null,
+      poblacion: chunk?.poblacion ?? null,
+      populationType: chunk?.populationType ?? null,
+      sampleSize: chunk?.sampleSize ?? null,
+      doi: chunk?.doi ?? null,
+      origen: chunk?.origen ?? null,
+      hasPdf: !!chunk?.storageKey,
+    };
+  });
+
   const decisiones = (Array.isArray(propuesta.decisiones) ? propuesta.decisiones : []).map((d) => {
     const refs = filtrarRefs(d.refs, texto(d.t, 40));
     const cuerpo = `${d.t || ""} ${d.p || ""}`.toLowerCase();
@@ -49,21 +77,7 @@ export function validarPropuesta(propuesta = {}, { entregados = [] } = {}) {
       refs,
       /* Los fragmentos citados viajan resueltos para poder mostrar página y
          sección sin volver a consultar la base de datos. */
-      citas: refs.map((id, indice) => {
-        const chunk = porId.get(id);
-        return {
-          chunkId: id,
-          rank: indice + 1,
-          similarityScore: chunk?.scores?.umbral ?? chunk?.scores?.similitudCoseno ?? null,
-          titulo: chunk?.titulo ?? null,
-          autores: chunk?.autores ?? null,
-          anio: chunk?.anio ?? null,
-          seccion: chunk?.seccion ?? null,
-          paginaInicio: chunk?.paginaInicio ?? null,
-          paginaFin: chunk?.paginaFin ?? null,
-          relleno: !!chunk?._relleno,
-        };
-      }),
+      citas: resolverCitas(refs),
       confianza: ["alta", "media", "baja"].includes(d.confianza) ? d.confianza : "media",
       sinRespaldo: !refs.length,
       invade,
@@ -88,12 +102,25 @@ export function validarPropuesta(propuesta = {}, { entregados = [] } = {}) {
   /* Nuevo en la Fase 8: cuando la literatura entregada se contradice, el
      modelo debe decirlo en vez de elegir o promediar (docs/05-rag.md §9). */
   const evidenciaMixta = (Array.isArray(propuesta.evidencia_mixta) ? propuesta.evidencia_mixta : [])
-    .map((e) => ({
-      tema: texto(e.tema, 160),
-      posiciones: texto(e.posiciones, 600),
-      refs: filtrarRefs(e.refs, "evidencia mixta"),
-    }))
-    .filter((e) => e.tema && e.posiciones);
+    .map((e) => {
+      /* Se acepta temporalmente el contrato de Fase 8 (posiciones como texto)
+         para poder leer respuestas de modelos/cache antiguos, pero toda salida
+         se normaliza al formato estructurado que la UI puede comparar. */
+      const posicionesEntrada = Array.isArray(e.posiciones)
+        ? e.posiciones
+        : e.posiciones ? [{ resumen: e.posiciones, refs: e.refs }] : [];
+      const posiciones = posicionesEntrada.map((posicion) => {
+        const refs = filtrarRefs(posicion?.refs, "evidencia mixta");
+        return {
+          resumen: texto(posicion?.resumen, 600),
+          refs,
+          citas: resolverCitas(refs),
+          sinRespaldo: !refs.length,
+        };
+      }).filter((posicion) => posicion.resumen);
+      return { tema: texto(e.tema, 160), posiciones };
+    })
+    .filter((e) => e.tema && e.posiciones.length);
 
   if (!decisiones.length) avisos.push("La IA no devolvió ninguna decisión utilizable. Se mantienen las deterministas.");
 

@@ -52,6 +52,9 @@ const CSS = `
 .hc .tag.alert{color:var(--alert);border-color:#7A3A36}
 .hc .tag.ok{color:var(--ok);border-color:#3E6B3A}
 .hc .tag.evid{color:var(--evid);border-color:#4E4483}
+.hc .evidence-overlay{position:fixed;inset:0;z-index:80;background:rgba(4,9,14,.82);display:flex;align-items:flex-end;justify-content:center;padding:12px}
+.hc .evidence-modal{width:min(620px,100%);max-height:88vh;overflow:auto;background:var(--surf);border:1px solid #4E4483;border-radius:16px;padding:16px;box-shadow:0 18px 70px #000}
+.hc .evidence-quote{white-space:pre-wrap;background:var(--ink);border-left:3px solid var(--evid);border-radius:8px;padding:12px;margin:12px 0;font-size:13px;line-height:1.55}
 .hc .strip{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;align-items:end;height:74px;margin:10px 0 6px}
 .hc .strip .col{display:flex;flex-direction:column;justify-content:flex-end;height:100%;gap:4px;cursor:pointer;border:0;background:none;padding:0}
 .hc .strip .bar{width:100%;border-radius:3px 3px 0 0;background:var(--rest);transition:height .5s ease}
@@ -1584,11 +1587,86 @@ const Metric = ({ l, v, alert }) => (<div style={{ background: "var(--ink)", bor
   <div className="mono" style={{ fontSize: 20, color: alert ? "var(--alert)" : "var(--paper)" }}>{v}</div>
   <div className="xs muted" style={{ textTransform: "uppercase", letterSpacing: ".07em" }}>{l}</div></div>);
 
-function RefChips({ ids, biblio, onOpen }) {
-  return (<div className="row" style={{ flexWrap: "wrap", gap: 5, marginTop: 6 }}>
-    {(ids || []).map((id) => { const r = biblio.find((b) => b.id === id); if (!r) return null;
-      return <button key={id} className="tag evid" style={{ cursor: "pointer" }} onClick={() => onOpen && onOpen(r)}>{r.autores.split(",")[0]} {r.anio}</button>; })}
+const doiHref = (doi) => doi ? (/^https?:\/\//i.test(doi) ? doi : `https://doi.org/${String(doi).replace(/^doi:\s*/i, "")}`) : null;
+const citationAuthor = (c) => String(c.autores || c.titulo || "Referencia").split(",")[0];
+
+function EvidenceModal({ citation, onClose }) {
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState("");
+  useEffect(() => {
+    const key = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [onClose]);
+
+  const abrirPDF = async () => {
+    const tab = window.open("about:blank", "_blank");
+    if (tab) tab.opener = null;
+    setPdfBusy(true); setPdfError("");
+    try {
+      const response = await fetch(`/api/evidence/chunks/${encodeURIComponent(citation.chunkId)}/pdf-url`, { credentials: "same-origin" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
+      const page = citation.paginaInicio ? `#page=${citation.paginaInicio}` : "";
+      if (tab) tab.location.replace(data.url + page);
+      else window.location.assign(data.url + page);
+    } catch (error) {
+      tab?.close(); setPdfError(error.message || "No se pudo abrir el PDF.");
+    } finally { setPdfBusy(false); }
+  };
+
+  const pagina = citation.paginaInicio
+    ? `${citation.paginaInicio}${citation.paginaFin && citation.paginaFin !== citation.paginaInicio ? `–${citation.paginaFin}` : ""}`
+    : "No indicada";
+  const score = Number.isFinite(Number(citation.similarityScore)) ? Number(citation.similarityScore).toFixed(3) : null;
+  return (<div className="evidence-overlay" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <section className="evidence-modal" role="dialog" aria-modal="true" aria-label="Evidencia citada">
+      <div className="between" style={{ alignItems: "flex-start" }}>
+        <div style={{ flex: 1 }}><span className={"tag " + (citation.relleno ? "" : "evid")}>{citation.relleno ? "Cita de relleno" : "Cita directa"}</span>
+          <h2 style={{ marginTop: 8 }}>{citation.titulo || "Referencia bibliográfica"}</h2></div>
+        <button className="btn ghost sm" onClick={onClose} aria-label="Cerrar evidencia">Cerrar</button>
+      </div>
+      <p className="sm muted" style={{ marginBottom: 4 }}>{citation.autores || "Autor no indicado"}{citation.anio ? ` · ${citation.anio}` : ""}</p>
+      <p className="xs muted" style={{ marginTop: 0 }}>{citation.seccion || "Sección no indicada"} · pág. {pagina}</p>
+
+      {citation.relleno && <div className="card" style={{ borderColor: "var(--gym)", marginTop: 10 }}><span className="tag gym">Relación indirecta</span>
+        <p className="xs" style={{ margin: "6px 0 0" }}>Este fragmento completó el contexto, pero no superó el umbral de relevancia. No debe leerse como respaldo fuerte.</p></div>}
+      {citation.origen === "semilla" && <div className="card" style={{ borderColor: "var(--alert)", marginTop: 10 }}><span className="tag alert">Referencia semilla</span>
+        <p className="xs" style={{ margin: "6px 0 0" }}>Esta ficha procede de la biblioteca inicial. Comprueba la fuente original antes de usarla para una decisión sensible.</p></div>}
+
+      <div className="evidence-quote">{citation.texto || "Esta referencia heredada no tiene un fragmento textual asociado."}</div>
+      <div className="card flat" style={{ marginBottom: 8 }}>
+        <p className="xs" style={{ margin: "0 0 5px" }}><strong>Tipo de estudio:</strong> {citation.studyType || "No indicado"} · <strong>Grado de evidencia:</strong> {citation.evidenceGrade || "No indicado"}</p>
+        <p className="xs" style={{ margin: "0 0 5px" }}><strong>Población:</strong> {citation.poblacion || citation.populationType || "No indicada"}{citation.sampleSize ? ` · n=${citation.sampleSize}` : ""}</p>
+        {score && <p className="xs muted" style={{ margin: 0 }}><strong>Relevancia:</strong> {score} ({citation.scoreType || "score no identificado"}). La relevancia no equivale al grado de evidencia.</p>}
+      </div>
+      <div className="row" style={{ flexWrap: "wrap" }}>
+        {citation.doi && <a className="btn ghost sm" href={doiHref(citation.doi)} target="_blank" rel="noreferrer">Abrir DOI</a>}
+        {citation.hasPdf && citation.chunkId && <button className="btn primary sm" disabled={pdfBusy} onClick={abrirPDF}>{pdfBusy ? "Firmando enlace…" : "Ver PDF original"}</button>}
+      </div>
+      {pdfError && <p className="xs" style={{ color: "var(--alert)" }}>{pdfError}</p>}
+    </section>
   </div>);
+}
+
+function RefChips({ citas, ids, biblio = [], onOpen }) {
+  const [active, setActive] = useState(null);
+  const resolved = (citas && citas.length) ? citas : (ids || []).map((id) => {
+    const ref = biblio.find((item) => item.id === id);
+    return ref ? { ...ref, chunkId: null, texto: null, hasPdf: false } : null;
+  }).filter(Boolean);
+  return (<>
+    <div className="row" style={{ flexWrap: "wrap", gap: 5, marginTop: 6 }}>
+      {resolved.map((citation, index) => <button key={citation.chunkId || citation.id || index}
+        className={"tag " + (citation.relleno ? "" : "evid")}
+        title={citation.relleno ? "Cita indirecta: no superó el umbral de relevancia" : "Ver fragmento y metadatos"}
+        style={{ cursor: "pointer", borderStyle: citation.relleno ? "dashed" : "solid", opacity: citation.relleno ? .78 : 1 }}
+        onClick={() => { if (!citas?.length && onOpen) onOpen(citation); else setActive(citation); }}>
+        {citationAuthor(citation)} {citation.anio || "s.f."}{citation.relleno ? " · indirecta" : ""}
+      </button>)}
+    </div>
+    {active && <EvidenceModal citation={active} onClose={() => setActive(null)} />}
+  </>);
 }
 
 /* ============================================================
@@ -2732,7 +2810,13 @@ function Razonamiento({ st, P, update, notify }) {
   const generar = async () => {
     setBusy(true); setErr("");
     try {
-      const r = await decisionesIA(P.perfil, P.plan, st.biblio);
+      const response = await fetch("/api/coach/decisiones", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ persistir: true }),
+      });
+      const r = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(r.message || `HTTP ${response.status}`);
       update((s) => { s.perfiles[P.id].plan.ia = r; return s; });
       notify("Razonamiento generado. Revísalo antes de aplicarlo.");
     } catch (e) { setErr(e.message || String(e)); }
@@ -2763,11 +2847,11 @@ function Razonamiento({ st, P, update, notify }) {
     {err && (<div className="card" style={{ borderColor: "var(--alert)" }}>
       <span className="tag alert">Sin conexión con la IA</span>
       <p className="sm" style={{ margin: "8px 0 0" }}>{err}</p>
-      <p className="xs muted">Tu plan sigue funcionando con las decisiones deterministas de siempre. Esta función solo opera dentro de un artifact de claude.ai.</p>
+      <p className="xs muted">Tu plan sigue funcionando con las decisiones deterministas. Comprueba la sesión y la configuración del proveedor de IA.</p>
     </div>)}
 
     {ia && (<>
-      <p className="eyebrow" style={{ marginTop: 16 }}>Generado el {ia.generado} · {(ia.refsUsadas || []).length} referencias consultadas</p>
+      <p className="eyebrow" style={{ marginTop: 16 }}>{ia.generado ? `Generado el ${ia.generado} · ` : ""}{(ia.fragmentosUsados || ia.refsUsadas || []).length} fragmentos consultados</p>
 
       {!!(ia.avisos || []).length && (<div className="card" style={{ borderColor: "var(--alert)" }}>
         <span className="tag alert">Guardarraíles</span>
@@ -2786,9 +2870,9 @@ function Razonamiento({ st, P, update, notify }) {
           <div className="between"><div className="disp" style={{ fontSize: 16, flex: 1 }}>{d.t}</div>
             <span className={"tag " + (conf[d.confianza] || "")}>{d.confianza}</span></div>
           <p className="sm muted" style={{ margin: "6px 0 0" }}>{d.p}</p>
-          {d.sinRespaldo && <p className="xs" style={{ margin: "7px 0 0", color: "var(--alert)" }}>Sin respaldo en tu biblioteca: es práctica habitual, no evidencia.</p>}
+          {d.sinRespaldo && <div style={{ marginTop: 8 }}><span className="tag alert">Sin respaldo</span><p className="xs" style={{ margin: "5px 0 0", color: "var(--alert)" }}>No hay ningún fragmento que sostenga esta afirmación.</p></div>}
           {d.invade && <p className="xs" style={{ margin: "7px 0 0", color: "var(--alert)" }}>Roza la estructura de seguridad. Aunque la aceptes, no cambia ningún número del plan.</p>}
-          <RefChips ids={d.refs} biblio={st.biblio} onOpen={() => { }} />
+          <RefChips citas={d.citas} ids={d.refs} biblio={st.biblio} />
           {d.estado === "pendiente"
             ? (<div className="row" style={{ marginTop: 9 }}>
                 <button className="btn primary sm" style={{ flex: 1 }} onClick={() => resolver("decisiones", d.id, "aceptada")}>Aceptar</button>
@@ -2819,6 +2903,20 @@ function Razonamiento({ st, P, update, notify }) {
           <p className="sm" style={{ margin: "5px 0 0" }}>{a.valor}</p>
           <p className="xs muted" style={{ margin: "4px 0 0" }}>{a.motivo}</p>
         </div>))}
+      </>)}
+
+      {!!(ia.evidenciaMixta || []).length && (<>
+        <span className="eyebrow" style={{ display: "block", margin: "16px 0 6px" }}>Evidencia mixta</span>
+        {ia.evidenciaMixta.map((grupo, indice) => <div className="card" key={`${grupo.tema}-${indice}`} style={{ borderColor: "var(--gym)" }}>
+          <div className="between"><h3 style={{ color: "var(--paper)" }}>{grupo.tema}</h3><span className="tag gym">Resultados en conflicto</span></div>
+          <p className="xs muted">Los estudios no apuntan en una sola dirección. Se muestran las posiciones por separado, sin promediarlas.</p>
+          {(Array.isArray(grupo.posiciones) ? grupo.posiciones : []).map((posicion, posIndex) => <div className="card flat" key={posIndex} style={{ borderColor: "var(--line)", marginTop: 8 }}>
+            <span className="tag">Posición {posIndex + 1}</span>
+            <p className="sm" style={{ margin: "7px 0 0" }}>{posicion.resumen}</p>
+            {posicion.sinRespaldo && <p className="xs" style={{ color: "var(--alert)" }}>Sin respaldo verificable.</p>}
+            <RefChips citas={posicion.citas} ids={posicion.refs} biblio={st.biblio} />
+          </div>)}
+        </div>)}
       </>)}
 
       {!!(ia.sinRespaldo || []).length && (<div className="card" style={{ marginTop: 14 }}>

@@ -8,6 +8,8 @@ const CHUNK_A = {
   autores: "Wilson, J. M. y cols.", anio: 2012, seccion: "discussion", paginaInicio: 4, paginaFin: 4,
   studyType: "meta_analysis", evidenceGrade: "fuerte", populationType: "runners", sampleSize: 24,
   texto: "Heavy strength work should be separated from interval sessions.",
+  documentId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", fuente: "Sports Medicine", doi: "10.1000/test",
+  poblacion: "Corredores entrenados", origen: "pdf", storageKey: "documents/aa/test.pdf", scoreType: "coseno",
   scores: { umbral: 0.82, similitudCoseno: 0.82 },
 };
 const CHUNK_B = {
@@ -52,6 +54,11 @@ test("las citas conservan página, sección y rank para poder comprobarlas", () 
   assert.equal(primera.paginaInicio, 8);
   assert.equal(primera.relleno, true);
   assert.equal(segunda.similarityScore, 0.82);
+  assert.equal(segunda.scoreType, "coseno");
+  assert.equal(segunda.texto, CHUNK_A.texto);
+  assert.equal(segunda.doi, CHUNK_A.doi);
+  assert.equal(segunda.hasPdf, true);
+  assert.equal(segunda.poblacion, "Corredores entrenados");
 });
 
 test("una propuesta que invade la estructura se marca pero no se descarta", () => {
@@ -78,14 +85,33 @@ test("un ajuste sobre un campo no permitido se rechaza", () => {
   assert.match(salida.avisos.join(" "), /Ajuste rechazado: "techo"/);
 });
 
-test("evidencia_mixta también valida sus citas", () => {
+test("evidencia_mixta valida las citas de cada posición por separado", () => {
   const salida = validarPropuesta({
     decisiones: [{ t: "T", p: "P", refs: [CHUNK_A.id] }],
-    evidencia_mixta: [{ tema: "Volumen óptimo", posiciones: "Uno dice A, otro dice B", refs: [CHUNK_A.id, "inventado"] }],
+    evidencia_mixta: [{
+      tema: "Volumen óptimo",
+      posiciones: [
+        { resumen: "Más volumen mejora", refs: [CHUNK_A.id] },
+        { resumen: "No hay diferencia", refs: ["inventado-9999"] },
+      ],
+    }],
   }, { entregados: ENTREGADOS });
 
   assert.equal(salida.evidenciaMixta.length, 1);
-  assert.deepEqual(salida.evidenciaMixta[0].refs, [CHUNK_A.id]);
+  assert.deepEqual(salida.evidenciaMixta[0].posiciones[0].refs, [CHUNK_A.id]);
+  assert.equal(salida.evidenciaMixta[0].posiciones[0].citas[0].texto, CHUNK_A.texto);
+  assert.deepEqual(salida.evidenciaMixta[0].posiciones[1].refs, [], "la cita inventada cae también aquí");
+  assert.equal(salida.evidenciaMixta[0].posiciones[1].sinRespaldo, true);
+});
+
+test("evidencia_mixta con posiciones en texto plano se normaliza al formato estructurado", () => {
+  const salida = validarPropuesta({
+    decisiones: [{ t: "T", p: "P", refs: [] }],
+    evidencia_mixta: [{ tema: "Volumen", posiciones: "Uno dice A, otro dice B", refs: [CHUNK_A.id] }],
+  }, { entregados: ENTREGADOS });
+
+  assert.equal(salida.evidenciaMixta[0].posiciones.length, 1);
+  assert.deepEqual(salida.evidenciaMixta[0].posiciones[0].refs, [CHUNK_A.id]);
 });
 
 test("sin decisiones utilizables se avisa de que se mantienen las deterministas", () => {

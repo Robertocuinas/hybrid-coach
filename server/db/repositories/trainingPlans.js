@@ -120,9 +120,11 @@ export async function guardarDecisionConCitas(client, planId, decision) {
       /* ON CONFLICT: el modelo puede repetir el mismo fragmento en una misma
          decisión; la clave primaria compuesta lo impide y aquí se ignora. */
       await client.query(
-        `INSERT INTO plan_decision_citations (plan_decision_id, document_chunk_id, similarity_score, rank)
-         VALUES ($1,$2,$3,$4) ON CONFLICT (plan_decision_id, document_chunk_id) DO NOTHING;`,
-        [guardada.id, cita.chunkId, cita.similarityScore, cita.rank]
+        `INSERT INTO plan_decision_citations
+           (plan_decision_id, document_chunk_id, similarity_score, rank, score_type, es_relleno)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (plan_decision_id, document_chunk_id) DO NOTHING;`,
+        [guardada.id, cita.chunkId, cita.similarityScore, cita.rank, cita.scoreType, !!cita.relleno]
       );
     }
 
@@ -138,9 +140,14 @@ export async function listarDecisionesConCitas(planId, db = pool) {
   const { rows } = await db.query(
     `SELECT pd.*,
             COALESCE(json_agg(json_build_object(
-              'chunkId', c.document_chunk_id, 'rank', c.rank, 'similarityScore', c.similarity_score,
+              'chunkId', c.document_chunk_id, 'documentId', dc.document_id,
+              'rank', c.rank, 'similarityScore', c.similarity_score,
+              'scoreType', c.score_type, 'relleno', c.es_relleno,
               'texto', dc.texto, 'seccion', dc.seccion, 'paginaInicio', dc.pagina_inicio, 'paginaFin', dc.pagina_fin,
-              'titulo', d.titulo, 'autores', d.autores, 'anio', d.anio, 'doi', d.doi
+              'titulo', d.titulo, 'autores', d.autores, 'anio', d.anio, 'doi', d.doi,
+              'fuente', d.fuente_revista, 'studyType', d.study_type, 'evidenceGrade', d.evidence_grade,
+              'poblacion', d.poblacion, 'populationType', d.population_type, 'sampleSize', d.sample_size,
+              'origen', d.origen, 'hasPdf', (d.storage_key IS NOT NULL)
             ) ORDER BY c.rank) FILTER (WHERE c.document_chunk_id IS NOT NULL), '[]') AS citas
        FROM plan_decisions pd
        LEFT JOIN plan_decision_citations c ON c.plan_decision_id = pd.id

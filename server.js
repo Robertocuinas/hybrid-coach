@@ -20,6 +20,7 @@ import authRoutes from "./server/routes/auth.js";
 import apiRoutes from "./server/routes/api.js";
 import adminRoutes from "./server/routes/admin.js";
 import coachRoutes from "./server/routes/coach.js";
+import evidenceRoutes from "./server/routes/evidence.js";
 import syncRoutes from "./server/routes/sync.js";
 import { startReconciliationJob } from "./server/jobs/reconciliation.js";
 import { loginRateLimiter, requireAuth } from "./server/middleware/auth.js";
@@ -77,6 +78,7 @@ app.use("/api", syncRoutes);
    y no debe caer en los manejadores JSON genéricos. */
 app.use("/api/admin", adminRoutes);
 app.use("/api/coach", coachRoutes);
+app.use("/api/evidence", evidenceRoutes);
 app.use("/api", apiRoutes);
 
 /* La ruta heredada /api/entrar devuelve 410; no existe fallback de contraseña compartida. */

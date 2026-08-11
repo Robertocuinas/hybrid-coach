@@ -213,7 +213,8 @@ const COLUMNAS_CHUNK = `
   dc.id, dc.document_id, dc.chunk_index, dc.seccion, dc.pagina_inicio, dc.pagina_fin,
   dc.texto, dc.num_tokens,
   d.titulo, d.autores, d.anio, d.doi, d.fuente_revista, d.study_type,
-  d.evidence_grade, d.population_type, d.sample_size, d.tema_principal, d.storage_key`;
+  d.evidence_grade, d.poblacion, d.population_type, d.sample_size, d.tema_principal,
+  d.storage_key, d.origen`;
 
 /**
  * Componente léxico. `consulta` debe venir en sintaxis websearch (términos
@@ -274,11 +275,28 @@ export async function vectorSearch(embedding, { provider, model, dimensions = 10
   return rows;
 }
 
-export function addCitation(planDecisionId, documentChunkId, similarityScore, rank) {
+export function addCitation(planDecisionId, documentChunkId, similarityScore, rank, { scoreType = null, relleno = false } = {}) {
   return pool.query(
-    `INSERT INTO plan_decision_citations (plan_decision_id, document_chunk_id, similarity_score, rank)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO plan_decision_citations
+       (plan_decision_id, document_chunk_id, similarity_score, rank, score_type, es_relleno)
+     VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (plan_decision_id, document_chunk_id) DO NOTHING;`,
-    [planDecisionId, documentChunkId, similarityScore, rank]
+    [planDecisionId, documentChunkId, similarityScore, rank, scoreType, relleno]
   );
+}
+
+/* Ficha pública de un fragmento revisado. `storage_key` solo se usa dentro del
+   servidor para firmar el PDF y nunca forma parte del DTO enviado al cliente. */
+export async function findReviewedChunkEvidence(chunkId, db = pool) {
+  const { rows } = await db.query(
+    `SELECT dc.id, dc.document_id, dc.texto, dc.seccion, dc.pagina_inicio, dc.pagina_fin,
+            d.titulo, d.autores, d.anio, d.fuente_revista, d.study_type,
+            d.evidence_grade, d.poblacion, d.population_type, d.sample_size,
+            d.doi, d.origen, d.storage_key
+       FROM document_chunks dc
+       JOIN documents d ON d.id = dc.document_id
+      WHERE dc.id = $1 AND d.revisado = true;`,
+    [chunkId]
+  );
+  return rows[0] || null;
 }

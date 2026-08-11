@@ -7,6 +7,7 @@
    detecta antes de procesar nada, en vez de fallar a mitad. */
 import { createHash } from "node:crypto";
 import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 export function readStorageConfig(env = process.env) {
   const accountId = String(env.R2_ACCOUNT_ID || "").trim();
@@ -34,7 +35,12 @@ export function storageKeyForHash(hash) {
   return `documents/${hash.slice(0, 2)}/${hash}.pdf`;
 }
 
-export function createStorageClient(env = process.env, { clientFactory } = {}) {
+export function signedURLTTL(env = process.env) {
+  const value = Number.parseInt(env.R2_SIGNED_URL_TTL_SECONDS || "300", 10);
+  return Math.min(900, Math.max(60, Number.isFinite(value) ? value : 300));
+}
+
+export function createStorageClient(env = process.env, { clientFactory, signer = getSignedUrl } = {}) {
   const config = readStorageConfig(env);
   if (!config.enabled) return null;
 
@@ -70,6 +76,17 @@ export function createStorageClient(env = process.env, { clientFactory } = {}) {
     async leerPDF(key) {
       const salida = await client.send(new GetObjectCommand({ Bucket: config.bucket, Key: key }));
       return Buffer.from(await salida.Body.transformToByteArray());
+    },
+
+    async urlFirmada(key, { expiresIn = signedURLTTL(env) } = {}) {
+      const ttl = Math.min(900, Math.max(60, Number(expiresIn) || 300));
+      const command = new GetObjectCommand({
+        Bucket: config.bucket,
+        Key: key,
+        ResponseContentType: "application/pdf",
+        ResponseContentDisposition: 'inline; filename="evidencia.pdf"',
+      });
+      return signer(client, command, { expiresIn: ttl });
     },
 
     /* Solo si el bucket se sirve por un dominio propio. Sin él, la ficha no

@@ -19,8 +19,8 @@ test("reindexa con otro proveedor usando solo los chunks y activa la nueva gener
   await db.exec(`
     CREATE EXTENSION IF NOT EXISTS vector;
     CREATE TABLE documents (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), titulo text, autores text, revisado boolean,
-      anio int, doi text, fuente_revista text, study_type text, evidence_grade text, population_type text,
-      sample_size int, tema_principal text, storage_key text);
+      anio int, doi text, fuente_revista text, study_type text, evidence_grade text, poblacion text, population_type text,
+      sample_size int, tema_principal text, storage_key text, origen text DEFAULT 'manual');
     CREATE TABLE document_chunks (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), document_id uuid REFERENCES documents(id), texto text,
       chunk_index int, seccion text, pagina_inicio int, pagina_fin int, num_tokens int);
     CREATE TABLE chunk_embeddings (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), document_chunk_id uuid REFERENCES document_chunks(id), provider text, model text, dimensions int, embedding vector(1024), created_at timestamptz DEFAULT now());

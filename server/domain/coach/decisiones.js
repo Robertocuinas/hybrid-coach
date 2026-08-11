@@ -127,7 +127,7 @@ export async function persistirDecisiones(db, profileId, planId, salida) {
     confianza: salida.decisiones[0]?.confianza || "media",
     provider: salida.provider,
     model: salida.model,
-  });
+  }, db);
 
   if (!planId) return { decisiones: 0, citas: 0, motivo: "sin plan activo al que asociarlas" };
 
