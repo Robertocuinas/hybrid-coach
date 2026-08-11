@@ -326,6 +326,28 @@ test("sin proveedor de embeddings el retrieval sigue funcionando solo con el lé
   await db.close();
 });
 
+test("un candidato con score no comparable no arrastra al resto a 'sin evidencia'", async () => {
+  const db = await baseConCorpus();
+  await insertarDocumento(db, { titulo: "Bueno", chunks: [
+    { texto: "Concurrent training interference effect in runners.", similitud: 0.9 },
+  ] });
+  /* Vector degenerado (todo ceros): la distancia coseno contra él es NaN. Sin
+     protección, ese NaN se propaga por Math.max y tumba toda la consulta. */
+  await insertarDocumento(db, { titulo: "Degenerado", chunks: [{ texto: "Concurrent training notes." }] });
+  const chunkDegenerado = await db.query(`SELECT id FROM document_chunks WHERE texto = 'Concurrent training notes.';`);
+  await db.query(
+    `INSERT INTO chunk_embeddings (document_chunk_id, provider, model, dimensions, embedding)
+     VALUES ($1,$2,$3,1024,$4);`,
+    [chunkDegenerado.rows[0].id, INDICE.provider, INDICE.model, JSON.stringify(new Array(1024).fill(0))]
+  );
+
+  const resultado = await ejecutar(db, "interferencia concurrente");
+  assert.equal(resultado.hayEvidencia, true, "el fragmento bueno debe sobrevivir al vecino degenerado");
+  // pgvector guarda en precisión simple: se compara con tolerancia, no exacto.
+  assert.ok(Math.abs(resultado.chunks[0].scores.similitudCoseno - 0.9) < 1e-6);
+  await db.close();
+});
+
 test("el relleno solo entra si no hay suficientes fragmentos por encima del umbral", async () => {
   const db = await baseConCorpus();
   await insertarDocumento(db, { titulo: "Cuatro buenos", chunks: [

@@ -42,7 +42,15 @@ export function fusionarRRF(listas, { k = 60 } = {}) {
   return [...acumulado.values()].sort((a, b) => b.rrf - a.rrf);
 }
 
-const numero = (valor) => (valor === null || valor === undefined ? null : Number(valor));
+/* Devuelve null ante cualquier cosa que no sea un número utilizable. Importa
+   más de lo que parece: la distancia coseno contra un vector degenerado (todo
+   ceros) es NaN, y un solo NaN colándose en un Math.max lo vuelve NaN entero,
+   convirtiendo una consulta con evidencia buena en un "sin evidencia". */
+const numero = (valor) => {
+  if (valor === null || valor === undefined) return null;
+  const n = Number(valor);
+  return Number.isFinite(n) ? n : null;
+};
 
 /**
  * @param consulta  texto del atleta, en español
@@ -114,10 +122,10 @@ export async function recuperar(consulta, {
     .map(({ index, score }) => {
       const item = candidatos[index];
       if (!item) return null;
-      const scoreUmbral = modoUmbral === "rerank" ? score
+      const scoreUmbral = modoUmbral === "rerank" ? numero(score)
         : modoUmbral === "coseno" ? numero(item.chunk.similitud)
         : null;
-      return { ...item, rerank: score, scoreUmbral };
+      return { ...item, rerank: numero(score), scoreUmbral };
     })
     .filter(Boolean);
 
@@ -138,8 +146,11 @@ export async function recuperar(consulta, {
   /* --- 4. Umbral ANTES de devolver nada al LLM: ahorra tokens y, sobre todo,
          evita que el modelo rellene el hueco con conocimiento general
          (docs/05-rag.md §8.2). --- */
-  const mejor = conScores.reduce((max, item) => Math.max(max, item.scoreUmbral ?? -Infinity), -Infinity);
-  const superaUmbral = Number.isFinite(mejor) && mejor >= config.minScore;
+  /* Solo se comparan scores utilizables: un candidato sin señal no debe
+     impedir que el resto pase el umbral. */
+  const comparables = conScores.map((item) => item.scoreUmbral).filter((valor) => Number.isFinite(valor));
+  const mejor = comparables.length ? Math.max(...comparables) : -Infinity;
+  const superaUmbral = comparables.length > 0 && mejor >= config.minScore;
 
   if (!superaUmbral) {
     return respuestaVacia(ampliada, {

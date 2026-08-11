@@ -100,6 +100,60 @@ export function addDecision(planId, { titulo, justificacion, fuente, confianza, 
   });
 }
 
+/* Decisión + sus citas en una transacción (Fase 8). Una decisión guardada sin
+   sus citas sería exactamente lo que este proyecto no quiere: una afirmación
+   con respaldo aparente que no se puede comprobar.
+
+   Las citas van con `similarity_score` y `rank` para poder distinguir después,
+   al depurar, una cita fuerte de una de relleno (docs/05-rag.md §10). */
+export async function guardarDecisionConCitas(client, planId, decision) {
+  await client.query("BEGIN");
+  try {
+    const { rows } = await client.query(
+      `INSERT INTO plan_decisions (training_plan_id, titulo, justificacion, fuente, confianza, estado, sin_respaldo, invade_estructura)
+       VALUES ($1,$2,$3,'ia',$4,$5,$6,$7) RETURNING *;`,
+      [planId, decision.t, decision.p, decision.confianza, decision.estado || "pendiente", decision.sinRespaldo, decision.invade]
+    );
+    const guardada = rows[0];
+
+    for (const cita of decision.citas || []) {
+      /* ON CONFLICT: el modelo puede repetir el mismo fragmento en una misma
+         decisión; la clave primaria compuesta lo impide y aquí se ignora. */
+      await client.query(
+        `INSERT INTO plan_decision_citations (plan_decision_id, document_chunk_id, similarity_score, rank)
+         VALUES ($1,$2,$3,$4) ON CONFLICT (plan_decision_id, document_chunk_id) DO NOTHING;`,
+        [guardada.id, cita.chunkId, cita.similarityScore, cita.rank]
+      );
+    }
+
+    await client.query("COMMIT");
+    return { decision: guardada, citas: (decision.citas || []).length };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+export async function listarDecisionesConCitas(planId, db = pool) {
+  const { rows } = await db.query(
+    `SELECT pd.*,
+            COALESCE(json_agg(json_build_object(
+              'chunkId', c.document_chunk_id, 'rank', c.rank, 'similarityScore', c.similarity_score,
+              'texto', dc.texto, 'seccion', dc.seccion, 'paginaInicio', dc.pagina_inicio, 'paginaFin', dc.pagina_fin,
+              'titulo', d.titulo, 'autores', d.autores, 'anio', d.anio, 'doi', d.doi
+            ) ORDER BY c.rank) FILTER (WHERE c.document_chunk_id IS NOT NULL), '[]') AS citas
+       FROM plan_decisions pd
+       LEFT JOIN plan_decision_citations c ON c.plan_decision_id = pd.id
+       LEFT JOIN document_chunks dc ON dc.id = c.document_chunk_id
+       LEFT JOIN documents d ON d.id = dc.document_id
+      WHERE pd.training_plan_id = $1
+      GROUP BY pd.id
+      ORDER BY pd.created_at;`,
+    [planId]
+  );
+  return rows;
+}
+
 export function addModification(profileId, { fecha, semana, planOriginal, cambio, motivo, origen }) {
   return insertRow("plan_modifications", {
     athlete_profile_id: profileId,
