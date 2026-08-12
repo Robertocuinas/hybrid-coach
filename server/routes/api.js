@@ -32,8 +32,33 @@ router.post("/plan", ...active(async (req, res, next) => { try { assertPlanInput
 
 router.get("/sessions", ...active(async (req, res, next) => { try { const { rows } = await pool.query(`SELECT cs.*, rs.id AS running_id, rs.distancia_km, rs.duracion_min, rs.rpe, rs.dolor, rs.notas, ss.id AS strength_id, ss.codigo_sesion FROM completed_sessions cs LEFT JOIN running_sessions rs ON rs.completed_session_id=cs.id LEFT JOIN strength_sessions ss ON ss.completed_session_id=cs.id WHERE cs.athlete_profile_id=$1 AND cs.fecha BETWEEN COALESCE($2::date, '-infinity') AND COALESCE($3::date, 'infinity') ORDER BY cs.fecha DESC`, [profileId(req), req.query.from || null, req.query.to || null]); res.json({ ok: true, sessions: rows }); } catch (e) { next(e); } }));
 router.delete("/sessions/:id", ...active(async (req, res, next) => { try { const { rowCount } = await pool.query(`DELETE FROM completed_sessions WHERE id = $1 AND athlete_profile_id = $2`, [req.params.id, profileId(req)]); if (!rowCount) return res.status(404).json({ ok: false, message: "Sesión no encontrada" }); res.json({ ok: true }); } catch (e) { next(e); } }));
-router.post("/sessions/running", ...active(async (req, res, next) => { try { const d = req.body || {}; const completed = await createCompletedSession(profileId(req), { fecha: d.fecha, tipo: "running", semana: d.semana }); const running = await addRunningDetail(completed.id, d); res.status(201).json({ ok: true, completed, running }); } catch (e) { next(e); } }));
-router.post("/sessions/strength", ...active(async (req, res, next) => { try { const d = req.body || {}; const completed = await createCompletedSession(profileId(req), { fecha: d.fecha, tipo: "strength", semana: d.semana }); const strength = await addStrengthSession(completed.id, d.codigoSesion || null); const sets = []; for (const [orden, set] of (d.sets || []).entries()) { const exercise = await findOrCreateExercise({ nombre: String(set.exercise || "").trim(), profileId: profileId(req) }); sets.push(await addStrengthSet(strength.id, exercise.id, { orden: orden + 1, pesoKg: set.pesoKg, reps: set.reps, rir: set.rir, notas: set.notas })); } res.status(201).json({ ok: true, completed, strength, sets }); } catch (e) { next(e); } }));
+router.post("/sessions/running", ...active(async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const d = req.body || {};
+    const completed = await createCompletedSession(profileId(req), { fecha: d.fecha, tipo: "running", semana: d.semana }, client);
+    const running = await addRunningDetail(completed.id, d, client);
+    await client.query("COMMIT");
+    res.status(201).json({ ok: true, completed, running });
+  } catch (e) { await client.query("ROLLBACK"); next(e); } finally { client.release(); }
+}));
+router.post("/sessions/strength", ...active(async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const d = req.body || {};
+    const completed = await createCompletedSession(profileId(req), { fecha: d.fecha, tipo: "strength", semana: d.semana }, client);
+    const strength = await addStrengthSession(completed.id, d.codigoSesion || null, client);
+    const sets = [];
+    for (const [orden, set] of (d.sets || []).entries()) {
+      const exercise = await findOrCreateExercise({ nombre: String(set.exercise || "").trim(), profileId: profileId(req) }, client);
+      sets.push(await addStrengthSet(strength.id, exercise.id, { orden: orden + 1, pesoKg: set.pesoKg, reps: set.reps, rir: set.rir, notas: set.notas }, client));
+    }
+    await client.query("COMMIT");
+    res.status(201).json({ ok: true, completed, strength, sets });
+  } catch (e) { await client.query("ROLLBACK"); next(e); } finally { client.release(); }
+}));
 
 router.get("/checkins", ...active(async (req, res, next) => { try { res.json({ ok: true, checkins: await listFeedbackByProfile(profileId(req)) }); } catch (e) { next(e); } }));
 router.post("/checkins", ...active(async (req, res, next) => { try { res.status(201).json({ ok: true, checkin: await addFeedbackLog(profileId(req), req.body || {}) }); } catch (e) { next(e); } }));
@@ -48,8 +73,8 @@ router.put("/routines", ...active(async (req, res, next) => { try {
     await client.query("BEGIN");
     await client.query(`DELETE FROM routines WHERE athlete_profile_id = $1 AND codigo_sesion = $2`, [profileId(req), d.codigoSesion]);
     for (const [orden, entry] of d.entries.entries()) {
-      const exercise = await findOrCreateExercise({ nombre: String(entry.nombre || "").trim(), profileId: profileId(req) });
-      await addRoutineEntry(profileId(req), { codigoSesion: d.codigoSesion, orden: orden + 1, exerciseId: exercise.id, series: entry.series, reps: entry.reps, rir: entry.rir, prioritario: entry.prioritario, nota: entry.nota, origen: "editada" });
+      const exercise = await findOrCreateExercise({ nombre: String(entry.nombre || "").trim(), profileId: profileId(req) }, client);
+      await addRoutineEntry(profileId(req), { codigoSesion: d.codigoSesion, orden: orden + 1, exerciseId: exercise.id, series: entry.series, reps: entry.reps, rir: entry.rir, prioritario: entry.prioritario, nota: entry.nota, origen: "editada" }, client);
     }
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }

@@ -1,6 +1,8 @@
 import express from "express";
 import { Algorithm, hash, verify } from "@node-rs/argon2";
 import crypto from "node:crypto";
+import pool from "../db/pool.js";
+import { exportUserData } from "../domain/account/export.js";
 import { createUser, findUserByEmail } from "../db/repositories/users.js";
 import { createProfile, listProfilesByUser } from "../db/repositories/athleteProfiles.js";
 import { createSession, revokeSession, selectProfile } from "../db/repositories/sessions.js";
@@ -28,7 +30,9 @@ router.post("/register", async (req, res, next) => {
     if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ ok: false, message: "Email no válido" });
     if (password.length < minPasswordLength) return res.status(400).json({ ok: false, message: `La contraseña debe tener al menos ${minPasswordLength} caracteres` });
     if (await findUserByEmail(email)) return res.status(409).json({ ok: false, message: "No se pudo crear la cuenta" });
-    const role = process.env.INITIAL_ADMIN_EMAIL?.trim().toLowerCase() === email ? "admin" : "athlete";
+    // La elevación a administrador es una operación explícita en la base de datos.
+    // Nunca se concede desde datos aportados durante el registro.
+    const role = "athlete";
     const user = await createUser({ email, passwordHash: await hash(password, argon2Options), role });
     const profile = await createProfile(user.id, { nombre: String(req.body?.nombre || "").trim() || null });
     await startSession(res, user, profile.id);
@@ -71,6 +75,54 @@ router.post("/select-profile", requireAuth, async (req, res, next) => {
     if (!session) return res.status(404).json({ ok: false, message: "Perfil no encontrado" });
     res.json({ ok: true, activeProfileId: session.active_profile_id });
   } catch (error) { next(error); }
+});
+
+router.post("/change-password", requireAuth, async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const currentPassword = String(req.body?.currentPassword || "");
+    const newPassword = String(req.body?.newPassword || "");
+    if (newPassword.length < minPasswordLength) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ ok: false, message: `La contraseña debe tener al menos ${minPasswordLength} caracteres` });
+    }
+    const { rows } = await client.query(`SELECT password_hash FROM users WHERE id=$1 FOR UPDATE`, [req.auth.userId]);
+    if (!rows[0]?.password_hash || !(await verify(rows[0].password_hash, currentPassword, argon2Options))) {
+      await client.query("ROLLBACK");
+      return res.status(401).json({ ok: false, message: "La contraseña actual no es correcta" });
+    }
+    const passwordHash = await hash(newPassword, argon2Options);
+    await client.query(`UPDATE users SET password_hash=$2 WHERE id=$1`, [req.auth.userId, passwordHash]);
+    await client.query(`UPDATE user_sessions SET revoked_at=now() WHERE user_id=$1 AND id<>$2 AND revoked_at IS NULL`, [req.auth.userId, req.auth.sessionId]);
+    await client.query("COMMIT");
+    res.json({ ok: true });
+  } catch (error) { await client.query("ROLLBACK").catch(() => {}); next(error); } finally { client.release(); }
+});
+
+router.get("/export", requireAuth, async (req, res, next) => {
+  try {
+    const exported = await exportUserData(req.auth.userId, pool);
+    res.set("Content-Disposition", `attachment; filename="hybridcoach-export-${new Date().toISOString().slice(0, 10)}.json"`);
+    res.json({ ok: true, data: exported });
+  } catch (error) { next(error); }
+});
+
+router.delete("/account", requireAuth, async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const password = String(req.body?.password || "");
+    const user = await client.query(`SELECT password_hash FROM users WHERE id=$1 FOR UPDATE`, [req.auth.userId]);
+    if (!user.rows[0]?.password_hash || !(await verify(user.rows[0].password_hash, password, argon2Options))) {
+      await client.query("ROLLBACK");
+      return res.status(401).json({ ok: false, message: "La contraseña no es correcta" });
+    }
+    await client.query(`DELETE FROM users WHERE id=$1`, [req.auth.userId]);
+    await client.query("COMMIT");
+    res.clearCookie(sessionCookieName, cookieSecurityOptions());
+    res.json({ ok: true, deleted: true });
+  } catch (error) { await client.query("ROLLBACK").catch(() => {}); next(error); } finally { client.release(); }
 });
 
 export default router;

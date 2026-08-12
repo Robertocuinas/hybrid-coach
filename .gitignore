@@ -7,6 +7,7 @@ public/app.js
 migration/source/
 migration/parsed/
 migration/transformed/
+migration/backups/
 .tmp-pgtest/
 migration/parsed/
 migration/transformed/

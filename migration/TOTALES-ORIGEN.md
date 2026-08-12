@@ -1,41 +1,28 @@
 # Totales de origen
 
-Números de referencia extraídos de `localStorage` (y contrastados con Google Sheets) antes de
-migrar. Se usan en la Fase 2 para validar que la migración a PostgreSQL no ha perdido ni
-duplicado datos.
+**Fecha de la auditoría:** 2026-08-12
 
-**Fecha de la auditoría:** _(pendiente)_
-**Dispositivo(s) auditado(s):** _(pendiente)_
-**Dispositivo elegido como fuente "buena":** _(pendiente — ver criterio en `DISCREPANCIAS.md`)_
+**Resultado:** inicio limpio aprobado por el propietario; no había datos históricos que importar.
 
----
+**Fuente autoritativa desde el alta:** navegador normal usado para crear la primera ficha, respaldado mediante dual write en PostgreSQL.
 
-## Sesiones de carrera
+## Datos históricos a importar
 
-- Nº de sesiones: _(pendiente)_
-- Suma de km: _(pendiente)_
+- Sesiones de carrera: 0
+- Kilómetros: 0
+- Series de fuerza: 0
+- Volumen peso × repeticiones: 0
+- Check-ins: 0
+- Registros de recuperación: 0
+- Referencias personales: 0
+- Rango temporal: no aplicable
 
-## Series de fuerza
+## Método
 
-- Nº de series: _(pendiente)_
-- Suma de kg movidos (peso × reps): _(pendiente)_
+Declaración expresa del propietario durante la puesta en marcha: no existían datos en
+otros dispositivos, Excel o Google Sheets que debieran conservarse. La ficha creada
+después no forma parte de una migración histórica; se valida mediante dual write y
+conciliación diaria.
 
-## Check-ins y recuperación
-
-- Nº de check-ins: _(pendiente)_
-- Nº de registros de recuperación: _(pendiente)_
-
-## Referencias bibliográficas
-
-- Nº de referencias: _(pendiente)_
-
-## Rango temporal
-
-- Primer registro: _(pendiente)_
-- Último registro: _(pendiente)_
-
----
-
-## Cómo se obtuvieron estos números
-
-_(pendiente — anotar aquí el método: consola del navegador, script, etc.)_
+Por tanto, los pasos `01`–`05` de importación histórica no se ejecutan contra staging. Los
+scripts se conservan para una futura importación explícita y sus pruebas permanecen activas.

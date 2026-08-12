@@ -1336,7 +1336,7 @@ export default function HybridCoach({ user, activeProfile, onLogout }) {
   if (!st) return (<div className="hc"><style>{CSS}</style><div className="wrap" style={{ paddingTop: 60 }}><p className="eyebrow">Cargando…</p></div></div>);
 
   const P = st.perfiles[st.activo];
-  const ctx = { st, P, update, notify, today, setTab, setPantalla, tab, onLogout };
+  const ctx = { st, P, update, notify, today, setTab, setPantalla, tab, onLogout, user };
 
   if (!P) return (<div className="hc"><style>{CSS}</style><div className="wrap"><Bienvenida {...ctx} /></div></div>);
   if (pantalla === "wizard" || !P.plan) return (<div className="hc"><style>{CSS}</style><div className="wrap"><Wizard {...ctx} onClose={() => setPantalla(null)} /></div>{toast && <Toast m={toast} />}</div>);
@@ -3082,9 +3082,14 @@ function EditarRef({ r, onSave, onDelete, onCancel }) {
 /* ============================================================
    AJUSTES
    ============================================================ */
-function Ajustes({ st, P, update, notify, onClose, setPantalla, today }) {
+function Ajustes({ st, P, update, notify, onClose, setPantalla, today, onLogout, user }) {
   const [url, setUrl] = useState(st.config.sheetsUrl || "");
   const [test, setTest] = useState(null); const [busy, setBusy] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [accountBusy, setAccountBusy] = useState(false);
   const comp = completeness(P.perfil);
   const guardar = () => { update((s) => { s.config.sheetsUrl = url.trim(); return s; }); notify("URL guardada."); };
   const probar = async () => { setBusy(true); setTest(null); setTest(await pushToSheets(url.trim(), "Config", [{ fecha: today, clave: "prueba", valor: "conexión desde Hybrid Coach" }])); setBusy(false); };
@@ -3099,6 +3104,43 @@ function Ajustes({ st, P, update, notify, onClose, setPantalla, today }) {
   };
   const exportar = () => { const blob = new Blob([JSON.stringify(st, null, 2)], { type: "application/json" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "hybridcoach-" + today + ".json"; a.click(); };
+  const exportarCuenta = async () => {
+    setAccountBusy(true);
+    try {
+      const response = await fetch("/api/auth/export", { credentials: "same-origin" });
+      if (!response.ok) throw new Error("No se pudo preparar la exportación");
+      const blob = await response.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `hybridcoach-cuenta-${today}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      notify("Exportación completa descargada.");
+    } catch (error) { notify(error.message); } finally { setAccountBusy(false); }
+  };
+  const cambiarPassword = async () => {
+    if (newPassword.length < 12) return notify("La contraseña nueva debe tener al menos 12 caracteres.");
+    setAccountBusy(true);
+    try {
+      const response = await fetch("/api/auth/change-password", { method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ currentPassword, newPassword }) });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || "No se pudo cambiar la contraseña");
+      setCurrentPassword(""); setNewPassword(""); notify("Contraseña actualizada; las demás sesiones se han cerrado.");
+    } catch (error) { notify(error.message); } finally { setAccountBusy(false); }
+  };
+  const borrarCuenta = async () => {
+    if (deleteConfirmation !== "BORRAR") return notify("Escribe BORRAR para confirmar.");
+    setAccountBusy(true);
+    try {
+      const response = await fetch("/api/auth/account", { method: "DELETE", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: deletePassword }) });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || "No se pudo borrar la cuenta");
+      localStorage.removeItem(`${KEY_PREFIX}:${user.id}`);
+      await onLogout();
+    } catch (error) { notify(error.message); setAccountBusy(false); }
+  };
   const [confReg, setConfReg] = useState(false);
   const regenerar = () => { if (!confReg) { setConfReg(true); return; }
     update((s) => { const p = s.perfiles[P.id]; p.plan = buildPlan(p.perfil, today); p.weeks = {};
@@ -3137,6 +3179,25 @@ function Ajustes({ st, P, update, notify, onClose, setPantalla, today }) {
         <Metric l="check-ins" v={P.checkins.length} /><Metric l="referencias" v={st.biblio.length} />
       </div>
       <button className="btn ghost sm" style={{ width: "100%" }} onClick={exportar}>Descargar copia de todo (JSON)</button>
+      <div style={{ height: 8 }} />
+      <button className="btn ghost sm" style={{ width: "100%" }} onClick={exportarCuenta} disabled={accountBusy}>Exportar cuenta desde PostgreSQL</button>
+    </div>
+    <div className="card"><h3>Seguridad de la cuenta</h3>
+      <label className="xs muted">CONTRASEÑA ACTUAL</label>
+      <input type="password" autoComplete="current-password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
+      <div style={{ height: 8 }} />
+      <label className="xs muted">CONTRASEÑA NUEVA · MÍNIMO 12 CARACTERES</label>
+      <input type="password" autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+      <div style={{ height: 9 }} />
+      <button className="btn sm" style={{ width: "100%" }} onClick={cambiarPassword} disabled={accountBusy || !currentPassword || !newPassword}>Cambiar contraseña</button>
+    </div>
+    <div className="card" style={{ borderColor: "var(--alert)" }}><h3>Borrar cuenta</h3>
+      <p className="sm muted">Elimina la cuenta y sus datos privados de PostgreSQL. Descarga antes una exportación. Esta acción no se puede deshacer desde la aplicación.</p>
+      <input type="password" autoComplete="current-password" value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)} placeholder="Contraseña actual" />
+      <div style={{ height: 8 }} />
+      <input value={deleteConfirmation} onChange={(e) => setDeleteConfirmation(e.target.value)} placeholder="Escribe BORRAR" />
+      <div style={{ height: 9 }} />
+      <button className="btn danger sm" style={{ width: "100%" }} onClick={borrarCuenta} disabled={accountBusy || !deletePassword || deleteConfirmation !== "BORRAR"}>Borrar definitivamente mi cuenta</button>
     </div>
     <p className="xs muted" style={{ paddingBottom: 16 }}>Hybrid Coach organiza entrenamiento. No diagnostica lesiones ni sustituye a un profesional sanitario. Si tienes dolor persistente, en reposo o que empeora al entrenar, consúltalo.</p>
   </div>);

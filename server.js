@@ -15,6 +15,7 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkDatabaseStatus } from "./server/db/status.js";
+import { isReady } from "./server/health.js";
 import pool from "./server/db/pool.js";
 import authRoutes from "./server/routes/auth.js";
 import apiRoutes from "./server/routes/api.js";
@@ -23,7 +24,7 @@ import coachRoutes from "./server/routes/coach.js";
 import evidenceRoutes from "./server/routes/evidence.js";
 import syncRoutes from "./server/routes/sync.js";
 import { startReconciliationJob } from "./server/jobs/reconciliation.js";
-import { loginRateLimiter, requireAuth } from "./server/middleware/auth.js";
+import { aiRateLimiter, loginRateLimiter, registrationRateLimiter, requireAuth, uploadRateLimiter } from "./server/middleware/auth.js";
 import { requireTrustedOrigin, securityHeaders } from "./server/middleware/security.js";
 import { createEmbeddingProvider, createLLMProvider, readEmbeddingConfig } from "./server/ai/factory.js";
 import { getEmbeddingStatus, validateEmbeddingStartup } from "./server/embeddings/index-state.js";
@@ -55,6 +56,12 @@ app.use(express.json({ limit: "2mb" }));
 app.disable("x-powered-by");
 app.use(securityHeaders);
 app.use(requireTrustedOrigin);
+app.get("/health/live", (_req, res) => res.json({ ok: true }));
+app.get("/health/ready", async (_req, res) => {
+  const status = await checkDatabaseStatus();
+  const ready = isReady(status);
+  res.status(ready ? 200 : 503).json({ ok: ready, db: status.db, pgvector: status.pgvector });
+});
 app.get("/api/estado", async (_req, res) => {
   const dbStatus = await checkDatabaseStatus();
   const embeddings = await getEmbeddingStatus(embeddingConfig, pool);
@@ -70,14 +77,17 @@ app.get("/api/estado", async (_req, res) => {
   });
 });
 app.use("/api/auth/login", loginRateLimiter);
+app.use("/api/auth/register", registrationRateLimiter);
 app.use("/api/auth", authRoutes);
 app.use("/auth/login", loginRateLimiter);
+app.use("/auth/register", registrationRateLimiter);
 app.use("/auth", authRoutes);
 app.use("/api", syncRoutes);
 /* Antes que apiRoutes: /api/admin/* tiene su propio parseo de cuerpo binario
    y no debe caer en los manejadores JSON genéricos. */
+app.use("/api/admin/documents/upload", uploadRateLimiter);
 app.use("/api/admin", adminRoutes);
-app.use("/api/coach", coachRoutes);
+app.use("/api/coach", aiRateLimiter, coachRoutes);
 app.use("/api/evidence", evidenceRoutes);
 app.use("/api", apiRoutes);
 
@@ -87,7 +97,7 @@ app.post("/api/entrar", (_req, res) => res.status(410).json({ ok: false, message
 /* ============================================================
    IA — la clave se queda aquí
    ============================================================ */
-app.post("/api/ia", requireAuth, async (req, res) => {
+app.post("/api/ia", requireAuth, aiRateLimiter, async (req, res) => {
   if (!llmProvider) {
     return res.status(503).json({ ok: false, message: "Este servidor no tiene proveedor de IA configurado. La aplicación sigue funcionando sin él." });
   }
@@ -306,6 +316,6 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log("  Acceso: sesiones autenticadas");
 });
 
-if (process.env.DATABASE_URL && process.env.RECONCILIATION_ENABLED !== "false") {
+if (process.env.DATABASE_URL && process.env.RECONCILIATION_ENABLED !== "false" && process.env.RECONCILIATION_MODE !== "external") {
   startReconciliationJob();
 }

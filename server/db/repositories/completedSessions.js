@@ -1,13 +1,13 @@
 import { pool, insertRow } from "./_helpers.js";
 
-export function createCompletedSession(profileId, { plannedSessionId = null, fecha, tipo, semana }) {
+export function createCompletedSession(profileId, { plannedSessionId = null, fecha, tipo, semana }, db = pool) {
   return insertRow("completed_sessions", {
     athlete_profile_id: profileId,
     planned_session_id: plannedSessionId,
     fecha,
     tipo,
     semana,
-  });
+  }, "*", db);
 }
 
 /* "Últimos N días" — la consulta más frecuente del sistema, ver docs/03-modelo-datos.md §10. */
@@ -19,7 +19,7 @@ export async function listRecentByProfile(profileId, limit = 30) {
   return rows;
 }
 
-export function addRunningDetail(completedSessionId, datos = {}) {
+export function addRunningDetail(completedSessionId, datos = {}, db = pool) {
   return insertRow("running_sessions", {
     completed_session_id: completedSessionId,
     codigo_sesion: datos.codigoSesion ?? null,
@@ -35,14 +35,14 @@ export function addRunningDetail(completedSessionId, datos = {}) {
     notas: datos.notas ?? null,
     origen: datos.origen ?? "manual",
     external_id: datos.externalId ?? null,
-  });
+  }, "*", db);
 }
 
-export function addStrengthSession(completedSessionId, codigoSesion) {
-  return insertRow("strength_sessions", { completed_session_id: completedSessionId, codigo_sesion: codigoSesion });
+export function addStrengthSession(completedSessionId, codigoSesion, db = pool) {
+  return insertRow("strength_sessions", { completed_session_id: completedSessionId, codigo_sesion: codigoSesion }, "*", db);
 }
 
-export function addStrengthSet(strengthSessionId, exerciseId, { orden, pesoKg, reps, rir = null, notas = null }) {
+export function addStrengthSet(strengthSessionId, exerciseId, { orden, pesoKg, reps, rir = null, notas = null }, db = pool) {
   return insertRow("strength_sets", {
     strength_session_id: strengthSessionId,
     strength_exercise_id: exerciseId,
@@ -51,7 +51,7 @@ export function addStrengthSet(strengthSessionId, exerciseId, { orden, pesoKg, r
     reps,
     rir,
     notas,
-  });
+  }, "*", db);
 }
 
 /* progresionSugerida() necesita la última serie real de cada ejercicio. */
@@ -63,8 +63,8 @@ export async function lastSetForExercise(exerciseId) {
   return rows[0] || null;
 }
 
-export async function findOrCreateExercise({ nombre, grupoMuscular = null, patron = null, incrementoKgDefault = null, profileId = null }) {
-  const { rows } = await pool.query(
+export async function findOrCreateExercise({ nombre, grupoMuscular = null, patron = null, incrementoKgDefault = null, profileId = null }, db = pool) {
+  const { rows } = await db.query(
     `SELECT * FROM strength_exercises WHERE nombre = $1 AND athlete_profile_id IS NOT DISTINCT FROM $2;`,
     [nombre, profileId]
   );
@@ -75,10 +75,10 @@ export async function findOrCreateExercise({ nombre, grupoMuscular = null, patro
     patron,
     incremento_kg_default: incrementoKgDefault,
     athlete_profile_id: profileId,
-  });
+  }, "*", db);
 }
 
-export function addRoutineEntry(profileId, { codigoSesion, orden, exerciseId, series, reps, rir = null, prioritario = false, nota = null, origen = "generada" }) {
+export function addRoutineEntry(profileId, { codigoSesion, orden, exerciseId, series, reps, rir = null, prioritario = false, nota = null, origen = "generada" }, db = pool) {
   return insertRow("routines", {
     athlete_profile_id: profileId,
     codigo_sesion: codigoSesion,
@@ -90,7 +90,7 @@ export function addRoutineEntry(profileId, { codigoSesion, orden, exerciseId, se
     prioritario,
     nota,
     origen,
-  });
+  }, "*", db);
 }
 
 export async function listRoutines(profileId) {

@@ -67,5 +67,14 @@ export function startReconciliationJob({ intervalMs = DAY_MS, runImmediately = t
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  startReconciliationJob({ runImmediately: true });
+  try {
+    const results = await runReconciliation();
+    const unhealthy = results.filter((result) => result.status !== "green");
+    if (unhealthy.length) process.exitCode = 2;
+  } catch (error) {
+    console.error("Reconciliation job failed:", error.name, error.code || "");
+    process.exitCode = 1;
+  } finally {
+    await pool.end();
+  }
 }

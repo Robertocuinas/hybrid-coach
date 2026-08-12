@@ -15,15 +15,15 @@ Desplegada en Railway. Un solo servicio Node/Express que sirve una SPA de React.
 
 ## 2. Estado real del proyecto (importante, no asumir otra cosa)
 
-- **No hay base de datos.** Todo el estado vive en un blob JSON en `localStorage` del
-  navegador, bajo la clave `hybridcoach:v2`.
-- **`server.js` no tiene estado.** Es un proxy: reenvía a la API de Anthropic, hace de
-  puente a Google Sheets y gestiona OAuth de Strava (con el token en una variable en
-  memoria del proceso, que se pierde en cada redeploy).
-- **Google Sheets es un respaldo de solo escritura**, no la fuente de datos.
+- **PostgreSQL + pgvector están activos.** Durante el asentamiento, el frontend conserva
+  `localStorage` y hace dual write a la API.
+- **`server.js` expone autenticación, CRUD, sync, ingesta y RAG.** El dominio no llama
+  directamente a proveedores de IA.
+- **Google Sheets es una integración opcional heredada**, no la fuente de datos.
 - **`HybridCoach-BaseDeDatos.xlsx` no lo lee ni escribe ningún código.** Es una plantilla
   de referencia. No forma parte del flujo de datos.
-- **No hay autenticación real.** `APP_PASSWORD` es una contraseña compartida en cookie.
+- **Hay cuentas y sesiones reales.** Las contraseñas usan Argon2id y la cookie contiene
+  un token aleatorio revocable, nunca la contraseña.
 
 Estamos en proceso de evolucionar esto hacia PostgreSQL + pgvector + RAG.
 Ver `docs/` para el plan completo.
@@ -111,16 +111,13 @@ npm start         # arranca el servidor en PORT (3000 por defecto)
 npm run dev       # build en watch + servidor
 ```
 
-No hay tests todavía. Si añades lógica en el motor determinista o en el pipeline RAG,
-propón tests antes de dar el trabajo por terminado.
+Ejecuta `npm test` y `npm run build` antes de dar el trabajo por terminado.
 
 ## 7. Variables de entorno
 
-Actuales (ver `.env.example`): `APP_PASSWORD`, `ANTHROPIC_API_KEY`, `APPS_SCRIPT_URL`,
-`SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET`,
-`MODELO_IA`.
-
-Previstas en la evolución: ver `docs/04-capa-ia.md` §6 y `docs/07-railway-despliegue.md` §3.
+La lista vigente está en `.env.example`. Para el núcleo son obligatorias `DATABASE_URL` y
+`SESSION_SECRET`; en producción también `NODE_ENV=production` y `APP_ORIGIN`. IA,
+embeddings, R2, Sheets y Strava son opcionales.
 
 ## 8. Antes de empezar cualquier tarea
 

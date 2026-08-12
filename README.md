@@ -1,131 +1,85 @@
-# Hybrid Coach — despliegue en Railway
+# Hybrid Coach
 
-Aplicación de plan de media maratón con fuerza híbrida, base de evidencia y módulo de nutrición. Todo se sirve desde un único servicio: la aplicación, el proxy de IA, el puente a Google Sheets y Strava.
+Aplicación de entrenamiento híbrido con React, Express y PostgreSQL + pgvector. Incluye
+motor determinista, perfiles por cuenta, sesiones, nutrición, dual write temporal,
+conciliación y una capa opcional de IA/RAG.
 
----
+## Estado
 
-## Ponerla en marcha
+- staging desplegado en Railway;
+- autenticación real con Argon2id y cookie HttpOnly;
+- PostgreSQL y pgvector operativos;
+- registro público cerrado mediante `REGISTRATION_ENABLED=false`;
+- dual write `localStorage` → API activo hasta completar la conciliación;
+- IA, embeddings, R2 y Strava opcionales y desactivados si no tienen variables.
 
-### 1. Subir el código a GitHub
+## Desarrollo local
 
-Railway despliega desde un repositorio. Desde esta carpeta:
+Requisitos: Node 20+, PostgreSQL con pgvector para integración real y una
+`SESSION_SECRET` de al menos 32 caracteres.
 
 ```bash
-git init
-git add .
-git commit -m "Hybrid Coach v2"
+npm install
+npm run build
+npm test
+npm run migrate
+npm start
 ```
 
-Crea un repositorio **privado** en github.com y sigue las dos líneas que te da GitHub (`git remote add origin …` y `git push -u origin main`).
+La plantilla completa de variables está en `.env.example`. Nunca se guardan secretos en
+Git, en el frontend ni en documentación.
 
-Privado importa: aunque las claves van en variables de entorno y no en el código, tu perfil, tus lesiones y tu plan sí están en el repositorio.
+## Railway
 
-### 2. Crear el servicio en Railway
+`railway.json` define:
 
-1. Entra en [railway.app](https://railway.app) y regístrate con GitHub.
-2. **New Project → Deploy from GitHub repo** → elige el repositorio.
-3. Railway detecta Node, instala y compila solo. El primer despliegue tarda 2-3 minutos.
+- `npm install && npm run build`;
+- pre-deploy `npm run migrate`;
+- start `npm start`;
+- healthcheck `/health/ready`.
 
-### 3. Poner las variables de entorno
+Servicios esperados en staging:
 
-En el servicio → pestaña **Variables** → **New Variable**. Ninguna es obligatoria, pero la primera sí la necesitas en cuanto compartas la dirección:
+1. `helpful-endurance`: web/API.
+2. `pgvector`: PostgreSQL en la misma red privada.
+3. conciliación cron opcional: mismo repositorio, config `/railway.cron.json`, start
+   `npm run reconcile:once`, horario `0 3 * * *` UTC.
 
-| Variable | Para qué | Si la dejas vacía |
-|---|---|---|
-| `SESSION_SECRET` | Secreto de firma de sesiones (mínimo 32 caracteres) | Obligatorio para autenticación |
-| `ANTHROPIC_API_KEY` | Razonamiento sobre el plan, lectura de PDF, coach | La app funciona igual, sin capa de IA |
-| `APPS_SCRIPT_URL` | Puente a tu Google Sheets | No se respalda nada en la hoja |
-| `STRAVA_CLIENT_ID` | Importar carreras | Se registran a mano |
-| `STRAVA_CLIENT_SECRET` | Lo mismo | — |
+Consulta [docs/runbook-operacion.md](docs/runbook-operacion.md) para despliegue, rollback,
+backup lógico, restauración y creación de producción.
 
-Tu `APPS_SCRIPT_URL` es la que ya tienes desplegada:
+## Endpoints operativos
 
-```
-https://script.google.com/macros/s/AKfycbz50W3xTmnUebgUNhlO4mrasp_nT2Qe_R-OKfpvil0tdVqlyn4T1bRs_jHzPh-_Tl7BqQ/exec
-```
+- `GET /health/live`: proceso vivo.
+- `GET /health/ready`: PostgreSQL y pgvector disponibles; devuelve 503 si no está listo.
+- `GET /api/estado`: diagnóstico de módulos opcionales.
+- `GET /api/auth/me`: sesión actual.
+- `GET /api/reconciliation-status`: racha diaria de conciliación.
 
-La clave de Anthropic se saca en [console.anthropic.com](https://console.anthropic.com) → API Keys. **Va aquí, en el servidor.** Nunca la pegues en el código de la aplicación: cualquiera que abra la web podría leerla desde las herramientas del navegador.
+## Datos y seguridad
 
-Cada vez que guardas una variable, Railway redespliega solo.
+La aplicación maneja información potencialmente sanitaria. Mantén el repositorio privado,
+el registro cerrado y las integraciones externas desactivadas hasta definir consentimiento,
+retención y finalidad. Consulta [docs/politica-datos.md](docs/politica-datos.md) y
+[docs/08-seguridad.md](docs/08-seguridad.md).
 
-### 4. Generar la dirección pública
+La cuenta puede exportarse desde `GET /api/auth/export`. El borrado autenticado y el cambio
+de contraseña existen en la API; la UI de gestión de cuenta todavía está pendiente.
 
-**Settings → Networking → Generate Domain**. Te da algo como `hybridcoach-production.up.railway.app`. Esa es tu aplicación.
+## Pruebas
 
-### 5. Comprobar que todo está enchufado
-
-Abre `https://tu-dominio.up.railway.app/api/estado`. Responde qué hay configurado:
-
-```json
-{"ok":true,"requierePase":true,"ia":true,"hoja":true,"strava":false}
-```
-
-Lo que salga en `false` es lo que falta por configurar.
-
-### 6. Strava (opcional)
-
-En [strava.com/settings/api](https://www.strava.com/settings/api), pon como *Authorization Callback Domain* tu dominio de Railway **sin `https://`**. Luego entra una vez en `https://tu-dominio.up.railway.app/api/strava/entrar` para autorizar.
-
----
-
-## Usarla en el móvil
-
-Ábrela en el navegador y **Añadir a pantalla de inicio**. Se comporta como una aplicación nativa: pantalla completa, sin barra de direcciones, icono propio.
-
----
-
-## Compartirla con otra persona
-
-Le pasas la dirección y la contraseña. No hace falta que instale nada.
-
-Antes de hacerlo, ten en cuenta tres cosas:
-
-**Los datos son por navegador.** Cada persona tiene su plan y su perfil en su propio dispositivo. No se ven entre ellos. Pero si esa persona cambia de móvil, empieza de cero.
-
-**La hoja de cálculo es compartida.** Todos escriben en la misma, separados por la columna `perfil`. Verás sus datos y ellos podrían ver los tuyos si les das acceso a la hoja. Si prefieres que no, cada uno despliega su propio servicio: es gratis hasta agotar el crédito mensual.
-
-**La IA la pagas tú.** Las llamadas van con tu clave. Con pocos usuarios es calderilla, pero conviene saberlo antes de repartir la dirección.
-
-Si en vez de eso quieres que cada uno monte lo suyo, pásales el repositorio y este archivo: son los mismos seis pasos.
-
----
-
-## Lo que cuesta
-
-El plan gratuito de Railway da unos 5 $ de crédito al mes. Una aplicación como esta, con uso personal, consume bastante menos: es un servidor pequeño que la mayor parte del tiempo está parado. Si crece, el plan Hobby son 5 $/mes.
-
----
-
-## Qué hace cada archivo
-
-```
-server.js              Servidor: aplicación, proxy de IA, puente a Sheets, Strava
-build.mjs              Compila la aplicación a public/app.js
-src/HybridCoach.jsx    La aplicación entera
-src/index.jsx          Arranque y pantalla de contraseña
-public/index.html      Documento que la carga
-railway.json           Cómo construye y arranca Railway
-.env.example           Plantilla de variables (referencia; las reales van en Railway)
+```bash
+npm test
 ```
 
----
+La suite cubre sincronización, aislamiento entre usuarios, ingesta, embeddings, retrieval,
+citas, RAG, conciliación y el motor determinista.
 
-## Si algo falla
+## Límites actuales
 
-**El despliegue se cae al construir.** Mira los *Deploy Logs* en Railway. Casi siempre es que `npm run build` no encontró algo: comprueba que subiste `src/` y `build.mjs`.
-
-**Carga en negro y no aparece nada.** Abre la consola del navegador (F12). Si dice que no encuentra `/app.js`, la compilación no llegó a generarse: vuelve a desplegar.
-
-**La IA responde "no tiene clave configurada".** Falta `ANTHROPIC_API_KEY` o se guardó con espacios al principio o al final.
-
-**No se guarda nada en la hoja.** Comprueba `/api/estado`. Si `hoja` es `false`, falta `APPS_SCRIPT_URL`. Si es `true` pero no aparecen filas, el Apps Script está desplegado con acceso restringido: en Google Apps Script, *Implementar → Gestionar implementaciones → Quién tiene acceso: Cualquier usuario*.
-
-**Pide la contraseña una y otra vez.** El navegador está bloqueando la cookie. Comprueba que entras por `https://`, no por `http://`.
-
----
-
-## Sobre los datos
-
-Esta aplicación guarda peso, porcentaje de grasa, lesiones y sensaciones de entrenamiento. Son datos de salud. Repositorio privado, contraseña puesta y cuidado con a quién le das acceso a la hoja.
-
-El módulo de nutrición no diagnostica nada ni sustituye a un dietista-nutricionista, y el plan de entrenamiento no sustituye a un fisioterapeuta ni a un médico. Ante dolor persistente o cualquier bandera médica, eso lo valora un profesional sanitario.
+- PostgreSQL todavía es espejo recuperable, pero `localStorage` sigue siendo la fuente de
+  verdad durante el periodo de conciliación.
+- No se debe ejecutar el corte hasta siete días verdes consecutivos.
+- Los backups nativos de Railway requieren un plan compatible; mientras tanto se usa
+  exportación JSON y `npm run backup:db` con almacenamiento privado externo.
+- No escalar a varias réplicas mientras Strava y jobs sigan teniendo estado de proceso.

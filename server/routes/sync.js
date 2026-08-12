@@ -22,6 +22,14 @@ const paceOrNull = (value) => {
 };
 const source = (value) => value === "strava" ? "strava" : "manual";
 
+export function compareSnapshotTimes(incoming, stored) {
+  const incomingMs = Date.parse(String(incoming || ""));
+  if (!Number.isFinite(incomingMs)) return { valid: false, newer: false };
+  if (!stored) return { valid: true, newer: true };
+  const storedMs = Date.parse(String(stored));
+  return { valid: true, newer: !Number.isFinite(storedMs) || incomingMs > storedMs };
+}
+
 export async function replaceProfileState(client, profileId, snapshot) {
   const wrapper = snapshot.profile || {};
   const profile = wrapper.perfil || {};
@@ -121,13 +129,13 @@ export async function replaceProfileState(client, profileId, snapshot) {
 
 router.get("/sync-state", async (req, res, next) => {
   try {
-    const { rows } = await pool.query(`SELECT state, profile_local_id, captured_at
+    const { rows } = await pool.query(`SELECT state, profile_local_id, state_captured_at
       FROM client_state_snapshots WHERE athlete_profile_id=$1`, [req.auth.athleteProfileId]);
     const row = rows[0];
     res.json({ ok: true, snapshot: row ? {
       profile: row.state,
       profileLocalId: row.profile_local_id,
-      capturedAt: row.captured_at,
+      capturedAt: row.state_captured_at,
     } : null });
   } catch (error) { next(error); }
 });
@@ -138,6 +146,11 @@ router.post("/sync", async (req, res, next) => {
   if (!operationId || operationId.length > 100 || !snapshot?.profile || !snapshot?.totals) {
     return res.status(400).json({ ok: false, message: "Operación de sincronización no válida" });
   }
+  const timing = compareSnapshotTimes(snapshot.capturedAt, null);
+  if (!timing.valid) return res.status(400).json({ ok: false, message: "capturedAt no es una fecha válida" });
+  if (Date.parse(snapshot.capturedAt) > Date.now() + 5 * 60_000) {
+    return res.status(400).json({ ok: false, message: "capturedAt está demasiado adelantado" });
+  }
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -147,13 +160,19 @@ router.post("/sync", async (req, res, next) => {
       await client.query("ROLLBACK");
       return res.json({ ok: true, duplicate: true });
     }
+    const previous = await client.query(`SELECT state_captured_at FROM client_state_snapshots
+      WHERE athlete_profile_id=$1 FOR UPDATE`, [req.auth.athleteProfileId]);
+    if (!compareSnapshotTimes(snapshot.capturedAt, previous.rows[0]?.state_captured_at).newer) {
+      await client.query("COMMIT");
+      return res.json({ ok: true, ignored: true, reason: "stale_snapshot" });
+    }
     await replaceProfileState(client, req.auth.athleteProfileId, snapshot);
     await client.query(`INSERT INTO client_state_snapshots
-      (athlete_profile_id,profile_local_id,state,local_totals,captured_at,received_at)
-      VALUES ($1,$2,$3,$4,$5,now()) ON CONFLICT (athlete_profile_id) DO UPDATE SET
+      (athlete_profile_id,profile_local_id,state,local_totals,captured_at,state_captured_at,received_at)
+      VALUES ($1,$2,$3,$4,$5,$5,now()) ON CONFLICT (athlete_profile_id) DO UPDATE SET
       profile_local_id=excluded.profile_local_id,state=excluded.state,local_totals=excluded.local_totals,
-      captured_at=excluded.captured_at,received_at=now()`, [req.auth.athleteProfileId, snapshot.profileLocalId,
-      snapshot.profile, snapshot.totals, snapshot.capturedAt || new Date().toISOString()]);
+      captured_at=excluded.captured_at,state_captured_at=excluded.state_captured_at,received_at=now()`, [req.auth.athleteProfileId, snapshot.profileLocalId,
+      snapshot.profile, snapshot.totals, snapshot.capturedAt]);
     await client.query("COMMIT");
     res.json({ ok: true, operationId });
   } catch (error) {

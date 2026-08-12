@@ -1,146 +1,76 @@
 # 08 · Seguridad
 
-Esta aplicación guarda **datos de salud**: peso, porcentaje de grasa, lesiones, dolor,
-sensaciones, sueño. Eso eleva el listón por encima de un proyecto personal cualquiera.
+Hybrid Coach procesa datos deportivos y datos que pueden revelar salud: peso, lesiones,
+dolor, recuperación y sueño. Este documento describe las medidas técnicas actuales; no
+sustituye asesoramiento jurídico.
 
----
+## Autenticación y sesiones
 
-## 1. Estado actual y sus agujeros
+- Cuenta individual con email y contraseña hasheada mediante Argon2id.
+- Token de sesión aleatorio; PostgreSQL conserva únicamente su hash.
+- Cookie `HttpOnly`, `Secure` en producción y `SameSite=Lax`.
+- `SESSION_SECRET` obligatorio y contraseñas de 12 caracteres por defecto.
+- Rate limiting por IP y cuenta en login; límites separados para registro, IA y PDFs.
+- El registro siempre crea el rol `athlete`. La elevación a `admin` es una operación
+  explícita y auditada en PostgreSQL.
+- Cambiar la contraseña revoca las demás sesiones.
 
-| Situación hoy | Riesgo |
-|---|---|
-| `APP_PASSWORD` compartida en cookie `hc_pase` | No es autenticación por persona. Quien tiene la contraseña entra como cualquiera |
-| La cookie contiene la contraseña en claro | Si se filtra, es la credencial completa, no un token revocable |
-| Token de Strava en variable de proceso, global | Un solo token para todos los usuarios; se pierde en cada redeploy |
-| Sin cuentas, sin roles | Cualquiera que entre puede subir bibliografía y ver todo |
-| Datos en `localStorage` sin cifrar | Accesible a cualquier script en el mismo origen |
+`APP_PASSWORD` ya no existe y no debe reintroducirse como fallback.
 
-Lo que ya está **bien**: la `ANTHROPIC_API_KEY` vive solo en el servidor y nunca llega al
-navegador. Ese criterio hay que extenderlo a todas las claves nuevas.
+## Aislamiento entre usuarios
 
----
+El `athlete_profile_id` se obtiene de la sesión autenticada. Nunca se acepta del body,
+query string o cabecera enviada por el cliente. Las consultas y escrituras privadas
+incluyen ese identificador. La biblioteca científica es compartida, pero solo el rol
+`admin` puede modificarla.
 
-## 2. Autenticación
+Los tests de autorización comprueban que una cuenta no puede resolver un perfil ajeno.
+PostgreSQL RLS sería una segunda defensa futura, no un sustituto de esta regla.
 
-**Fase 3 del roadmap.** Sustituir `APP_PASSWORD` por cuentas reales.
+## Integridad y sincronización
 
-- Email + contraseña con hash `argon2id` (o `bcrypt` con coste ≥12). No inventes nada aquí.
-- Sesión con cookie `HttpOnly`, `Secure`, `SameSite=Lax`, con un identificador de sesión
-  aleatorio — **nunca la contraseña ni un dato derivado de ella**.
-- `SESSION_SECRET` como variable de entorno obligatoria; el servidor no arranca sin ella.
-- Límite de intentos de login (rate limiting por IP y por cuenta) para frenar fuerza bruta.
-- OAuth (Google) es una alternativa válida si prefieres no gestionar contraseñas. Menos
-  código propio, una dependencia externa más.
+- Las escrituras de sesiones y rutinas son transaccionales.
+- Las operaciones dual-write son idempotentes.
+- Un snapshot antiguo no puede sustituir uno nuevo; el servidor compara `capturedAt`
+  bajo bloqueo de fila.
+- Constraints limitan roles, tipos, RPE, dolor, RIR y valores negativos.
+- Solo puede existir un plan activo por perfil y una actividad externa por identificador.
 
-Migración desde el estado actual: al implementarlo, crear una cuenta con tu email y asociar
-el perfil existente a ella. `APP_PASSWORD` se elimina, no se deja como fallback.
+## Navegador y HTTP
 
----
+- HTTPS en Railway y HSTS.
+- CSP con `frame-ancestors 'none'`, `base-uri`, `form-action` y `object-src` restringidos.
+- `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy` y
+  `Permissions-Policy` restrictiva.
+- Las respuestas de API y autenticación usan `Cache-Control: no-store`.
+- Con `APP_ORIGIN` configurado, las mutaciones con cookie requieren el origen exacto.
+- El JSON general está limitado a 2 MB; los PDFs tienen validación y límite propios.
 
-## 3. Autorización y aislamiento entre usuarios
+## Secretos e integraciones
 
-**Regla central:** el `athlete_profile_id` de cualquier consulta se deriva de la **sesión
-autenticada**, nunca de un parámetro de la petición.
+Los secretos solo viven en variables selladas del servidor. `.env.example` contiene
+únicamente nombres y valores no sensibles. No deben aparecer URLs desplegadas privadas,
+tokens, claves, contraseñas ni conexiones de base de datos en Git, el bundle o los logs.
 
-```
-MAL:   GET /api/sesiones?perfil=<id>          → el cliente elige de quién lee
-BIEN:  GET /api/sesiones                      → el servidor resuelve el perfil desde la sesión
-BIEN:  GET /api/perfiles/:id/sesiones         → válido SOLO si se verifica que :id pertenece al usuario
-```
+IA, embeddings, R2, Sheets y Strava permanecen desactivados mientras no estén configurados.
+Antes de activarlos hay que aprobar finalidad, minimización, retención y consentimiento.
+Los tokens persistentes de Strava requieren cifrado en reposo antes de abrir la integración
+a terceros.
 
-Segunda capa opcional: **Row-Level Security** de PostgreSQL. No sustituye a la verificación
-en la aplicación, pero convierte un bug de autorización en una consulta vacía en vez de una
-fuga de datos. Merece la pena si en algún momento hay más de una persona tocando el código.
+## PDFs
 
-### Excepción deliberada: la biblioteca es compartida
+- Subida exclusiva de administradores y rate limited.
+- Validación por magic bytes, no por extensión o `Content-Type`.
+- Tamaño máximo explícito, extracción con timeout y nombres R2 derivados del hash.
+- URLs de evidencia firmadas con caducidad corta; el bucket no es público.
 
-`documents`, `document_chunks` y `chunk_embeddings` son comunes a todos los usuarios — igual
-que hoy `st.biblio` vive fuera de los perfiles. **Solo un usuario con rol `admin` puede
-escribir en ellas.** Cualquiera puede leerlas.
+## Derechos y operación
 
----
+- `GET /api/auth/export` produce una exportación privada completa de la cuenta.
+- `DELETE /api/auth/account` exige contraseña y borra en cascada la cuenta.
+- La política de retención está en [politica-datos.md](politica-datos.md).
+- Backup, restauración, rollback y alertas están en [runbook-operacion.md](runbook-operacion.md).
 
-## 4. Secretos
-
-| Regla | Detalle |
-|---|---|
-| Solo en variables de entorno de Railway | Nunca en el código, nunca en el repositorio, nunca en el bundle |
-| Nunca en el cliente | Toda llamada a APIs de terceros pasa por el servidor. El patrón de `/api/ia` es el correcto y hay que replicarlo para embeddings y reranking |
-| `.env` en `.gitignore` | `.env.example` sí se commitea, con los nombres y sin valores |
-| Rotación | Si una clave se expone, revócala en el proveedor; no basta con quitarla del código |
-
-El repositorio debe seguir siendo **privado**: aunque las claves no estén, el perfil, las
-lesiones y el plan sí están en `perfilSemilla()`.
-
----
-
-## 5. Tokens de Strava
-
-Problema actual: un `refresh_token` único, en memoria, compartido.
-
-Solución (tabla `strava_connections`):
-- una fila por usuario,
-- `access_token` y `refresh_token` **cifrados en reposo** — `pgcrypto` en la base de datos o
-  cifrado en la aplicación antes de insertar, con la clave en variable de entorno,
-- refresco automático cuando expira, escribiendo el token nuevo,
-- posibilidad de desconectar (borrar la fila) desde la interfaz.
-
----
-
-## 6. Datos sensibles y logs
-
-| Qué | Regla |
-|---|---|
-| Peso, grasa, lesiones, dolor | Nunca en logs de aplicación ni en mensajes de error |
-| `ai_query_logs` | Guardar `athlete_profile_id` y referenciar, **no copiar** los datos de salud en el log. Purga automática a los 90 días |
-| Errores de integraciones externas | Enmascarar claves y tokens antes de loguear la respuesta |
-| Prompts completos | Si los guardas para depurar, trátalos como datos de salud: contienen el perfil entero |
-
----
-
-## 7. Transporte y cabeceras
-
-- HTTPS siempre — Railway lo da con el dominio generado.
-- `app.disable('x-powered-by')` ya está puesto. Bien.
-- Añadir cabeceras de seguridad básicas: `Content-Security-Policy` (ojo: hoy se carga
-  `pdf.js` desde CDN, tenlo en cuenta al definir la política — cuando la ingesta pase al
-  servidor, esa dependencia externa desaparece del cliente), `X-Content-Type-Options`,
-  `Referrer-Policy`.
-- Límite de tamaño de payload ya existe (`express.json({ limit: '2mb' })`). Revisarlo al
-  añadir subida de PDFs, que irá por otro camino (`multipart`, con su propio límite).
-
----
-
-## 8. Subida de PDFs
-
-Superficie de ataque nueva a partir de la Fase 5:
-
-- Solo rol `admin`.
-- Validar el tipo real del archivo (magic bytes), no la extensión ni el `Content-Type`.
-- Límite de tamaño explícito (p. ej. 50 MB).
-- Procesar en un contexto aislado: un PDF malicioso puede explotar bugs de la librería de
-  extracción. Mantener PyMuPDF actualizado.
-- Nombre de archivo en R2 derivado del **hash**, nunca del nombre subido por el usuario
-  (evita path traversal y colisiones).
-
----
-
-## 9. Backups
-
-- Cifrados en reposo (R2 lo hace por defecto).
-- Credenciales de acceso al bucket de backups **separadas** de las que usa la aplicación
-  para operar, y con permisos mínimos.
-- Restauración probada al menos una vez antes de confiar en ellos
-  ([`07-railway-despliegue.md`](07-railway-despliegue.md) §5).
-
----
-
-## 10. Aviso al compartir la aplicación
-
-Está bien escrito en el README actual y sigue vigente. Con cuentas reales el escenario
-mejora, pero conviene mantener explícito:
-- los datos son de salud,
-- las llamadas al LLM las paga quien despliega,
-- la aplicación no diagnostica lesiones ni sustituye a un profesional sanitario.
-
-Esos avisos son **código, no prompt** ([`02-arquitectura-objetivo.md`](02-arquitectura-objetivo.md) §6).
+Antes de admitir usuarios externos quedan: recuperación o verificación de email, cifrado
+de OAuth Strava, registro de auditoría, monitorización externa y revisión
+jurídica/consentimiento.

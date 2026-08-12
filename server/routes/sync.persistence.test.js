@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { PGlite } from "@electric-sql/pglite";
-import { replaceProfileState } from "./sync.js";
+import { compareSnapshotTimes, replaceProfileState } from "./sync.js";
+
+test("una instantánea antigua nunca sustituye a otra más reciente", () => {
+  assert.deepEqual(compareSnapshotTimes("2026-08-12T10:00:00Z", "2026-08-12T11:00:00Z"), { valid: true, newer: false });
+  assert.deepEqual(compareSnapshotTimes("2026-08-12T12:00:00Z", "2026-08-12T11:00:00Z"), { valid: true, newer: true });
+  assert.deepEqual(compareSnapshotTimes("fecha rota", null), { valid: false, newer: false });
+});
 
 test("un snapshot del frontend persiste km, kg y check-ins en PostgreSQL", async () => {
   const db = new PGlite();

@@ -45,3 +45,19 @@ export const loginRateLimiter = rateLimit({
   message: { ok: false, message: "Demasiados intentos. Inténtalo más tarde." },
   keyGenerator: (req) => `${ipKeyGenerator(req.ip)}:${String(req.body?.email || "").trim().toLowerCase()}`,
 });
+
+const accountKey = (req) => req.auth?.userId || ipKeyGenerator(req.ip);
+export const registrationRateLimiter = rateLimit({
+  windowMs: 60 * 60_000, limit: 5, standardHeaders: "draft-7", legacyHeaders: false,
+  message: { ok: false, message: "Demasiadas altas desde esta red. Inténtalo más tarde." },
+});
+export const aiRateLimiter = rateLimit({
+  windowMs: 60_000, limit: Number(process.env.AI_RATE_LIMIT_PER_MINUTE || 10),
+  standardHeaders: "draft-7", legacyHeaders: false, keyGenerator: accountKey,
+  message: { ok: false, message: "Límite temporal de IA alcanzado." },
+});
+export const uploadRateLimiter = rateLimit({
+  windowMs: 60 * 60_000, limit: Number(process.env.UPLOAD_RATE_LIMIT_PER_HOUR || 10),
+  standardHeaders: "draft-7", legacyHeaders: false, keyGenerator: accountKey,
+  message: { ok: false, message: "Límite temporal de subidas alcanzado." },
+});

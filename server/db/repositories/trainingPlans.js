@@ -13,7 +13,8 @@ export function createPlanVersion(profileId, datos = {}) {
     techo_tirada_larga_min: datos.techoTiradaLargaMin ?? null,
     riesgo_score: datos.riesgoScore ?? null,
     riesgo_causas: datos.riesgoCausas ?? null,
-    activo: true,
+    // Se activa después, dentro de activarPlan(), tras desactivar la versión anterior.
+    activo: false,
   });
 }
 

@@ -4,8 +4,9 @@ Plan completo para llevar el proyecto de `localStorage` + Google Sheets a
 **PostgreSQL + pgvector + RAG científico**, con una capa de IA neutra respecto al proveedor
 (Anthropic, OpenAI o modelo local).
 
-> **Estado:** diseño aprobado, implementación no iniciada.
-> Nada de lo descrito aquí está construido todavía salvo lo que se indique como "ya existe".
+> **Estado:** PostgreSQL/pgvector, autenticación, dual write, ingesta, RAG, embeddings y
+> citas ya están implementados. Staging está operativo; el corte definitivo de
+> `localStorage` sigue pendiente del periodo de conciliación.
 
 ---
 
@@ -45,6 +46,8 @@ Plan completo para llevar el proyecto de `localStorage` + Google Sheets a
 | [`06-migracion.md`](06-migracion.md) | Migración de `localStorage` + Sheets a PostgreSQL, por fases, con verificación. |
 | [`07-railway-despliegue.md`](07-railway-despliegue.md) | Servicios en Railway, variables de entorno, backups, costes. |
 | [`08-seguridad.md`](08-seguridad.md) | Autenticación real, aislamiento entre usuarios, secretos, datos de salud. |
+| [`runbook-operacion.md`](runbook-operacion.md) | Despliegue, rollback, conciliación, backup y restauración. |
+| [`politica-datos.md`](politica-datos.md) | Retención, exportación, borrado y respuesta a incidentes. |
 
 ### Ejecución
 
