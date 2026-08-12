@@ -32,7 +32,7 @@ test("un snapshot del frontend persiste km, kg y check-ins en PostgreSQL", async
   const profileId = profile.rows[0].id;
   await replaceProfileState(db, profileId, { profile: {
     id: "local-1", nombre: "Atleta", perfil: { nombre: "Atleta", fechaCarrera: "2026-10-18" },
-    plan: { totalSemanas: 10, taper: 1, runDias: 2, gymDias: 2, techo: 90, riesgo: { score: 2, causas: [] } },
+    plan: { totalSemanas: 10, taper: 1, runDias: 2, gymDias: 2, techo: 90, riesgo: { score: 2, causas: ["historial de lesión"] } },
     running: [{ id: "r1", date: "2026-08-10", distancia_km: 8.5, duracion_min: 45, source: "manual" }],
     strength: [{ id: "s1", date: "2026-08-10", session: "GYM A", exercise: "Sentadilla", set: 1, weight: 60, reps: 5 }],
     checkins: [{ date: "2026-08-10", rpe: 6 }], recovery: [],
@@ -43,5 +43,7 @@ test("un snapshot del frontend persiste km, kg y check-ins en PostgreSQL", async
     (SELECT sum(peso_kg*reps)::float8 FROM strength_sets) kg,
     (SELECT count(*)::int FROM feedback_logs) checkins`);
   assert.deepEqual(totals.rows[0], { km: 8.5, kg: 300, checkins: 1 });
+  const plan = await db.query(`SELECT riesgo_causas FROM training_plans`);
+  assert.deepEqual(plan.rows[0].riesgo_causas, ["historial de lesión"]);
   await db.close();
 });

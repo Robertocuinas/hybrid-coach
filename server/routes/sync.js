@@ -46,7 +46,7 @@ export async function replaceProfileState(client, profileId, snapshot) {
         techo_tirada_larga_min=$8, riesgo_score=$9, riesgo_causas=$10 WHERE id=$1`, [
         current.rows[0].id, profile.distancia ?? null, profile.fechaCarrera ?? null,
         intOrNull(plan.totalSemanas), intOrNull(plan.taper), intOrNull(plan.runDias), intOrNull(plan.gymDias),
-        intOrNull(plan.techo), numberOrNull(plan.riesgo?.score), plan.riesgo?.causas || [],
+        intOrNull(plan.techo), numberOrNull(plan.riesgo?.score), JSON.stringify(plan.riesgo?.causas || []),
       ]);
     } else {
       await client.query(`INSERT INTO training_plans
@@ -55,7 +55,7 @@ export async function replaceProfileState(client, profileId, snapshot) {
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true)`, [
         profileId, profile.distancia ?? null, profile.fechaCarrera ?? null, intOrNull(plan.totalSemanas),
         intOrNull(plan.taper), intOrNull(plan.runDias), intOrNull(plan.gymDias), intOrNull(plan.techo),
-        numberOrNull(plan.riesgo?.score), plan.riesgo?.causas || [],
+        numberOrNull(plan.riesgo?.score), JSON.stringify(plan.riesgo?.causas || []),
       ]);
     }
   }
