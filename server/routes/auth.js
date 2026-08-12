@@ -9,6 +9,7 @@ import { packSessionCookie, requireAuth, readSessionToken, sessionCookieName, se
 const router = express.Router();
 const minPasswordLength = Number(process.env.PASSWORD_MIN_LENGTH || 12);
 const ttlDays = Number(process.env.SESSION_TTL_DAYS || 30);
+const registrationEnabled = process.env.REGISTRATION_ENABLED !== "false";
 const cookieOptions = () => ({ httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: ttlDays * 86400_000 });
 const argon2Options = { algorithm: Algorithm.Argon2id, memoryCost: 19_456, timeCost: 2, parallelism: 1 };
 
@@ -20,6 +21,7 @@ async function startSession(res, user, profileId = null) {
 
 router.post("/register", async (req, res, next) => {
   try {
+    if (!registrationEnabled) return res.status(403).json({ ok: false, message: "El registro de nuevas cuentas está cerrado" });
     const email = String(req.body?.email || "").trim().toLowerCase();
     const password = String(req.body?.password || "");
     if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ ok: false, message: "Email no válido" });
@@ -31,6 +33,10 @@ router.post("/register", async (req, res, next) => {
     await startSession(res, user, profile.id);
     res.status(201).json({ ok: true, user: { id: user.id, email: user.email, role: user.role }, profile });
   } catch (error) { next(error); }
+});
+
+router.get("/registration-status", (_req, res) => {
+  res.json({ ok: true, enabled: registrationEnabled });
 });
 
 router.post("/login", async (req, res, next) => {

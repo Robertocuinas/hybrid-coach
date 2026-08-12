@@ -11,13 +11,23 @@ const inputStyle = {
 };
 
 function AuthForm({ onAuthenticated }) {
-  const [mode, setMode] = useState("register");
+  const [mode, setMode] = useState("login");
+  const [registrationEnabled, setRegistrationEnabled] = useState(false);
   const [nombre, setNombre] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [waiting, setWaiting] = useState(false);
   const isRegister = mode === "register";
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/auth/registration-status", { credentials: "same-origin" })
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => { if (active) setRegistrationEnabled(Boolean(data?.enabled)); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   const submit = async (event) => {
     event.preventDefault();
@@ -59,9 +69,11 @@ function AuthForm({ onAuthenticated }) {
           {waiting ? "Comprobando…" : isRegister ? "Crear cuenta" : "Entrar"}
         </button>
         {error && <p style={{ color: "#E2685F", fontSize: 13, marginTop: 10 }}>{error}</p>}
-        <button type="button" onClick={switchMode} style={{ display: "block", width: "100%", marginTop: 14, color: "#8CA3B8", background: "transparent", border: 0, cursor: "pointer", fontSize: 13 }}>
-          {isRegister ? "Ya tengo cuenta" : "Necesito crear una cuenta"}
-        </button>
+        {(isRegister || registrationEnabled) && (
+          <button type="button" onClick={switchMode} style={{ display: "block", width: "100%", marginTop: 14, color: "#8CA3B8", background: "transparent", border: 0, cursor: "pointer", fontSize: 13 }}>
+            {isRegister ? "Ya tengo cuenta" : "Necesito crear una cuenta"}
+          </button>
+        )}
       </form>
     </div>
   );
