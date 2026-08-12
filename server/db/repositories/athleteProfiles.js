@@ -1,6 +1,6 @@
 import { pool, insertRow } from "./_helpers.js";
 
-/* Mapeo casi 1:1 de perfilSemilla() en src/HybridCoach.jsx — ver docs/03-modelo-datos.md §2. */
+/* Mapeo del cuestionario de perfil del frontend — ver docs/03-modelo-datos.md §2. */
 const CAMPOS_PERFIL = [
   "nombre", "edad", "sexo", "altura_cm", "peso_kg", "grasa_pct",
   "distancia_objetivo", "fecha_carrera", "meta_tipo", "meta_tiempo", "prioridades",

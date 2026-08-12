@@ -899,8 +899,8 @@ const CATEGORIAS_COMIDA = [
   { k: "postre", l: "Postres", ayuda: "Sobre todo lácteos proteicos." },
 ];
 
-/* Plan de Roberto, cargado como ejemplo con el perfil semilla. Cualquier
-   otro usuario arranca con el catálogo vacío y su propia plantilla.        */
+/* Catálogo nutricional opcional de ejemplo. Cada cuenta empieza vacía y puede
+   cargarlo de forma explícita desde la pantalla de nutrición.               */
 const PLAN_COMIDAS_SEED = {
   estructura: "50% verduras · 25% carbohidrato · 25% proteína, con una cucharada de aceite de oliva virgen extra",
   notas: "Desayunos, comidas y cenas intercambiables. Cocinar y enfriar patata, arroz o boniato 24 h para aumentar el almidón resistente.",
@@ -1181,92 +1181,37 @@ async function analizarPDF(texto, nombreArchivo) {
 /* ============================================================
    ALMACENAMIENTO MULTIPERFIL
    ============================================================ */
-const KEY = "hybridcoach:v2", OLDKEY = "hybridcoach:v1";
+const KEY_PREFIX = "hybridcoach:v3";
 const emptyProfile = (nombre) => ({ id: uid(), nombre: nombre || "Nuevo perfil", creado: iso(new Date()), perfil: { nombre: nombre || "" }, plan: null, weeks: {}, running: [], strength: [], checkins: [], recovery: [], changes: [], chat: [], rutinas: {}, ejercicios: {}, comidas: null });
-const EMPTY = { v: 2, activo: null, perfiles: {}, biblio: BIBLIO_SEED, config: { sheetsUrl: "", lastSync: null, iaPlan: true } };
-
-/* ---------- PERFIL SEMILLA ----------
-   Respuestas al cuestionario ya cargadas: la app arranca directamente en el
-   plan, sin pasar por el asistente. Editable en Perfiles → Editar cuestionario;
-   al guardar, el plan se regenera. SEMILLA_ACTIVA = false → arranque en blanco. */
-const SEMILLA_ACTIVA = true;
-const perfilSemilla = () => ({
-  nombre: "Roberto", edad: 24, sexo: "Hombre", altura: 178, peso: 75, grasa: 20,
-  distancia: "Media maratón", fechaCarrera: "2026-10-18",
-  metaTipo: "Terminar en buenas condiciones", metaTiempo: "",
-  prioridad: ["Masa muscular", "Composición corporal", "Rendimiento en carrera"],
-  expCarrera: "1-3 años", kmSemana: 0, sesionesCarrera: 0, tiradaLarga: 0,
-  ritmoComodo: "", marca: "", paron: "1-3 meses", superficie: ["Asfalto"],
-  expFuerza: "1-3 años", equipamiento: "Gimnasio completo",
-  cargas: { "Sentadilla": 70, "Peso muerto": 110, "Press banca": 60 },
-  tecnica: "Sólida",
-  lesiones: [
-    { id: uid(), zona: "Gemelo / sóleo", cuando: "Balonmano · repetida", recurrente: true },
-    { id: uid(), zona: "Tendón de Aquiles", cuando: "Carga crónica", recurrente: true },
-    { id: uid(), zona: "Rodilla", cuando: "Episodio posterior, resuelto", recurrente: false },
-  ],
-  molestias: [],
-  estructural: ["Pie cavo"], cirugias: "", banderas: ["Ninguna"],
-  dias: [0, 1, 3, 4, 6], minGym: 75, minRun: 45, finde: 120,
-  momento: "Antes del trabajo", crossTraining: "Sí",
-  sueno: 6.5, calidadSueno: "Moderada", estres: 5, trabajo: "Sedentario",
-  nutricion: "Mantenimiento", suplementos: ["Creatina"],
-  reloj: "Sí, con frecuencia cardíaca",
-});
-
-function estadoSemilla(hoy) {
-  const p = emptyProfile("Roberto");
-  p.perfil = perfilSemilla();
-  p.comidas = JSON.parse(JSON.stringify(PLAN_COMIDAS_SEED));
-  p.plan = buildPlan(p.perfil, hoy);
-  return { ...EMPTY, activo: p.id, perfiles: { [p.id]: p } };
-}
+const EMPTY = { v: 3, activo: null, perfiles: {}, biblio: BIBLIO_SEED, config: { sheetsUrl: "", lastSync: null, iaPlan: true } };
 
 /* Almacenamiento. En claude.ai existe window.storage; fuera de ahí no, así que
    se usa localStorage. Misma interfaz asíncrona para no tocar el resto.      */
 const store = {
   async get(k) {
-    if (typeof window !== "undefined" && window.storage) return store.get(k);
+    if (typeof window !== "undefined" && window.storage) return window.storage.get(k);
     const v = localStorage.getItem(k);
     return v === null ? null : { value: v };
   },
   async set(k, v) {
-    if (typeof window !== "undefined" && window.storage) return store.set(k, v);
+    if (typeof window !== "undefined" && window.storage) return window.storage.set(k, v);
     localStorage.setItem(k, v);
     return true;
   },
 };
 
-async function loadState() {
-  const hoy = iso(new Date());
-  const prep = (s) => { if (!s.biblio || !s.biblio.length) s.biblio = BIBLIO_SEED; s.biblio = s.biblio.map(normRef); return { ...EMPTY, ...s, config: { ...EMPTY.config, ...(s.config || {}) } }; };
-  // 1 · Estado v2 ya guardado
-  try { const r = await store.get(KEY); if (r) return prep(JSON.parse(r.value)); } catch { }
-  // 2 · Migración desde v1: se conserva el historial y se reconstruye el perfil
-  try {
-    const old = await store.get(OLDKEY);
-    if (old) {
-      const o = JSON.parse(old.value);
-      const p = emptyProfile("Roberto");
-      p.perfil = perfilSemilla();
-      p.comidas = JSON.parse(JSON.stringify(PLAN_COMIDAS_SEED));
-      p.running = o.running || []; p.strength = o.strength || []; p.checkins = o.checkins || [];
-      p.recovery = o.recovery || []; p.changes = o.changes || []; p.chat = o.chat || []; p.weeks = o.weeks || {};
-      p.plan = buildPlan(p.perfil, hoy);
-      const s = prep({ ...EMPTY, activo: p.id, perfiles: { [p.id]: p }, config: o.config || EMPTY.config });
-      await store.set(KEY, JSON.stringify(s));
-      return s;
-    }
-  } catch { }
-  // 3 · Instalación limpia: perfil semilla ya cargado y plan generado
-  if (SEMILLA_ACTIVA) {
-    const s = prep(estadoSemilla(hoy));
-    try { await store.set(KEY, JSON.stringify(s)); } catch { }
-    return s;
-  }
-  return prep({ ...EMPTY });
+function emptyStateForProfile(profile) {
+  const p = emptyProfile(profile?.nombre || "");
+  if (profile?.id) p.id = profile.id;
+  return { ...EMPTY, activo: p.id, perfiles: { [p.id]: p } };
 }
-async function saveState(s) { try { await store.set(KEY, JSON.stringify(s)); return true; } catch { return false; } }
+
+async function loadState(key, profile) {
+  const prep = (s) => { if (!s.biblio || !s.biblio.length) s.biblio = BIBLIO_SEED; s.biblio = s.biblio.map(normRef); return { ...EMPTY, ...s, config: { ...EMPTY.config, ...(s.config || {}) } }; };
+  try { const r = await store.get(key); if (r) return prep(JSON.parse(r.value)); } catch { }
+  return prep(emptyStateForProfile(profile));
+}
+async function saveState(key, s) { try { await store.set(key, JSON.stringify(s)); return true; } catch { return false; } }
 async function cargarBibliografiaAPI() {
   const documents = [];
   let page = 1;
@@ -1319,12 +1264,13 @@ async function respaldarRutinas(st, P) {
 /* ============================================================
    APP
    ============================================================ */
-export default function HybridCoach() {
+export default function HybridCoach({ user, activeProfile, onLogout }) {
   const [st, setSt] = useState(null);
   const [tab, setTab] = useState("hoy");
   const [pantalla, setPantalla] = useState(null); // wizard | perfiles | biblio | ajustes
   const [today] = useState(() => iso(new Date()));
   const [toast, setToast] = useState(null);
+  const stateKey = `${KEY_PREFIX}:${user.id}`;
   const syncRef = useRef(null);
   if (!syncRef.current && typeof window !== "undefined") {
     syncRef.current = createSyncController({ storage: window.localStorage, fetchImpl: window.fetch.bind(window) });
@@ -1332,7 +1278,7 @@ export default function HybridCoach() {
 
   useEffect(() => {
     let active = true;
-    loadState().then(async (localState) => {
+    loadState(stateKey, activeProfile).then(async (localState) => {
       if (!active) return;
       setSt(localState);
       try {
@@ -1343,7 +1289,7 @@ export default function HybridCoach() {
       }
     });
     return () => { active = false; };
-  }, []);
+  }, [stateKey, activeProfile?.id]);
   useEffect(() => { if (toast) { const t = setTimeout(() => setToast(null), 2800); return () => clearTimeout(t); } }, [toast]);
   useEffect(() => {
     const sync = syncRef.current;
@@ -1361,7 +1307,7 @@ export default function HybridCoach() {
 
   const update = (fn) => setSt((prev) => {
     const next = fn(JSON.parse(JSON.stringify(prev)));
-    saveState(next); // La escritura local sigue siendo inmediata y autoritativa durante 3b.
+    saveState(stateKey, next); // La escritura local sigue siendo inmediata y autoritativa durante 3b.
     syncRef.current?.enqueue(next);
     void syncRef.current?.flush();
     return next;
@@ -1371,7 +1317,7 @@ export default function HybridCoach() {
   if (!st) return (<div className="hc"><style>{CSS}</style><div className="wrap" style={{ paddingTop: 60 }}><p className="eyebrow">Cargando…</p></div></div>);
 
   const P = st.perfiles[st.activo];
-  const ctx = { st, P, update, notify, today, setTab, setPantalla, tab };
+  const ctx = { st, P, update, notify, today, setTab, setPantalla, tab, onLogout };
 
   if (!P) return (<div className="hc"><style>{CSS}</style><div className="wrap"><Bienvenida {...ctx} /></div></div>);
   if (pantalla === "wizard" || !P.plan) return (<div className="hc"><style>{CSS}</style><div className="wrap"><Wizard {...ctx} onClose={() => setPantalla(null)} /></div>{toast && <Toast m={toast} />}</div>);
@@ -1393,6 +1339,7 @@ export default function HybridCoach() {
             <button className="icobtn" title="Mis rutinas" onClick={() => setPantalla("rutinas")}>≡</button>
             <button className="icobtn" title="Bibliografía" onClick={() => setPantalla("biblio")}>◈</button>
             <button className="icobtn" title="Ajustes" onClick={() => setPantalla("ajustes")}>⚙</button>
+            <button className="icobtn" title="Cerrar sesión" onClick={onLogout}>↪</button>
           </div>
         </div>
         {pantalla === "perfiles" ? <Perfiles {...full} onClose={() => setPantalla(null)} />
@@ -1503,7 +1450,7 @@ function ListaMolestias({ val, onChange }) {
   </div>);
 }
 
-function Wizard({ st, P, update, notify, today, onClose, setTab }) {
+function Wizard({ st, P, update, notify, today, onClose, setTab, onLogout }) {
   const [paso, setPaso] = useState(0);
   const [f, setF] = useState(P.perfil || {});
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
@@ -1526,7 +1473,7 @@ function Wizard({ st, P, update, notify, today, onClose, setTab }) {
     <div style={{ paddingTop: 18 }}>
       <div className="between">
         <div><p className="eyebrow" style={{ margin: 0 }}>Paso {sec.icon} de {String(WIZARD.length).padStart(2, "0")}</p><h1 style={{ marginTop: 2 }}>{sec.titulo}</h1></div>
-        {P.plan && <button className="btn sm ghost" onClick={onClose}>Salir</button>}
+        <button className="btn sm ghost" onClick={P.plan ? onClose : onLogout}>{P.plan ? "Salir" : "Cerrar sesión"}</button>
       </div>
       <div className="prog" style={{ margin: "12px 0 4px" }}><span style={{ width: comp.pct + "%" }} /></div>
       <p className="xs muted">{comp.pct}% del perfil completo · {comp.faltan.length} respuestas necesarias pendientes</p>
