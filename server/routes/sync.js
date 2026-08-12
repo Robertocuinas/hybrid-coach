@@ -119,6 +119,19 @@ export async function replaceProfileState(client, profileId, snapshot) {
   }
 }
 
+router.get("/sync-state", async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT state, profile_local_id, captured_at
+      FROM client_state_snapshots WHERE athlete_profile_id=$1`, [req.auth.athleteProfileId]);
+    const row = rows[0];
+    res.json({ ok: true, snapshot: row ? {
+      profile: row.state,
+      profileLocalId: row.profile_local_id,
+      capturedAt: row.captured_at,
+    } : null });
+  } catch (error) { next(error); }
+});
+
 router.post("/sync", async (req, res, next) => {
   const operationId = String(req.body?.operationId || req.get("Idempotency-Key") || "");
   const snapshot = req.body?.snapshot;

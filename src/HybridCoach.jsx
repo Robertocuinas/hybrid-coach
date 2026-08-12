@@ -1209,6 +1209,25 @@ function emptyStateForProfile(profile) {
 async function loadState(key, profile) {
   const prep = (s) => { if (!s.biblio || !s.biblio.length) s.biblio = BIBLIO_SEED; s.biblio = s.biblio.map(normRef); return { ...EMPTY, ...s, config: { ...EMPTY.config, ...(s.config || {}) } }; };
   try { const r = await store.get(key); if (r) return prep(JSON.parse(r.value)); } catch { }
+  try {
+    const response = await fetch("/api/sync-state", { credentials: "same-origin" });
+    const data = response.ok ? await response.json() : null;
+    const remote = data?.snapshot?.profile;
+    if (remote && typeof remote === "object") {
+      const fallback = emptyProfile(profile?.nombre || remote.nombre || "");
+      const id = profile?.id || remote.id || fallback.id;
+      const restored = {
+        ...fallback,
+        ...remote,
+        id,
+        nombre: remote.nombre || profile?.nombre || fallback.nombre,
+        perfil: { ...fallback.perfil, ...(remote.perfil || {}) },
+      };
+      const hydrated = prep({ ...EMPTY, activo: id, perfiles: { [id]: restored } });
+      await saveState(key, hydrated);
+      return hydrated;
+    }
+  } catch { }
   return prep(emptyStateForProfile(profile));
 }
 async function saveState(key, s) { try { await store.set(key, JSON.stringify(s)); return true; } catch { return false; } }
