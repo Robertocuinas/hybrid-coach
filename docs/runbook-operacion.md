@@ -6,7 +6,8 @@ Estado de referencia: staging en Railway, PostgreSQL + pgvector, autenticación 
 
 La configuración versionada en `railway.json` define:
 
-- build: `npm ci && npm run build`;
+- instalación Nixpacks: `npm ci`;
+- build: `npm run build`;
 - pre-deploy: `npm run migrate`;
 - start: `npm start`;
 - readiness: `/health/ready`;
