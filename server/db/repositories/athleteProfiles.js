@@ -22,6 +22,14 @@ export async function findProfileById(id) {
   return rows[0] || null;
 }
 
+export async function findOwnedProfile(id, userId, db = pool) {
+  const { rows } = await db.query(
+    `SELECT * FROM athlete_profiles WHERE id = $1 AND user_id = $2;`,
+    [id, userId]
+  );
+  return rows[0] || null;
+}
+
 export async function listProfilesByUser(userId) {
   const { rows } = await pool.query(
     `SELECT * FROM athlete_profiles WHERE user_id = $1 ORDER BY created_at;`,
