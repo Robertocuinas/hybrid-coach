@@ -14,7 +14,7 @@ test("las migraciones 0001-0007 se aplican en orden sobre una base vacía", asyn
   const db = new PGlite({ extensions: { vector, pgcrypto } });
   const pgm = { sql: (statement) => db.exec(statement) };
   for (const file of migrationFiles) {
-    const migration = await import(`./${file}`);
+    const migration = await import(`./migrations/${file}`);
     await migration.up(pgm);
   }
   const result = await db.query(`SELECT
