@@ -37,9 +37,12 @@ export async function createDatabaseBackup({ databaseUrl = process.env.DATABASE_
   await mkdir(backupDir, { recursive: true });
   const target = path.join(backupDir, name);
   const temporary = `${target}.partial`;
-  const childEnv = { ...env, PGDATABASE: databaseUrl };
+  const childEnv = { ...env };
   try {
-    await run(env.PG_DUMP_BIN || "pg_dump", ["--format=custom", "--no-owner", "--no-acl", "--file", temporary], childEnv);
+    /* En Windows, PGHOST/PGPORT instalados localmente pueden imponerse cuando la URL se
+       entrega mediante PGDATABASE. --dbname acepta la URI completa y deja inequívoco el
+       destino del volcado. */
+    await run(env.PG_DUMP_BIN || "pg_dump", ["--dbname", databaseUrl, "--format=custom", "--no-owner", "--no-acl", "--file", temporary], childEnv);
     await run(env.PG_RESTORE_BIN || "pg_restore", ["--list", temporary], childEnv);
     await rename(temporary, target);
     const digest = await sha256(target);
