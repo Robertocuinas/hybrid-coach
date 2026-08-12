@@ -33,7 +33,7 @@ Git, en el frontend ni en documentación.
 
 `railway.json` define:
 
-- `npm install && npm run build`;
+- instalación automática de Nixpacks con `npm ci` y build `npm run build`;
 - pre-deploy `npm run migrate`;
 - start `npm start`;
 - healthcheck `/health/ready`.

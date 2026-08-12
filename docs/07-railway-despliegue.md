@@ -14,7 +14,7 @@
 
 ```json
 {
-  "build": { "builder": "NIXPACKS", "buildCommand": "npm install && npm run build" },
+  "build": { "builder": "NIXPACKS", "buildCommand": "npm run build" },
   "deploy": {
     "preDeployCommand": "npm run migrate",
     "startCommand": "npm start",
