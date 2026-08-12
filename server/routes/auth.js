@@ -10,7 +10,8 @@ const router = express.Router();
 const minPasswordLength = Number(process.env.PASSWORD_MIN_LENGTH || 12);
 const ttlDays = Number(process.env.SESSION_TTL_DAYS || 30);
 const registrationEnabled = process.env.REGISTRATION_ENABLED !== "false";
-const cookieOptions = () => ({ httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/", maxAge: ttlDays * 86400_000 });
+const cookieSecurityOptions = () => ({ httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/" });
+const cookieOptions = () => ({ ...cookieSecurityOptions(), maxAge: ttlDays * 86400_000 });
 const argon2Options = { algorithm: Algorithm.Argon2id, memoryCost: 19_456, timeCost: 2, parallelism: 1 };
 
 async function startSession(res, user, profileId = null) {
@@ -55,7 +56,7 @@ router.post("/logout", async (req, res, next) => {
   try {
     const token = readSessionToken(req);
     if (token) await revokeSession(sessionTokenHash(token));
-    res.clearCookie(sessionCookieName, cookieOptions());
+    res.clearCookie(sessionCookieName, cookieSecurityOptions());
     res.json({ ok: true });
   } catch (error) { next(error); }
 });
