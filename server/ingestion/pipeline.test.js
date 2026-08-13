@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PGlite } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite-pgvector";
-import { ingerirPDF, IngestaError, esPDF, MAX_BYTES } from "./pipeline.js";
+import { ingerirPDF, IngestaError, esPDF, fichaCompleta, camposQueFaltan, MAX_BYTES } from "./pipeline.js";
 import { storageKeyForHash, sha256 } from "../integrations/storage/r2.js";
 
 const ESQUEMA = `
@@ -111,7 +111,7 @@ async function baseDeDatosConEmbeddings() {
   return db;
 }
 
-test("un PDF válido entra con revisado=false, chunks y original en el almacén", async () => {
+test("un PDF con ficha completa entra ya disponible, con chunks y original en el almacén", async () => {
   const db = await baseDeDatos();
   const storage = almacenFalso();
   const resultado = await ingerirPDF(PDF_MINIMO, {
@@ -122,7 +122,8 @@ test("un PDF válido entra con revisado=false, chunks y original en el almacén"
   const { rows } = await db.query(`SELECT * FROM documents;`);
   assert.equal(rows.length, 1);
   const doc = rows[0];
-  assert.equal(doc.revisado, false, "debe entrar sin revisar");
+  assert.equal(doc.revisado, true, "con título, autores, año, tipo y grado no hace falta revisión previa");
+  assert.equal(resultado.faltaRevision, null);
   assert.equal(doc.origen, "pdf");
   assert.equal(doc.study_type, "meta_analysis");
   assert.equal(doc.population_type, "runners");
@@ -249,9 +250,33 @@ test("sin proveedor de IA el documento entra igual, con aviso, para rellenar a m
   assert.match(resultado.aviso, /ficha/i);
   const { rows } = await db.query(`SELECT doi, revisado, study_type FROM documents;`);
   assert.equal(rows[0].doi, "10.1519/JSC.0b013e31823a3e2d", "el DOI por regex funciona sin IA");
-  assert.equal(rows[0].revisado, false);
+  assert.equal(rows[0].revisado, false, "sin ficha no se puede citar: espera revisión");
   assert.equal(rows[0].study_type, null, "sin IA los campos de clasificación quedan para revisión humana");
+  assert.deepEqual(resultado.faltaRevision, ["título", "autores", "año", "tipo de estudio", "grado de evidencia"]);
   await db.close();
+});
+
+/* La puerta que decide si un PDF aporta a las respuestas nada más subirlo.
+   Es lo único que separa "documento en la biblioteca" de "documento que el
+   coach puede citar", así que se prueba campo a campo. */
+test("solo entra sin revisar lo que se puede citar entero", () => {
+  const completa = {
+    titulo: "T", autores: "A", anio: 2012,
+    studyType: "meta_analysis", evidenceGrade: "fuerte",
+  };
+  assert.equal(fichaCompleta(completa), true);
+  assert.deepEqual(camposQueFaltan(completa), []);
+
+  for (const [clave, etiqueta] of [["titulo", "título"], ["autores", "autores"], ["anio", "año"], ["studyType", "tipo de estudio"], ["evidenceGrade", "grado de evidencia"]]) {
+    const incompleta = { ...completa, [clave]: null };
+    assert.equal(fichaCompleta(incompleta), false, `sin ${etiqueta} no debería entrar`);
+    assert.deepEqual(camposQueFaltan(incompleta), [etiqueta]);
+  }
+
+  /* Un enum que el modelo se inventó llega a null desde normalizarFicha(), así
+     que el documento cae del lado de la revisión humana por sí solo. */
+  assert.equal(fichaCompleta({ ...completa, evidenceGrade: null }), false);
+  assert.equal(fichaCompleta({}), false);
 });
 
 /* Un servidor sin Python y un PDF cifrado fallaban los dos con un 500 genérico.
@@ -295,11 +320,28 @@ test("un fallo del extractor se atribuye al servidor o al archivo según el cód
   await db.close();
 });
 
-test("sin almacenamiento configurado no se ingiere nada", async () => {
+/* El almacén del original es opcional: lo que alimenta al coach son los chunks
+   y sus embeddings, que van a PostgreSQL. Sin R2 se pierde el binario, no la
+   memoria (docs/07-railway-despliegue.md). */
+test("sin almacenamiento el documento entra igual, sin storage_key y con aviso", async () => {
   const db = await baseDeDatos();
+  const resultado = await ingerirPDF(PDF_MINIMO, {
+    db, storage: null, repo: repoSobre(db), provider: proveedorFalso(FICHA), extraer: extraccionFalsa(),
+  });
+
+  assert.equal(resultado.storageKey, null);
+  assert.match(resultado.avisoAlmacen, /sin el PDF original/i);
+  assert.ok(resultado.chunks > 0, "el texto sí se trocea");
+
+  const { rows } = await db.query(`SELECT storage_key, hash_archivo, revisado FROM documents;`);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].storage_key, null);
+  assert.equal(rows[0].hash_archivo, sha256(PDF_MINIMO), "el hash se conserva: la deduplicación sigue funcionando");
+
+  // Y el mismo archivo sigue rechazándose por duplicado sin almacén de por medio.
   await assert.rejects(
     () => ingerirPDF(PDF_MINIMO, { db, storage: null, repo: repoSobre(db), provider: proveedorFalso(FICHA), extraer: extraccionFalsa() }),
-    (error) => error.status === 503
+    (error) => error.status === 409,
   );
   await db.close();
 });

@@ -40,9 +40,10 @@ flowchart LR
     M --> CH["Chunking por sección"]
     CH --> EM["Embeddings"]
     EM --> I["INSERT documents + chunks + embeddings"]
-    I --> R["revisado = false"]
-    R --> V["Revisión humana"]
-    V --> OK["Disponible para retrieval"]
+    I --> R{"¿ficha completa?"}
+    R -->|sí| OK["Disponible para retrieval"]
+    R -->|no| V["Revisión humana"]
+    V --> OK
 ```
 
 ### 2.1 Extracción de texto
@@ -84,9 +85,24 @@ Dos capas, ambas necesarias:
 
 ### 2.5 Revisión humana
 
-Mantener el patrón actual: la ficha entra con `revisado = false` y no participa en el
-retrieval hasta que un admin la confirma. Un modelo puede equivocarse leyendo, y aquí un
-error se propaga a cada recomendación futura que cite ese documento.
+`revisado = true` sigue siendo la única condición para participar en el retrieval, pero no
+se exige que la ponga siempre una persona: la decide `fichaCompleta()` en
+`server/ingestion/pipeline.js`.
+
+Un documento entra disponible si el modelo extrajo lo necesario para **citarlo**: título,
+autores, año, `study_type` y `evidence_grade`. Los dos últimos son enums cerrados que
+`normalizarFicha()` ya validó contra la lista real, así que un valor inventado llega como
+null y el documento cae del lado de la revisión por sí solo. Sin proveedor de IA la ficha
+viene vacía y nada entra automáticamente.
+
+Lo que falte se enumera en `faltaRevision` y el panel lo muestra: un PDF que no aparece en
+las respuestas tiene que decir por qué, no dejar al usuario adivinando.
+
+El razonamiento: un modelo puede equivocarse leyendo y un error se propaga a cada
+recomendación que cite ese documento, pero exigir revisión manual de *todo* hacía que en la
+práctica la biblioteca se quedara vacía. La revisión se reserva para los casos dudosos, que
+son justo aquellos en los que la extracción ya falló en algo comprobable. `revisado` se
+puede volver a poner a false desde el panel en cualquier momento.
 
 ---
 

@@ -2937,7 +2937,9 @@ function PanelAdmin({ notify, onRevisar }) {
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.message || `HTTP ${r.status}`);
       setUltima(data);
-      notify(`PDF procesado: ${data.chunks} fragmentos. Revisa la ficha antes de que el coach pueda citarlo.`);
+      notify(data.revisado
+        ? `PDF procesado: ${data.chunks} fragmentos. Ya disponible para el coach.`
+        : `PDF procesado: ${data.chunks} fragmentos. Revisa la ficha para que el coach pueda citarlo.`);
       await cargar();
     } catch (e) { setError(e.message); }
     finally { setSubiendo(false); }
@@ -2962,29 +2964,29 @@ function PanelAdmin({ notify, onRevisar }) {
     </div>))}
   </div>);
 
-  /* La subida necesita las dos mitades: el almacén del original Y el extractor
-     de texto. Antes solo se comprobaba la primera, así que un servidor sin
-     PyMuPDF dejaba subir el archivo para fallar a mitad del proceso. */
-  const almacenListo = estado && estado.r2 && (!estado.r2Acceso || estado.r2Acceso.ok);
+  /* Lo único que impide subir es no poder leer el PDF: sin extractor no hay
+     texto, ni chunks, ni memoria. El almacén del original es opcional, así que
+     su ausencia avisa pero no bloquea (docs/07-railway-despliegue.md). */
   const extractorListo = estado && (!estado.extractor || estado.extractor.ok);
-  const puedeSubir = almacenListo && extractorListo;
+  const puedeSubir = !!extractorListo;
+  const almacenRoto = estado && estado.r2 && estado.r2Acceso && !estado.r2Acceso.ok;
 
   return (<div>
-    {estado && !estado.r2 && (<div className="card" style={{ borderColor: "var(--alert)" }}>
-      <span className="tag alert">Almacenamiento sin configurar</span>
-      <p className="sm" style={{ margin: "8px 0 0" }}>Faltan las credenciales de R2 en el servidor. Sin ellas no se puede subir ningún PDF, porque el original hay que conservarlo para poder reprocesar la biblioteca más adelante.</p>
-      {estado.r2Faltan && estado.r2Faltan.length > 0 && (
-        <p className="xs mono" style={{ margin: "8px 0 0" }}>Variables sin valor: {estado.r2Faltan.join(", ")}</p>
-      )}
-    </div>)}
-    {estado && estado.r2 && estado.r2Acceso && !estado.r2Acceso.ok && (<div className="card" style={{ borderColor: "var(--alert)" }}>
-      <span className="tag alert">Almacenamiento inaccesible</span>
-      <p className="sm" style={{ margin: "8px 0 0" }}>Las variables de R2 están puestas, pero el bucket no responde: {estado.r2Acceso.motivo}</p>
-    </div>)}
     {estado && estado.extractor && !estado.extractor.ok && (<div className="card" style={{ borderColor: "var(--alert)" }}>
       <span className="tag alert">Extractor de PDF no disponible</span>
       <p className="sm" style={{ margin: "8px 0 0" }}>El servidor no puede leer PDF: {estado.extractor.motivo}</p>
       <p className="xs muted" style={{ margin: "6px 0 0" }}>La extracción corre en un subproceso de Python con PyMuPDF. Revisa <span className="mono">nixpacks.toml</span> en el despliegue.</p>
+    </div>)}
+    {estado && !estado.r2 && (<div className="card" style={{ borderColor: "var(--gym)" }}>
+      <p className="sm" style={{ margin: 0 }}>Sin almacenamiento de originales: los PDF se procesan y entran en la memoria del coach igual, pero el archivo no se conserva y la ficha no podrá abrirlo.</p>
+      {estado.r2Faltan && estado.r2Faltan.length > 0 && (
+        <p className="xs mono muted" style={{ margin: "6px 0 0" }}>Para conservarlos, configura: {estado.r2Faltan.join(", ")}</p>
+      )}
+    </div>)}
+    {almacenRoto && (<div className="card" style={{ borderColor: "var(--alert)" }}>
+      <span className="tag alert">Almacenamiento inaccesible</span>
+      <p className="sm" style={{ margin: "8px 0 0" }}>Las variables de R2 están puestas, pero el bucket no responde: {estado.r2Acceso.motivo}</p>
+      <p className="xs muted" style={{ margin: "6px 0 0" }}>Corrígelo antes de subir nada: con credenciales a medias la ingesta falla al guardar el original, después de haber procesado el documento entero.</p>
     </div>)}
     {puedeSubir && !estado.ia && (<div className="card" style={{ borderColor: "var(--gym)" }}>
       <p className="sm" style={{ margin: 0 }}>No hay proveedor de IA configurado: los PDF se trocearán igual, pero la ficha habrá que rellenarla a mano.</p>
@@ -3004,13 +3006,21 @@ function PanelAdmin({ notify, onRevisar }) {
       {error && <p className="xs" style={{ color: "var(--alert)", marginTop: 10 }}>{error}</p>}
     </div>
 
-    {ultima && (<div className="card" style={{ borderColor: "var(--ok)" }}>
-      <span className="tag ok">Procesado</span>
+    {ultima && (<div className="card" style={{ borderColor: ultima.revisado ? "var(--ok)" : "var(--gym)" }}>
+      <span className={ultima.revisado ? "tag ok" : "tag"}>{ultima.revisado ? "Disponible para el coach" : "Pendiente de revisión"}</span>
       <p className="sm" style={{ margin: "8px 0 4px" }}>{ultima.documento.titulo || "Sin título extraído"}</p>
       <p className="xs muted" style={{ margin: 0 }}>
         {ultima.numPaginas} páginas · {ultima.chunks} fragmentos · {Object.entries(ultima.secciones).map(([s, n]) => `${SECCION_ES[s] || s}: ${n}`).join(" · ")}
       </p>
-      {ultima.aviso && <p className="xs" style={{ color: "var(--alert)", margin: "8px 0 0" }}>{ultima.aviso}</p>}
+      {/* Sin esto, un PDF que no aparece en las respuestas parece un fallo. */}
+      {!ultima.revisado && ultima.faltaRevision && ultima.faltaRevision.length > 0 && (
+        <p className="xs" style={{ margin: "8px 0 0" }}>
+          No participa todavía en las respuestas: la ficha automática no sacó {ultima.faltaRevision.join(", ")}. Revísala y guárdala para activarlo.
+        </p>
+      )}
+      {[ultima.aviso, ultima.avisoAlmacen, ultima.avisoEmbedding].filter(Boolean).map((aviso) => (
+        <p className="xs" key={aviso} style={{ color: "var(--alert)", margin: "8px 0 0" }}>{aviso}</p>
+      ))}
     </div>)}
 
     <div className="between" style={{ margin: "16px 0 8px" }}>
@@ -3029,7 +3039,8 @@ function PanelAdmin({ notify, onRevisar }) {
       <div className="row" style={{ marginTop: 9, gap: 6 }}>
         <button className="btn primary sm" onClick={() => onRevisar(d)}>Revisar ficha</button>
         <button className="btn ghost sm" onClick={() => verFragmentos(d)}>Ver fragmentos</button>
-        <a className="btn ghost sm" href={`/api/admin/documents/${encodeURIComponent(d.id)}/pdf`} target="_blank" rel="noreferrer">PDF original</a>
+        {/* Sin almacén no hay original que abrir: el enlace solo daría un 404. */}
+        {d.storage_key && <a className="btn ghost sm" href={`/api/admin/documents/${encodeURIComponent(d.id)}/pdf`} target="_blank" rel="noreferrer">PDF original</a>}
       </div>
     </div>))}
     <p className="xs muted">Un documento sin revisar no participa en las respuestas del coach. Al guardar la ficha queda confirmado y pasa a estar disponible.</p>

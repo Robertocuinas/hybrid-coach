@@ -20,6 +20,32 @@ export const esPDF = (buffer) => Buffer.isBuffer(buffer) && buffer.length > 4 &&
    PDF", no en la instalación: vacío, ilegible y protegido con contraseña. */
 const CODIGOS_DE_ARCHIVO = new Set([2, 4, 5]);
 
+/* ¿Puede este documento entrar en el retrieval sin que lo mire una persona?
+   Sí, pero solo si el modelo sacó lo que hace falta para CITARLO bien: quién lo
+   firma, de cuándo es, qué diseño tiene y cuánta confianza merece.
+
+   Los dos últimos son enums cerrados que normalizarFicha() ya validó contra la
+   lista real: si llegan con valor, no son inventados, y si el modelo devolvió
+   algo que no existe llegan a null y el documento se queda esperando revisión.
+   Sin proveedor de IA la ficha viene vacía y esto da false por sí solo, que es
+   justo lo que queremos: nadie cita un estudio del que no se sabe nada.
+
+   No sustituye a la revisión humana, la reserva para los casos dudosos: el
+   documento sigue siendo editable y `revisado` se puede volver a poner a false
+   desde el panel. */
+const CAMPOS_PARA_CITAR = [
+  ["titulo", "título"],
+  ["autores", "autores"],
+  ["anio", "año"],
+  ["studyType", "tipo de estudio"],
+  ["evidenceGrade", "grado de evidencia"],
+];
+
+export const camposQueFaltan = (ficha = {}) =>
+  CAMPOS_PARA_CITAR.filter(([clave]) => !ficha[clave]).map(([, etiqueta]) => etiqueta);
+
+export const fichaCompleta = (ficha = {}) => camposQueFaltan(ficha).length === 0;
+
 export class IngestaError extends Error {
   constructor(status, message, extra = {}) {
     super(message);
@@ -39,7 +65,6 @@ export class IngestaError extends Error {
 export async function ingerirPDF(buffer, { db, storage, provider, embeddingProvider = null, repo, nombre = "documento.pdf", userId = null, extraer = extraerDocumento }) {
   if (!esPDF(buffer)) throw new IngestaError(415, "El archivo no es un PDF (no empieza por %PDF-)");
   if (buffer.length > MAX_BYTES) throw new IngestaError(413, `El PDF supera el límite de ${Math.round(MAX_BYTES / 1024 / 1024)} MB`);
-  if (!storage) throw new IngestaError(503, "El almacenamiento R2 no está configurado en este servidor");
 
   // 1. Deduplicación por archivo, antes de gastar nada.
   const hash = sha256(buffer);
@@ -96,12 +121,25 @@ export async function ingerirPDF(buffer, { db, storage, provider, embeddingProvi
     avisoEmbedding = "Documento guardado sin embeddings: configura el proveedor y ejecuta npm run embeddings:reindex.";
   }
 
-  // 7. Original a R2. Se sube antes de insertar para no dejar en la base de
-  //    datos una storage_key que apunte a un objeto que no existe.
-  const storageKey = await storage.guardarPDF(buffer, hash);
+  /* 7. Original a R2. Se sube antes de insertar para no dejar en la base de
+        datos una storage_key que apunte a un objeto que no existe.
 
-  // 8. Persistencia. revisado=false: no participa en retrieval hasta que un
-  //    admin lo confirma (docs/05-rag.md §2.5).
+        Sin almacén configurado el documento entra igual y storage_key queda a
+        null: lo que alimenta al coach son los chunks y sus embeddings, que van
+        a PostgreSQL. Se pierde el binario, no la memoria. El resto del sistema
+        ya contaba con esto (evidence.js informa hasPdf=false y el reindexado
+        de embeddings trabaja sobre el texto de los chunks, no sobre el PDF). */
+  let storageKey = null;
+  let avisoAlmacen = null;
+  if (storage) {
+    storageKey = await storage.guardarPDF(buffer, hash);
+  } else {
+    avisoAlmacen = "Documento guardado sin el PDF original: no hay almacenamiento configurado. El texto y las citas funcionan igual, pero la ficha no podrá abrir el archivo.";
+  }
+
+  /* 8. Persistencia. Un documento solo participa en el retrieval con
+        revisado=true, y eso se decide aquí (ver fichaCompleta). */
+  const revisado = fichaCompleta(ficha);
   const documento = {
     titulo: ficha.titulo ?? null,
     autores: ficha.autores ?? null,
@@ -121,7 +159,7 @@ export async function ingerirPDF(buffer, { db, storage, provider, embeddingProvi
     aplicacion_practica: ficha.aplicacionPractica ?? null,
     storage_key: storageKey,
     origen: "pdf",
-    revisado: false,
+    revisado,
     subido_por: userId,
   };
 
@@ -150,6 +188,11 @@ export async function ingerirPDF(buffer, { db, storage, provider, embeddingProvi
     storageKey,
     aviso: avisoFicha,
     avisoEmbedding,
+    avisoAlmacen,
+    revisado,
+    /* Por qué se quedó esperando, para poder decirlo en el panel en vez de
+       dejar al usuario adivinando por qué su PDF no aparece en las respuestas. */
+    faltaRevision: revisado ? null : camposQueFaltan(ficha),
     embeddings: vectorizados?.items.length || 0,
   };
 }

@@ -46,8 +46,9 @@ listo para revisión humana. **Sin embeddings todavía** (Fase 6).
 - [ ] Endpoint de subida, **solo rol `admin`**
 - [ ] Validar tipo real por magic bytes, límite de tamaño (~50 MB)
 - [ ] Pantalla de administración: subir, ver estado de procesado, revisar ficha, confirmar
-- [ ] Los documentos entran con `revisado = false` y **no participan en retrieval** hasta
-      confirmarse
+- [ ] Solo participa en retrieval lo que tiene `revisado = true`. Lo pone la ingesta si la
+      ficha automática sale completa (título, autores, año, tipo y grado); si falta algo,
+      espera confirmación humana. Ver `fichaCompleta()` y docs/05-rag.md §2.5
 
 ## Criterio de terminado
 
@@ -63,7 +64,7 @@ listo para revisión humana. **Sin embeddings todavía** (Fase 6).
 
 | Riesgo | Mitigación |
 |---|---|
-| **Calidad de extracción variable** según maquetación (columnas, tablas) | Revisión humana obligatoria antes de `revisado = true`. Es la mitigación principal de toda esta fase |
+| **Calidad de extracción variable** según maquetación (columnas, tablas) | Revisión humana de todo lo que la ficha automática no cubra por completo, más enums cerrados que convierten un valor inventado en un documento pendiente. Es la mitigación principal de toda esta fase |
 | PDFs escaneados sin capa de texto | Detectarlo y rechazarlo con mensaje claro. OCR como excepción manual, no como caso general |
 | Detección de secciones falla en papers con formato atípico | Fallback a `other` + chunking por párrafos. No debe romper la ingesta |
 | PDF malicioso que explota la librería de extracción | Mantener PyMuPDF actualizado; procesar en contexto aislado |
