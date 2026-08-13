@@ -48,9 +48,19 @@ PostgreSQL RLS sería una segunda defensa futura, no un sustituto de esta regla.
 
 ## Secretos e integraciones
 
-Los secretos solo viven en variables selladas del servidor. `.env.example` contiene
-únicamente nombres y valores no sensibles. No deben aparecer URLs desplegadas privadas,
-tokens, claves, contraseñas ni conexiones de base de datos en Git, el bundle o los logs.
+Los secretos de infraestructura viven en variables selladas del servidor. Las claves de
+OpenAI o Anthropic que introduce un usuario en Ajustes son la única excepción: se cifran
+en PostgreSQL con AES-256-GCM, con el `user_id` como dato autenticado, y nunca se devuelven
+al navegador, se guardan en `localStorage` ni se incluyen en la exportación de cuenta.
+La clave maestra se deriva de `AI_SETTINGS_ENCRYPTION_KEY` o, si no existe, de
+`SESSION_SECRET`; rotarla invalida las claves de proveedor ya guardadas.
+
+Solo se admiten los endpoints oficiales fijos de OpenAI y Anthropic, lo que evita que una
+cuenta convierta este mecanismo en un proxy hacia una URL arbitraria. La prueba de
+conexión está autenticada, limitada por cuenta y usa una salida mínima. `.env.example`
+contiene únicamente nombres y valores no sensibles. No deben aparecer URLs desplegadas
+privadas, tokens, claves, contraseñas ni conexiones de base de datos en Git, el bundle o
+los logs.
 
 IA, embeddings, R2, Sheets y Strava permanecen desactivados mientras no estén configurados.
 Antes de activarlos hay que aprobar finalidad, minimización, retención y consentimiento.

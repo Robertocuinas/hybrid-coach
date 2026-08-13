@@ -3105,8 +3105,8 @@ function EditarRef({ r, onSave, onDelete, onCancel }) {
    AJUSTES
    ============================================================ */
 const MODELOS_IA = {
-  openai: ["gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini"],
-  anthropic: ["claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-3-5-haiku-latest"],
+  openai: ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-4.1-mini"],
+  anthropic: ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"],
 };
 
 function AjustesIA({ notify }) {

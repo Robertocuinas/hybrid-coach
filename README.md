@@ -57,6 +57,8 @@ backup lógico, restauración y creación de producción.
 - `GET /health/ready`: PostgreSQL y pgvector disponibles; devuelve 503 si no está listo.
 - `GET /api/estado`: diagnóstico de módulos opcionales.
 - `GET /api/auth/me`: sesión actual.
+- `GET|PUT|DELETE /api/ai/settings`: proveedor, modelo y clave cifrada de la cuenta.
+- `POST /api/ai/settings/test`: prueba autenticada y limitada del proveedor elegido.
 - `GET /api/reconciliation-status`: racha diaria de conciliación.
 
 ## Datos y seguridad
@@ -66,8 +68,9 @@ el registro cerrado y las integraciones externas desactivadas hasta definir cons
 retención y finalidad. Consulta [docs/politica-datos.md](docs/politica-datos.md) y
 [docs/08-seguridad.md](docs/08-seguridad.md).
 
-La cuenta puede exportarse desde `GET /api/auth/export`. El borrado autenticado y el cambio
-de contraseña existen en la API; la UI de gestión de cuenta todavía está pendiente.
+La cuenta puede exportarse desde `GET /api/auth/export`. Ajustes permite cambiar la
+contraseña, borrar la cuenta y elegir GPT o Claude sin editar código. Las claves de IA se
+cifran en PostgreSQL y se excluyen de las respuestas y exportaciones.
 
 ## Pruebas
 
