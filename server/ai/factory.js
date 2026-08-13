@@ -7,11 +7,13 @@ import { OpenAICompatibleEmbeddingProvider } from "./providers/embeddings/openai
 import { CohereRerankProvider } from "./providers/rerank/cohere.js";
 import { OpenAICompatibleRerankProvider } from "./providers/rerank/openai-compatible.js";
 import { NoopRerankProvider } from "./providers/rerank/noop.js";
-import { assertEmbeddingProvider, assertLLMProvider, assertRerankProvider } from "./providers/types.js";
+import { NeedleToolRouterProvider } from "./providers/tool-routing/needle.js";
+import { assertEmbeddingProvider, assertLLMProvider, assertRerankProvider, assertToolRouterProvider } from "./providers/types.js";
 
 const PROVIDERS = new Set(["anthropic", "openai", "openai-compatible"]);
 const EMBEDDING_PROVIDERS = new Set(["voyage", "openai", "openai-compatible"]);
 const RERANK_PROVIDERS = new Set(["noop", "cohere", "openai-compatible"]);
+const TOOL_ROUTER_PROVIDERS = new Set(["needle"]);
 
 /* El nombre de la variable ya dice de qué familia es (LLM_, EMBEDDING_,
    RERANK_): se deriva de ahí para que el mensaje señale la variable correcta
@@ -112,6 +114,37 @@ export function createRerankProvider(env = process.env, { fetchImpl = fetch } = 
   if (config.provider === "cohere") provider = new CohereRerankProvider({ ...config, fetchImpl });
   if (config.provider === "openai-compatible") provider = new OpenAICompatibleRerankProvider({ ...config, fetchImpl });
   return assertRerankProvider(provider);
+}
+
+export function readToolRouterConfig(env = process.env) {
+  const provider = String(env.TOOL_ROUTER_PROVIDER || "").trim();
+  if (!provider) return { enabled: false };
+  if (!TOOL_ROUTER_PROVIDERS.has(provider)) throw new Error(`TOOL_ROUTER_PROVIDER desconocido: ${provider}`);
+
+  const baseURL = validBaseURL(String(env.NEEDLE_BASE_URL || "http://127.0.0.1:9475"), "NEEDLE_BASE_URL");
+  const minConfidence = Number(env.NEEDLE_MIN_CONFIDENCE ?? 0.85);
+  if (!Number.isFinite(minConfidence) || minConfidence < 0 || minConfidence > 1) {
+    throw new Error("NEEDLE_MIN_CONFIDENCE debe estar entre 0 y 1");
+  }
+  const timeoutMs = Number(env.NEEDLE_TIMEOUT_MS || 15000);
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 120000) {
+    throw new Error("NEEDLE_TIMEOUT_MS debe estar entre 100 y 120000");
+  }
+
+  /* Por defecto Needle solo puede apuntar al propio equipo. Para un servicio
+     privado remoto hace falta una habilitación explícita. */
+  const host = new URL(baseURL).hostname.replace(/^\[|\]$/g, "");
+  const loopback = new Set(["localhost", "127.0.0.1", "::1"]);
+  if (!loopback.has(host) && String(env.NEEDLE_ALLOW_REMOTE || "false").toLowerCase() !== "true") {
+    throw new Error("NEEDLE_BASE_URL debe ser local; usa NEEDLE_ALLOW_REMOTE=true solo para un servicio privado controlado");
+  }
+  return { enabled: true, provider, baseURL, minConfidence, timeoutMs };
+}
+
+export function createToolRouterProvider(env = process.env, { fetchImpl = fetch } = {}) {
+  const config = readToolRouterConfig(env);
+  if (!config.enabled) return null;
+  return assertToolRouterProvider(new NeedleToolRouterProvider({ ...config, fetchImpl }));
 }
 
 /* Los tres parámetros del retrieval viven juntos porque se calibran juntos

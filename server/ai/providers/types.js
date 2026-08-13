@@ -23,6 +23,14 @@ export class RerankProvider {
   capabilities() { throw new Error("RerankProvider.capabilities() no implementado"); }
 }
 
+/* Un ToolRouterProvider clasifica una petición contra una lista cerrada de
+   herramientas. No ejecuta ninguna herramienta: la autorización y la
+   ejecución siguen perteneciendo al dominio de la aplicación. */
+export class ToolRouterProvider {
+  async route(_query, _tools, _options = {}) { throw new Error("ToolRouterProvider.route() no implementado"); }
+  capabilities() { throw new Error("ToolRouterProvider.capabilities() no implementado"); }
+}
+
 export class ProviderError extends Error {
   constructor(provider, status, message = "El proveedor de IA no respondió correctamente") {
     super(message);
@@ -64,6 +72,20 @@ export function assertRerankProvider(provider) {
      (la similitud coseno). Ver server/rag/retrieval.js. */
   for (const key of ["scoresAbsolutos", "maxDocuments"]) {
     if (!(key in capabilities)) throw new TypeError(`Falta capability de reranking: ${key}`);
+  }
+  return provider;
+}
+
+export function assertToolRouterProvider(provider) {
+  if (!provider || typeof provider.route !== "function" || typeof provider.capabilities !== "function") {
+    throw new TypeError("El adaptador no cumple ToolRouterProvider { route(), capabilities() }");
+  }
+  const capabilities = provider.capabilities();
+  for (const key of ["local", "structuredToolCalls", "executesTools", "confidenceScore"]) {
+    if (!(key in capabilities)) throw new TypeError(`Falta capability ToolRouter: ${key}`);
+  }
+  if (capabilities.executesTools !== false) {
+    throw new TypeError("Un ToolRouterProvider no puede ejecutar herramientas");
   }
   return provider;
 }

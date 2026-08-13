@@ -6,12 +6,13 @@ import { pool } from "../db/repositories/_helpers.js";
 import * as documentsRepo from "../db/repositories/documents.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireActiveProfile } from "../middleware/authorization.js";
-import { createEmbeddingProvider, createLLMProvider, createRerankProvider, readEmbeddingConfig, readRAGConfig } from "../ai/factory.js";
+import { createEmbeddingProvider, createLLMProvider, createRerankProvider, createToolRouterProvider, readEmbeddingConfig, readRAGConfig } from "../ai/factory.js";
 import { responder } from "../domain/coach/chat.js";
 import { decisionesIA } from "../domain/coach/decisiones.js";
 import { listarDecisionesConCitas } from "../db/repositories/trainingPlans.js";
 import { listConversationsByProfile } from "../db/repositories/aiConversations.js";
 import { compararSistemas, PREGUNTAS_COMPARACION } from "../domain/coach/comparacion.js";
+import { COACH_LOCAL_TOOLS, NEEDLE_SYSTEM_PROMPT } from "../domain/coach/local-tools.js";
 
 const router = express.Router();
 router.use(requireAuth, requireActiveProfile);
@@ -27,6 +28,7 @@ const perezoso = (fabrica) => {
 const getLLM = perezoso(() => createLLMProvider());
 const getEmbeddings = perezoso(() => createEmbeddingProvider());
 const getRerank = perezoso(() => createRerankProvider());
+const getToolRouter = perezoso(() => createToolRouterProvider());
 
 function dependencias() {
   const embeddingConfig = readEmbeddingConfig();
@@ -44,6 +46,19 @@ function dependencias() {
 }
 
 const perfil = (req) => req.auth.athleteProfileId;
+
+/* Diagnóstico y clasificación local. Needle nunca recibe ni acepta un
+   athlete_profile_id del cliente y no ejecuta la herramienta elegida. */
+router.post("/route", async (req, res, next) => {
+  try {
+    const consulta = String(req.body?.consulta || "").trim().slice(0, 1000);
+    if (!consulta) return res.status(400).json({ ok: false, message: "Falta la consulta" });
+    const provider = getToolRouter();
+    if (!provider) return res.status(503).json({ ok: false, message: "Needle local no está configurado" });
+    const route = await provider.route(consulta, COACH_LOCAL_TOOLS, { system: NEEDLE_SYSTEM_PROMPT });
+    res.json({ ok: true, route });
+  } catch (error) { next(error); }
+});
 
 router.post("/chat", async (req, res, next) => {
   try {

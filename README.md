@@ -31,6 +31,9 @@ Git, en el frontend ni en documentación.
 
 ## Railway
 
+El modelo local Needle 2 es opcional y se usa exclusivamente para enrutado estructurado
+de herramientas. Consulta [docs/modelo-local-needle.md](docs/modelo-local-needle.md).
+
 `railway.json` define:
 
 - instalación automática de Nixpacks con `npm ci` y build `npm run build`;

@@ -26,7 +26,7 @@ import syncRoutes from "./server/routes/sync.js";
 import { startReconciliationJob } from "./server/jobs/reconciliation.js";
 import { aiRateLimiter, loginRateLimiter, registrationRateLimiter, requireAuth, uploadRateLimiter } from "./server/middleware/auth.js";
 import { requireTrustedOrigin, securityHeaders } from "./server/middleware/security.js";
-import { createEmbeddingProvider, createLLMProvider, readEmbeddingConfig } from "./server/ai/factory.js";
+import { createEmbeddingProvider, createLLMProvider, createToolRouterProvider, readEmbeddingConfig } from "./server/ai/factory.js";
 import { getEmbeddingStatus, validateEmbeddingStartup } from "./server/embeddings/index-state.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -47,6 +47,7 @@ if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
 const llmProvider = createLLMProvider(process.env);
 const embeddingConfig = readEmbeddingConfig(process.env);
 const embeddingProvider = createEmbeddingProvider(process.env);
+const toolRouterProvider = createToolRouterProvider(process.env);
 if (embeddingConfig.enabled && !process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL es obligatoria cuando los embeddings están activados.");
 }
@@ -65,6 +66,7 @@ app.get("/health/ready", async (_req, res) => {
 app.get("/api/estado", async (_req, res) => {
   const dbStatus = await checkDatabaseStatus();
   const embeddings = await getEmbeddingStatus(embeddingConfig, pool);
+  const localModelHealth = toolRouterProvider ? await toolRouterProvider.health() : { ready: false, version: null };
   res.json({
     ok: true,
     requiereLogin: true,
@@ -74,6 +76,13 @@ app.get("/api/estado", async (_req, res) => {
     db: dbStatus.db,
     pgvector: dbStatus.pgvector,
     embeddings,
+    localModel: {
+      enabled: !!toolRouterProvider,
+      provider: toolRouterProvider ? "needle" : null,
+      purpose: toolRouterProvider ? "tool-routing" : null,
+      ready: localModelHealth.ready,
+      version: localModelHealth.version,
+    },
   });
 });
 app.use("/api/auth/login", loginRateLimiter);
@@ -311,6 +320,7 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`Hybrid Coach escuchando en el puerto ${PORT}`);
   console.log(`  IA:     ${llmProvider ? `${process.env.LLM_PROVIDER}/${process.env.LLM_MODEL}` : "sin proveedor (la app funciona igual)"}`);
   console.log(`  Embed:  ${embeddingProvider ? `${embeddingConfig.provider}/${embeddingConfig.model} (${embeddingConfig.dimensions}d)` : "desactivados"}`);
+  console.log(`  Local:  ${toolRouterProvider ? "needle/tool-routing" : "desactivado"}`);
   console.log(`  Hoja:   ${APPS_SCRIPT_URL ? "vía Apps Script" : SHEET_ID && GOOGLE_SERVICE_ACCOUNT_JSON ? "vía cuenta de servicio" : "sin configurar"}`);
   console.log(`  Strava: ${STRAVA_CLIENT_ID ? "configurado" : "sin configurar"}`);
   console.log("  Acceso: sesiones autenticadas");
