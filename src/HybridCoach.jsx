@@ -3104,6 +3104,108 @@ function EditarRef({ r, onSave, onDelete, onCancel }) {
 /* ============================================================
    AJUSTES
    ============================================================ */
+const MODELOS_IA = {
+  openai: ["gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini"],
+  anthropic: ["claude-sonnet-4-20250514", "claude-opus-4-20250514", "claude-3-5-haiku-latest"],
+};
+
+function AjustesIA({ notify }) {
+  const [provider, setProvider] = useState("openai");
+  const [model, setModel] = useState(MODELOS_IA.openai[0]);
+  const [apiKey, setApiKey] = useState("");
+  const [settings, setSettings] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+
+  const cargar = async () => {
+    try {
+      const response = await fetch("/api/ai/settings", { credentials: "same-origin" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || "No se pudo leer la configuración de IA");
+      setSettings(result.settings);
+      if (result.settings?.configured) {
+        setProvider(result.settings.provider);
+        setModel(result.settings.model);
+      }
+    } catch (error) { notify(error.message); }
+  };
+
+  useEffect(() => { void cargar(); }, []);
+
+  const cambiarProveedor = (value) => {
+    setProvider(value);
+    if (value !== settings?.provider) setModel(MODELOS_IA[value][0]);
+    setApiKey("");
+    setTestResult(null);
+  };
+
+  const enviar = async (path, method) => {
+    setBusy(true); setTestResult(null);
+    try {
+      const response = await fetch(path, {
+        method, credentials: "same-origin", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, model: model.trim(), ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}) }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || "No se pudo guardar la configuración");
+      if (path.endsWith("/test")) {
+        setTestResult({ ok: true, message: `Conexión correcta con ${result.provider}/${result.model}.` });
+      } else {
+        setSettings(result.settings); setApiKey("");
+        notify("Proveedor de IA guardado para tu cuenta.");
+      }
+    } catch (error) {
+      setTestResult({ ok: false, message: error.message });
+    } finally { setBusy(false); }
+  };
+
+  const eliminar = async () => {
+    if (!window.confirm("¿Eliminar la clave guardada y volver al modelo del servidor?")) return;
+    setBusy(true); setTestResult(null);
+    try {
+      const response = await fetch("/api/ai/settings", { method: "DELETE", credentials: "same-origin" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || "No se pudo eliminar la configuración");
+      setSettings(result.settings); setApiKey("");
+      notify("Clave de IA eliminada. Se usará la configuración del servidor.");
+    } catch (error) { setTestResult({ ok: false, message: error.message }); }
+    finally { setBusy(false); }
+  };
+
+  const canReuseKey = settings?.configured && settings.provider === provider;
+  const canSubmit = !!model.trim() && (!!apiKey.trim() || canReuseKey);
+
+  return <div className="card">
+    <div className="between"><h3>Coach con IA</h3>
+      <span className="tag">{settings?.configured ? "Clave guardada" : "Modelo del servidor"}</span></div>
+    <p className="sm muted">Elige GPT o Claude. La clave se cifra en el servidor y nunca se guarda en localStorage ni vuelve a mostrarse.</p>
+    <label>PROVEEDOR</label>
+    <select value={provider} onChange={(e) => cambiarProveedor(e.target.value)} disabled={busy}>
+      <option value="openai">OpenAI · GPT</option>
+      <option value="anthropic">Anthropic · Claude</option>
+    </select>
+    <div style={{ height: 9 }} /><label>MODELO</label>
+    <input list={`modelos-${provider}`} value={model} onChange={(e) => { setModel(e.target.value); setTestResult(null); }}
+      placeholder={MODELOS_IA[provider][0]} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+    <datalist id={`modelos-${provider}`}>{MODELOS_IA[provider].map((name) => <option key={name} value={name} />)}</datalist>
+    <p className="xs muted" style={{ marginTop: 5 }}>Puedes elegir una sugerencia o escribir cualquier identificador de modelo disponible en tu cuenta.</p>
+    <label>CLAVE DE API</label>
+    <input type="password" value={apiKey} onChange={(e) => { setApiKey(e.target.value); setTestResult(null); }}
+      placeholder={canReuseKey ? "Deja vacío para conservar la clave guardada" : provider === "openai" ? "sk-…" : "sk-ant-…"}
+      autoComplete="new-password" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+    <p className="xs muted" style={{ marginTop: 5 }}>La prueba usa pocos tokens, pero el proveedor puede cobrarla. Los mensajes enviados al coach se procesarán según la política del proveedor elegido.</p>
+    <div className="row" style={{ marginTop: 9 }}>
+      <button className="btn sm ghost" style={{ flex: 1 }} onClick={() => enviar("/api/ai/settings/test", "POST")} disabled={busy || !canSubmit}>{busy ? "Conectando…" : "Probar"}</button>
+      <button className="btn sm" style={{ flex: 1 }} onClick={() => enviar("/api/ai/settings", "PUT")} disabled={busy || !canSubmit}>Guardar</button>
+    </div>
+    {testResult && <p className="sm" style={{ color: testResult.ok ? "var(--ok)" : "var(--alert)", marginBottom: 0 }}>{testResult.message}</p>}
+    {settings?.configured && <>
+      <p className="xs muted" style={{ marginBottom: 7 }}>Activo para tu cuenta: <span className="mono">{settings.provider}/{settings.model}</span>{settings.lastTestedAt ? ` · última prueba ${settings.lastTestOk ? "correcta" : "fallida"}` : ""}</p>
+      <button className="btn danger sm" style={{ width: "100%" }} onClick={eliminar} disabled={busy}>Eliminar clave guardada</button>
+    </>}
+  </div>;
+}
+
 function Ajustes({ st, P, update, notify, onClose, setPantalla, today, onLogout, user }) {
   const [url, setUrl] = useState(st.config.sheetsUrl || "");
   const [test, setTest] = useState(null); const [busy, setBusy] = useState(false);
@@ -3180,6 +3282,7 @@ function Ajustes({ st, P, update, notify, onClose, setPantalla, today, onLogout,
       <div style={{ height: 8 }} />
       <button className="btn sm ghost" style={{ width: "100%" }} onClick={regenerar}>{confReg ? "Confirmar: se borran las semanas planificadas" : "Regenerar plan con el perfil actual"}</button>
     </div>
+    <AjustesIA notify={notify} />
     <div className="card"><h3>Google Sheets</h3>
       <p className="sm muted">Pega la URL del Apps Script desplegado (termina en <span className="mono">/exec</span>). Sin ella, todo se guarda dentro de la aplicación.</p>
       <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://script.google.com/macros/s/…/exec" style={{ fontSize: 13 }} />

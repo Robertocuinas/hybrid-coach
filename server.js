@@ -23,10 +23,12 @@ import adminRoutes from "./server/routes/admin.js";
 import coachRoutes from "./server/routes/coach.js";
 import evidenceRoutes from "./server/routes/evidence.js";
 import syncRoutes from "./server/routes/sync.js";
+import aiSettingsRoutes from "./server/routes/ai-settings.js";
 import { startReconciliationJob } from "./server/jobs/reconciliation.js";
 import { aiRateLimiter, loginRateLimiter, registrationRateLimiter, requireAuth, uploadRateLimiter } from "./server/middleware/auth.js";
 import { requireTrustedOrigin, securityHeaders } from "./server/middleware/security.js";
 import { createEmbeddingProvider, createLLMProvider, createToolRouterProvider, readEmbeddingConfig } from "./server/ai/factory.js";
+import { resolveUserLLMProvider } from "./server/ai/user-provider.js";
 import { getEmbeddingStatus, validateEmbeddingStartup } from "./server/embeddings/index-state.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -92,6 +94,7 @@ app.use("/auth/login", loginRateLimiter);
 app.use("/auth/register", registrationRateLimiter);
 app.use("/auth", authRoutes);
 app.use("/api", syncRoutes);
+app.use("/api/ai/settings", aiSettingsRoutes);
 /* Antes que apiRoutes: /api/admin/* tiene su propio parseo de cuerpo binario
    y no debe caer en los manejadores JSON genéricos. */
 app.use("/api/admin/documents/upload", uploadRateLimiter);
@@ -107,11 +110,12 @@ app.post("/api/entrar", (_req, res) => res.status(410).json({ ok: false, message
    IA — la clave se queda aquí
    ============================================================ */
 app.post("/api/ia", requireAuth, aiRateLimiter, async (req, res) => {
-  if (!llmProvider) {
-    return res.status(503).json({ ok: false, message: "Este servidor no tiene proveedor de IA configurado. La aplicación sigue funcionando sin él." });
-  }
   try {
-    const result = await llmProvider.call({
+    const provider = await resolveUserLLMProvider(req.auth.userId, { fallbackProvider: llmProvider });
+    if (!provider) {
+      return res.status(503).json({ ok: false, message: "Configura GPT o Claude en Ajustes para activar la IA." });
+    }
+    const result = await provider.call({
       system: req.body?.system,
       messages: req.body?.messages || [],
       maxTokens: Math.min(+req.body?.max_tokens || 1400, 4000),

@@ -13,6 +13,7 @@ import { listarDecisionesConCitas } from "../db/repositories/trainingPlans.js";
 import { listConversationsByProfile } from "../db/repositories/aiConversations.js";
 import { compararSistemas, PREGUNTAS_COMPARACION } from "../domain/coach/comparacion.js";
 import { COACH_LOCAL_TOOLS, NEEDLE_SYSTEM_PROMPT } from "../domain/coach/local-tools.js";
+import { resolveUserLLMProvider } from "../ai/user-provider.js";
 
 const router = express.Router();
 router.use(requireAuth, requireActiveProfile);
@@ -30,12 +31,12 @@ const getEmbeddings = perezoso(() => createEmbeddingProvider());
 const getRerank = perezoso(() => createRerankProvider());
 const getToolRouter = perezoso(() => createToolRouterProvider());
 
-function dependencias() {
+async function dependencias(userId) {
   const embeddingConfig = readEmbeddingConfig();
   return {
     db: pool,
     repo: documentsRepo,
-    llmProvider: getLLM(),
+    llmProvider: await resolveUserLLMProvider(userId, { fallbackProvider: getLLM() }),
     embeddingProvider: getEmbeddings(),
     rerankProvider: getRerank(),
     indice: embeddingConfig.enabled
@@ -64,7 +65,7 @@ router.post("/chat", async (req, res, next) => {
   try {
     const consulta = String(req.body?.consulta || "").trim();
     if (!consulta) return res.status(400).json({ ok: false, message: "Falta la consulta" });
-    const deps = dependencias();
+    const deps = await dependencias(req.auth.userId);
     if (!deps.llmProvider) return res.status(503).json({ ok: false, message: "Este servidor no tiene proveedor de IA configurado" });
 
     const salida = await responder(perfil(req), consulta, { ...deps, conversationId: req.body?.conversationId || null });
@@ -74,7 +75,7 @@ router.post("/chat", async (req, res, next) => {
 
 router.post("/decisiones", async (req, res, next) => {
   try {
-    const deps = dependencias();
+    const deps = await dependencias(req.auth.userId);
     if (!deps.llmProvider) return res.status(503).json({ ok: false, message: "Este servidor no tiene proveedor de IA configurado" });
     const salida = await decisionesIA(perfil(req), { ...deps, persistir: req.body?.persistir !== false });
     res.json({ ok: true, ...salida });
@@ -120,7 +121,7 @@ router.get("/conversations/:id/messages", async (req, res, next) => {
    ANTES de apagar el viejo, que es el riesgo principal de esta fase. */
 router.post("/comparar", async (req, res, next) => {
   try {
-    const deps = dependencias();
+    const deps = await dependencias(req.auth.userId);
     const preguntas = Array.isArray(req.body?.preguntas) && req.body.preguntas.length
       ? req.body.preguntas.map((p) => String(p).slice(0, 300))
       : PREGUNTAS_COMPARACION;
