@@ -20,14 +20,18 @@ export class AnthropicProvider extends LLMProvider {
     };
   }
 
-  async call({ system, messages = [], maxTokens, max_tokens, temperature, stopSequences, stop_sequences }) {
+  /* `temperature` se acepta en la firma pero NO se envía. Los modelos Claude
+     actuales retiraron los parámetros de muestreo: mandarlos devuelve 400 y la
+     petición entera falla. Absorberlo aquí es justo el trabajo del adaptador —
+     quien llama sigue usando el mismo contrato para todos los proveedores y no
+     tiene que saber qué acepta cada API (docs/04-capa-ia.md). */
+  async call({ system, messages = [], maxTokens, max_tokens, temperature: _temperature, stopSequences, stop_sequences }) {
     const body = {
       model: this.model,
       max_tokens: maxTokens ?? max_tokens ?? 1400,
       system,
       messages,
     };
-    if (temperature !== undefined) body.temperature = temperature;
     const stops = stopSequences ?? stop_sequences;
     if (stops?.length) body.stop_sequences = stops;
     const response = await this.fetchImpl(ENDPOINT, {

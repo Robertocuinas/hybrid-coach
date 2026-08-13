@@ -19,6 +19,24 @@ test("LLM_PROVIDER=anthropic conserva el formato Messages y normaliza la salida"
   assert.equal(provider.capabilities().nativeJsonMode, false);
 });
 
+/* Regresión: los modelos Claude actuales retiraron los parámetros de muestreo
+   y devuelven 400 si llegan. Enviarlos hacía fallar la petición entera con un
+   "el proveedor ha rechazado la configuración" que parecía un problema de
+   clave. El adaptador acepta el campo del contrato común y no lo reenvía. */
+test("el adaptador de anthropic nunca manda temperature, aunque se la pasen", async () => {
+  let request;
+  const provider = createLLMProvider({ LLM_PROVIDER: "anthropic", LLM_MODEL: "claude-test", LLM_API_KEY: "k" }, {
+    fetchImpl: async (url, options) => { request = { url, options }; return ok({ model: "claude-test", content: [{ type: "text", text: "OK" }], usage: {}, stop_reason: "end_turn" }); },
+  });
+
+  await provider.call({ system: "s", messages: [{ role: "user", content: "hola" }], maxTokens: 8, temperature: 0 });
+
+  const body = JSON.parse(request.options.body);
+  assert.ok(!("temperature" in body), `no debe viajar temperature; body: ${request.options.body}`);
+  assert.ok(!("top_p" in body) && !("top_k" in body), "tampoco el resto de parámetros de muestreo");
+  assert.equal(body.max_tokens, 8, "el resto de la petición no cambia");
+});
+
 test("LLM_PROVIDER=openai usa /v1/chat/completions con system como primer mensaje", async () => {
   let request;
   const provider = createLLMProvider({ LLM_PROVIDER: "openai", LLM_MODEL: "gpt-test", LLM_API_KEY: "test-key" }, {

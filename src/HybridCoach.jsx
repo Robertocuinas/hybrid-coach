@@ -3115,14 +3115,36 @@ function EditarRef({ r, onSave, onDelete, onCancel }) {
 /* ============================================================
    AJUSTES
    ============================================================ */
+/* El identificador es lo que viaja a la API y tiene que ir exacto; la nota es
+   solo para elegir. Se anota lo que se puede afirmar y el resto se queda con
+   el identificador a secas: inventar una descripción para orientar una compra
+   sería peor que no ponerla. */
 const MODELOS_IA = {
-  openai: ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-4.1-mini"],
-  anthropic: ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"],
+  openai: [
+    { id: "gpt-5.6-luna" },
+    { id: "gpt-5.6-terra" },
+    { id: "gpt-5.6-sol" },
+    { id: "gpt-4.1-mini" },
+  ],
+  anthropic: [
+    { id: "claude-haiku-4-5", nota: "el más rápido y económico" },
+    { id: "claude-sonnet-5", nota: "equilibrio entre calidad y coste" },
+    { id: "claude-opus-5", nota: "el más capaz para razonar" },
+    { id: "claude-fable-5", nota: "máxima capacidad, el más caro" },
+  ],
 };
+
+/* Valor centinela del desplegable: no es un modelo, abre el campo de texto.
+   Sin él, un modelo nuevo o afinado quedaría fuera del alcance de la interfaz
+   hasta la siguiente versión del cliente. */
+const MODELO_LIBRE = "__otro__";
+
+const esModeloConocido = (proveedor, id) => MODELOS_IA[proveedor].some((m) => m.id === id);
 
 function AjustesIA({ notify }) {
   const [provider, setProvider] = useState("openai");
-  const [model, setModel] = useState(MODELOS_IA.openai[0]);
+  const [model, setModel] = useState(MODELOS_IA.openai[0].id);
+  const [modeloLibre, setModeloLibre] = useState(false);   // el desplegable está en "Otro"
   const [apiKey, setApiKey] = useState("");
   const [settings, setSettings] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -3137,6 +3159,9 @@ function AjustesIA({ notify }) {
       if (result.settings?.configured) {
         setProvider(result.settings.provider);
         setModel(result.settings.model);
+        /* Una cuenta puede tener guardado un modelo que no está en la lista.
+           El desplegable no debe cambiárselo por su cuenta al abrir ajustes. */
+        setModeloLibre(!esModeloConocido(result.settings.provider, result.settings.model));
       }
     } catch (error) { notify(error.message); }
   };
@@ -3145,9 +3170,17 @@ function AjustesIA({ notify }) {
 
   const cambiarProveedor = (value) => {
     setProvider(value);
-    if (value !== settings?.provider) setModel(MODELOS_IA[value][0]);
+    if (value !== settings?.provider) { setModel(MODELOS_IA[value][0].id); setModeloLibre(false); }
+    else setModeloLibre(!esModeloConocido(value, settings.model));
     setApiKey("");
     setTestResult(null);
+  };
+
+  const cambiarModelo = (value) => {
+    setTestResult(null);
+    if (value === MODELO_LIBRE) { setModeloLibre(true); setModel(""); return; }
+    setModeloLibre(false);
+    setModel(value);
   };
 
   const enviar = async (path, method) => {
@@ -3196,10 +3229,22 @@ function AjustesIA({ notify }) {
       <option value="anthropic">Anthropic · Claude</option>
     </select>
     <div style={{ height: 9 }} /><label>MODELO</label>
-    <input list={`modelos-${provider}`} value={model} onChange={(e) => { setModel(e.target.value); setTestResult(null); }}
-      placeholder={MODELOS_IA[provider][0]} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
-    <datalist id={`modelos-${provider}`}>{MODELOS_IA[provider].map((name) => <option key={name} value={name} />)}</datalist>
-    <p className="xs muted" style={{ marginTop: 5 }}>Puedes elegir una sugerencia o escribir cualquier identificador de modelo disponible en tu cuenta.</p>
+    <select value={modeloLibre ? MODELO_LIBRE : model} onChange={(e) => cambiarModelo(e.target.value)} disabled={busy}>
+      {MODELOS_IA[provider].map(({ id, nota }) => (
+        <option key={id} value={id}>{nota ? `${id} · ${nota}` : id}</option>
+      ))}
+      <option value={MODELO_LIBRE}>Otro (escribir identificador)…</option>
+    </select>
+    {modeloLibre && <>
+      <div style={{ height: 7 }} />
+      <input value={model} onChange={(e) => { setModel(e.target.value); setTestResult(null); }}
+        placeholder={MODELOS_IA[provider][0].id} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+    </>}
+    <p className="xs muted" style={{ marginTop: 5 }}>
+      {modeloLibre
+        ? "Escríbelo exacto y sin sufijo de fecha. Si no existe, la prueba dirá que el modelo no está disponible para tu clave."
+        : "Se cobra según el modelo elegido. Si usas uno que no está en la lista, elige «Otro»."}
+    </p>
     <label>CLAVE DE API</label>
     <input type="password" value={apiKey} onChange={(e) => { setApiKey(e.target.value); setTestResult(null); }}
       placeholder={canReuseKey ? "Deja vacío para conservar la clave guardada" : provider === "openai" ? "sk-…" : "sk-ant-…"}

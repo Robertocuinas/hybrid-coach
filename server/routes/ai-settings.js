@@ -5,12 +5,21 @@ import { decryptApiKey, encryptApiKey } from "../ai/settings-crypto.js";
 import { createUserLLMProvider, publicAISettings, validateUserLLMSettings } from "../ai/user-provider.js";
 import { deleteAISettings, findAISettingsByUser, saveAISettings, updateAISettingsTest } from "../db/repositories/aiSettings.js";
 
+/* El detalle que devuelve el proveedor en un 400 describe QUÉ campo de la
+   petición no le vale, y sin él "ha rechazado la configuración" es imposible
+   de diagnosticar. No lleva secretos: la clave viaja en una cabecera y nunca
+   vuelve en el cuerpo del error. Se recorta por si el proveedor se extiende. */
+const detalleProveedor = (error) => {
+  const bruto = String(error?.message || "").replace(/^Error de [a-z-]+:\s*/i, "").trim();
+  return bruto ? ` (${bruto.slice(0, 300)})` : "";
+};
+
 function safeProviderMessage(error) {
   if (error?.name === "TimeoutError" || error?.name === "AbortError") return "El proveedor tardó demasiado en responder";
   if (error?.status === 401 || error?.status === 403) return "El proveedor ha rechazado la clave de API";
   if (error?.status === 404) return "El modelo indicado no está disponible para esta clave";
   if (error?.status === 429) return "El proveedor ha aplicado un límite temporal o la cuenta no tiene saldo disponible";
-  if (error?.status >= 400 && error?.status < 500) return "El proveedor ha rechazado la configuración";
+  if (error?.status >= 400 && error?.status < 500) return `El proveedor ha rechazado la configuración${detalleProveedor(error)}`;
   return "No se pudo conectar con el proveedor de IA";
 }
 
@@ -53,11 +62,16 @@ export function createAISettingsRouter({ db = pool, fetchImpl = fetch } = {}) {
         usesStoredKey = true;
       }
       const provider = createUserLLMProvider({ ...draft, apiKey }, { fetchImpl, timeoutMs: 20_000 });
+      /* Sin temperatura: la prueba solo comprueba que la clave y el modelo
+         funcionan, y hay proveedores que rechazan los parámetros de muestreo.
+
+         El margen de tokens es holgado a propósito: varios modelos razonan
+         antes de responder y ese razonamiento consume del mismo presupuesto,
+         así que un tope corto devuelve una respuesta truncada y sin texto. */
       const result = await provider.call({
         system: "Responde únicamente OK.",
         messages: [{ role: "user", content: "Prueba de conexión" }],
-        maxTokens: 8,
-        temperature: 0,
+        maxTokens: 512,
       });
       if (usesStoredKey) await updateAISettingsTest(userId, true, db);
       res.json({ ok: true, provider: result.provider, model: result.model });

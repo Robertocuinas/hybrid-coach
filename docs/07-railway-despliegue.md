@@ -33,7 +33,7 @@ dentro de la red privada y no publica el despliegue si el comando falla.
 ## Variables obligatorias del núcleo
 
 ```text
-DATABASE_URL=<referencia privada al servicio pgvector>
+DATABASE_URL=${{<servicio pgvector>.DATABASE_URL_PRIVATE}}
 SESSION_SECRET=<aleatorio, al menos 32 caracteres>
 APP_ORIGIN=https://<dominio exacto>
 NODE_ENV=production
@@ -42,6 +42,17 @@ PASSWORD_MIN_LENGTH=12
 SESSION_TTL_DAYS=30
 REGISTRATION_ENABLED=false
 ```
+
+**El nombre importa: tiene que ser `DATABASE_URL`.** Al añadir una referencia, Railway nombra
+la variable igual que la del servicio origen, así que referenciar `DATABASE_URL_PRIVATE`
+crea una variable con ese nombre, que este proyecto no lee en ningún sitio. El síntoma es
+un pre-deploy que muere con «The DATABASE_URL environment variable is not set» y, si se
+saltara, un `/health/ready` en falso permanente: `server/db/status.js` devuelve `db: false`
+sin esa variable. El **valor** sí debe ser el privado (`*.railway.internal`): no consume
+egreso y `server/db/pool.js` lo detecta para no exigir TLS donde no hace falta.
+
+Las variables `PGHOST`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` y `PGPORT` en el servicio web
+son innecesarias: el proyecto se conecta solo por `DATABASE_URL`.
 
 El primer administrador se asigna explícitamente en PostgreSQL después de registrar la
 cuenta. El registro público siempre crea usuarios con rol `athlete`.
