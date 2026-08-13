@@ -9,6 +9,7 @@ import { requireAdmin } from "../middleware/authorization.js";
 import { createStorageClient, missingStorageVars } from "../integrations/storage/r2.js";
 import { comprobarExtractor } from "../integrations/pdf-extractor.js";
 import { createEmbeddingProvider, createLLMProvider, createRerankProvider, readEmbeddingConfig, readRAGConfig, readRerankConfig } from "../ai/factory.js";
+import { resolveUserLLMProvider } from "../ai/user-provider.js";
 import { ingerirPDF, IngestaError, MAX_BYTES } from "../ingestion/pipeline.js";
 import { recuperar } from "../rag/retrieval.js";
 
@@ -60,10 +61,17 @@ router.post("/documents/upload", cuerpoPDF, async (req, res, next) => {
     if (!Buffer.isBuffer(req.body) || !req.body.length) {
       return res.status(400).json({ ok: false, message: "Envía el PDF como cuerpo binario con Content-Type: application/pdf" });
     }
+    /* La ficha la genera el proveedor que el admin tenga configurado en sus
+       ajustes, con el del servidor como respaldo (mismo patrón que el coach,
+       server/routes/coach.js). Sin esto, una instancia sin LLM_PROVIDER dejaba
+       todos los PDF sin clasificar aunque el admin tuviera su propia clave.
+
+       Los embeddings NO siguen esta regla: van a un índice compartido por toda
+       la biblioteca y tienen que salir siempre del mismo modelo. */
     const resultado = await ingerirPDF(req.body, {
       db: pool,
       storage: getStorage(),
-      provider: getProvider(),
+      provider: await resolveUserLLMProvider(req.auth.userId, { fallbackProvider: getProvider() }),
       embeddingProvider: getEmbeddingProvider(),
       repo: documentsRepo,
       nombre: nombreSeguro(req),
@@ -108,12 +116,16 @@ router.get("/documents/:id/pdf", async (req, res, next) => {
 /* Diagnóstico de la subida: las tres cosas que tienen que estar antes de que
    un PDF entre en la biblioteca. Devuelve NOMBRES de variables que faltan y
    motivos de fallo, nunca valores de secretos (CLAUDE.md §4.6). */
-router.get("/storage/estado", async (_req, res, next) => {
+router.get("/storage/estado", async (req, res, next) => {
   try {
     const almacen = getStorage();
-    const [extractor, acceso] = await Promise.all([
+    /* `ia` responde a "¿tendría ficha un PDF que suba YO?", no a "¿hay
+       LLM_PROVIDER?": si no, el panel avisaba de que no había IA a un admin
+       que sí tiene su propia clave configurada. */
+    const [extractor, acceso, llm] = await Promise.all([
       comprobarExtractor(),
       almacen ? almacen.comprobar() : null,
+      resolveUserLLMProvider(req.auth.userId, { fallbackProvider: getProvider() }),
     ]);
     res.json({
       ok: true,
@@ -121,7 +133,7 @@ router.get("/storage/estado", async (_req, res, next) => {
       r2Faltan: missingStorageVars(),
       r2Acceso: acceso,
       extractor,
-      ia: !!getProvider(),
+      ia: !!llm,
       embeddings: !!getEmbeddingProvider(),
       maxBytes: MAX_BYTES,
     });
