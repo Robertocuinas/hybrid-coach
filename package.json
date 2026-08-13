@@ -20,7 +20,8 @@
     "reconcile:once": "node server/jobs/reconciliation.js",
     "backup:db": "node migration/scripts/backup-database.js",
     "needle:serve": "node scripts/needle-python.js",
-    "needle:smoke": "node scripts/needle-python.js --smoke"
+    "needle:smoke": "node scripts/needle-python.js --smoke",
+    "qwen:smoke": "node scripts/qwen-smoke.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1107.0",

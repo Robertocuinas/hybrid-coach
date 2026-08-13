@@ -49,9 +49,32 @@ test("openai-compatible apunta a Ollama y funciona sin API key", async () => {
   assert.equal(provider.capabilities().reliableStructuredOutput, false);
 });
 
+test("ollama nativo usa /api/chat y desactiva thinking para el redactor", async () => {
+  let request;
+  const provider = createLLMProvider({
+    LLM_PROVIDER: "ollama", LLM_MODEL: "qwen3:4b-instruct", LLM_BASE_URL: "http://127.0.0.1:11434", LLM_THINKING: "false",
+  }, {
+    fetchImpl: async (url, options) => {
+      request = { url, options };
+      return ok({ model: "qwen3:4b-instruct", message: { role: "assistant", content: "Recupera con suavidad." }, prompt_eval_count: 12, eval_count: 7, done_reason: "stop" });
+    },
+  });
+  const result = await provider.call({ system: "coach", messages: [{ role: "user", content: "hola" }], maxTokens: 200 });
+  const body = JSON.parse(request.options.body);
+  assert.equal(request.url, "http://127.0.0.1:11434/api/chat");
+  assert.equal(body.think, false);
+  assert.equal(body.stream, false);
+  assert.equal(body.options.num_predict, 200);
+  assert.equal(result.text, "Recupera con suavidad.");
+  assert.equal(result.provider, "ollama");
+  assert.equal(provider.capabilities().nativeJsonMode, true);
+});
+
 test("la factoría falla al arrancar ante configuración inválida", () => {
   assert.throws(() => readLLMConfig({ LLM_PROVIDER: "desconocido", LLM_MODEL: "x" }), /desconocido/);
   assert.throws(() => readLLMConfig({ LLM_PROVIDER: "openai", LLM_MODEL: "x" }), /LLM_API_KEY/);
   assert.throws(() => readLLMConfig({ LLM_PROVIDER: "openai-compatible", LLM_MODEL: "x" }), /LLM_BASE_URL/);
+  assert.equal(readLLMConfig({ LLM_PROVIDER: "ollama", LLM_MODEL: "qwen3:4b-instruct" }).baseURL, "http://127.0.0.1:11434");
+  assert.throws(() => readLLMConfig({ LLM_PROVIDER: "ollama", LLM_MODEL: "qwen3:4b-instruct", LLM_BASE_URL: "https://example.com" }), /debe ser local/);
   assert.deepEqual(readLLMConfig({}), { enabled: false });
 });

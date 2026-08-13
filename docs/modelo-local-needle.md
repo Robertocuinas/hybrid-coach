@@ -62,3 +62,29 @@ Con una sesión iniciada, `POST /api/coach/route` acepta `{"consulta":"..."}`.
 
 Fuentes oficiales: [Cactus Needle](https://cactuscompute.com/needle) y
 [repositorio de Needle](https://github.com/cactus-compute/needle).
+
+## Redactor local Qwen
+
+Needle enruta y `qwen3:4b-instruct`, ejecutado por Ollama, redacta. Es la variante
+4B no-pensante: responde directamente y no consume el límite generando una traza interna.
+Comprueba el redactor con:
+
+```powershell
+npm run qwen:smoke
+```
+
+Para activar ambos en el backend local:
+
+```powershell
+$env:TOOL_ROUTER_PROVIDER="needle"
+$env:NEEDLE_BASE_URL="http://127.0.0.1:9475"
+$env:LLM_PROVIDER="ollama"
+$env:LLM_MODEL="qwen3:4b-instruct"
+$env:LLM_BASE_URL="http://127.0.0.1:11434"
+$env:LLM_THINKING="false"
+npm start
+```
+
+No hace falta `LLM_API_KEY`. Ollama debe permanecer activo. Igual que Needle, el
+Ollama del ordenador no es accesible desde Railway: estas variables son para ejecutar
+el backend local, no para el servicio desplegado.

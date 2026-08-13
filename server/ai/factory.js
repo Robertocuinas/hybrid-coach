@@ -1,6 +1,7 @@
 import { AnthropicProvider } from "./providers/anthropic.js";
 import { OpenAIProvider } from "./providers/openai.js";
 import { OpenAICompatibleProvider } from "./providers/openai-compatible.js";
+import { OllamaProvider } from "./providers/ollama.js";
 import { VoyageEmbeddingProvider } from "./providers/embeddings/voyage.js";
 import { OpenAIEmbeddingProvider } from "./providers/embeddings/openai.js";
 import { OpenAICompatibleEmbeddingProvider } from "./providers/embeddings/openai-compatible.js";
@@ -10,7 +11,7 @@ import { NoopRerankProvider } from "./providers/rerank/noop.js";
 import { NeedleToolRouterProvider } from "./providers/tool-routing/needle.js";
 import { assertEmbeddingProvider, assertLLMProvider, assertRerankProvider, assertToolRouterProvider } from "./providers/types.js";
 
-const PROVIDERS = new Set(["anthropic", "openai", "openai-compatible"]);
+const PROVIDERS = new Set(["anthropic", "openai", "openai-compatible", "ollama"]);
 const EMBEDDING_PROVIDERS = new Set(["voyage", "openai", "openai-compatible"]);
 const RERANK_PROVIDERS = new Set(["noop", "cohere", "openai-compatible"]);
 const TOOL_ROUTER_PROVIDERS = new Set(["needle"]);
@@ -39,11 +40,22 @@ export function readLLMConfig(env = process.env) {
   const model = required(env.LLM_MODEL, "LLM_MODEL", provider);
   const maxTokens = Number(env.LLM_MAX_TOKENS || 1400);
   if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 100000) throw new Error("LLM_MAX_TOKENS no es válido");
-  const apiKey = provider === "openai-compatible" ? String(env.LLM_API_KEY || "") : required(env.LLM_API_KEY, "LLM_API_KEY", provider);
+  const apiKey = ["openai-compatible", "ollama"].includes(provider) ? String(env.LLM_API_KEY || "") : required(env.LLM_API_KEY, "LLM_API_KEY", provider);
   const baseURL = provider === "openai-compatible"
     ? validBaseURL(required(env.LLM_BASE_URL, "LLM_BASE_URL", provider))
+    : provider === "ollama"
+      ? validBaseURL(env.LLM_BASE_URL || "http://127.0.0.1:11434", "LLM_BASE_URL")
     : env.LLM_BASE_URL ? validBaseURL(env.LLM_BASE_URL) : undefined;
-  return { enabled: true, provider, model, apiKey, baseURL, maxTokens };
+  const thinking = String(env.LLM_THINKING || "false").toLowerCase() === "true";
+  const keepAlive = String(env.OLLAMA_KEEP_ALIVE || "5m").trim();
+  if (provider === "ollama") {
+    const host = new URL(baseURL).hostname.replace(/^\[|\]$/g, "");
+    if (!["localhost", "127.0.0.1", "::1"].includes(host) && String(env.OLLAMA_ALLOW_REMOTE || "false").toLowerCase() !== "true") {
+      throw new Error("LLM_BASE_URL de Ollama debe ser local salvo OLLAMA_ALLOW_REMOTE=true");
+    }
+    if (!/^(?:-1|\d+[smhd])$/.test(keepAlive)) throw new Error("OLLAMA_KEEP_ALIVE no es válido");
+  }
+  return { enabled: true, provider, model, apiKey, baseURL, maxTokens, thinking, keepAlive };
 }
 
 export function createLLMProvider(env = process.env, { fetchImpl = fetch } = {}) {
@@ -53,6 +65,7 @@ export function createLLMProvider(env = process.env, { fetchImpl = fetch } = {})
   if (config.provider === "anthropic") provider = new AnthropicProvider({ ...config, fetchImpl });
   if (config.provider === "openai") provider = new OpenAIProvider({ ...config, fetchImpl });
   if (config.provider === "openai-compatible") provider = new OpenAICompatibleProvider({ ...config, fetchImpl });
+  if (config.provider === "ollama") provider = new OllamaProvider({ ...config, fetchImpl });
   return assertLLMProvider(provider);
 }
 
