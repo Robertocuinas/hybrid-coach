@@ -1,0 +1,28 @@
+# La imagen que Nixpacks deduce del repositorio es solo Node, pero la ingesta de
+# bibliografía extrae el texto en un subproceso de Python con PyMuPDF
+# (server/integrations/extract.py, docs/05-rag.md §2.1). Sin este fichero el
+# contenedor sale sin intérprete y la subida de un PDF falla en la extracción,
+# después de haber aceptado el archivo.
+
+[phases.setup]
+# "..." conserva lo que Nixpacks detecta por su cuenta; solo se añade Python.
+# Va por apt y no por Nix porque la imagen base es Ubuntu: así las ruedas
+# binarias de PyMuPDF encuentran las librerías del sistema donde las esperan.
+nixPkgs = ["..."]
+aptPkgs = ["...", "python3", "python3-venv"]
+
+# Se sobrescribe la fase entera, así que `npm ci` tiene que estar aquí: sigue
+# siendo la única instalación de dependencias del despliegue
+# (docs/runbook-operacion.md §Despliegue web).
+#
+# El entorno virtual es relativo al directorio de la aplicación, no absoluto:
+# pdf-extractor.js busca `.venv` desde la raíz del proyecto, así que no hace
+# falta declarar PYTHON_BIN ni acertar con la ruta del contenedor.
+[phases.install]
+dependsOn = ["setup"]
+cmds = [
+  "npm ci",
+  "python3 -m venv --copies .venv",
+  ".venv/bin/pip install --no-cache-dir --upgrade pip",
+  ".venv/bin/pip install --no-cache-dir -r server/integrations/requirements.txt",
+]

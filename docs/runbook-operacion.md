@@ -6,7 +6,8 @@ Estado de referencia: staging en Railway, PostgreSQL + pgvector, autenticación 
 
 La configuración versionada en `railway.json` define:
 
-- instalación Nixpacks: `npm ci`;
+- instalación Nixpacks: `npm ci` y el entorno virtual de Python del extractor de PDF,
+  ambos en la misma fase declarada en `nixpacks.toml`;
 - build: `npm run build`;
 - pre-deploy: `npm run migrate`;
 - start: `npm start`;

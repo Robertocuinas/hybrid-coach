@@ -1,10 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   extraerDOI, limpiarPaginas, detectarSecciones, seccionDeEncabezado,
-  normalizarFicha, extraerJSON, extraerDocumento, pythonBin,
+  normalizarFicha, extraerJSON, extraerDocumento, comprobarExtractor, pythonBin,
 } from "./pdf-extractor.js";
+
+const SCRIPT_EXTRACTOR = path.join(path.dirname(fileURLToPath(import.meta.url)), "extract.py");
 
 /* ---------- Puras: no necesitan Python ---------- */
 
@@ -85,14 +89,16 @@ test("extraerJSON tolera el JSON envuelto en prosa o en bloque de código", () =
 
 const hayPython = (() => {
   try {
-    execFileSync(pythonBin(), ["-c", "import fitz"], { stdio: "ignore" });
+    execFileSync(pythonBin(), ["-c", "import pymupdf"], { stdio: "ignore" });
     return true;
   } catch { return false; }
 })();
 
+/* Se importa `pymupdf` y no `fitz` por lo mismo que en extract.py: el alias
+   viejo escribe un aviso en stdout y aquí stdout son los bytes del PDF. */
 function pdfDePrueba() {
   const guion = `
-import fitz, sys
+import pymupdf as fitz, sys
 doc = fitz.open()
 cabecera = 'J Strength Cond Res 2012'
 def pagina(titulo, cuerpo):
@@ -138,4 +144,25 @@ test("extrae un PDF real: secciones, páginas, DOI y limpieza", { skip: hayPytho
 
 test("un PDF corrupto falla con un mensaje legible", { skip: hayPython ? false : "sin Python con PyMuPDF" }, async () => {
   await assert.rejects(() => extraerDocumento(Buffer.from("%PDF-1.7 esto no es un pdf de verdad")), /No se pudo abrir el PDF|PDF/);
+});
+
+/* Regresión: PyMuPDF 1.26 empezó a escribir el aviso de obsolescencia de `fitz`
+   en stdout, que es el canal del protocolo JSON. Con `import fitz` la salida
+   del extractor deja de ser analizable y CUALQUIER PDF pasa por ilegible. */
+test("stdout del extractor solo lleva JSON, sin avisos de la librería", { skip: hayPython ? false : "sin Python con PyMuPDF" }, () => {
+  const salida = execFileSync(pythonBin(), [SCRIPT_EXTRACTOR, "--check"], { stdio: ["ignore", "pipe", "ignore"] }).toString();
+  assert.doesNotThrow(() => JSON.parse(salida), `stdout contaminado: ${JSON.stringify(salida)}`);
+  assert.equal(salida.trimStart()[0], "{", "no debe preceder nada al JSON");
+});
+
+test("comprobarExtractor informa del estado sin lanzar", { skip: hayPython ? false : "sin Python con PyMuPDF" }, async () => {
+  const bueno = await comprobarExtractor();
+  assert.equal(bueno.ok, true);
+  assert.match(bueno.pymupdf, /^\d+\.\d+/);
+
+  /* Sin intérprete el diagnóstico devuelve el motivo, no una excepción: el
+     panel de administración necesita mostrarlo, no romperse. */
+  const malo = await comprobarExtractor({ env: { PYTHON_BIN: "python-que-no-existe" } });
+  assert.equal(malo.ok, false);
+  assert.match(malo.motivo, /No se encontró el intérprete/);
 });

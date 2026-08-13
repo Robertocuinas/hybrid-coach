@@ -254,6 +254,47 @@ test("sin proveedor de IA el documento entra igual, con aviso, para rellenar a m
   await db.close();
 });
 
+/* Un servidor sin Python y un PDF cifrado fallaban los dos con un 500 genérico.
+   Quien administra necesita distinguirlos: uno se arregla en el despliegue, el
+   otro no se arregla nunca. */
+test("un fallo del extractor se atribuye al servidor o al archivo según el código", async () => {
+  const db = await baseDeDatos();
+  const base = { db, storage: almacenFalso(), repo: repoSobre(db), provider: proveedorFalso(FICHA) };
+
+  const conFallo = (codigo, mensaje) => async () => {
+    const error = new Error(mensaje);
+    error.codigoExtractor = codigo;
+    throw error;
+  };
+
+  await assert.rejects(
+    () => ingerirPDF(PDF_MINIMO, { ...base, extraer: conFallo("ENOENT", "No se encontró el intérprete de Python (python3)") }),
+    (error) => {
+      assert.equal(error.status, 503, "falta el intérprete: es del servidor");
+      assert.match(error.message, /no puede extraer texto/i);
+      return true;
+    },
+  );
+
+  await assert.rejects(
+    () => ingerirPDF(PDF_MINIMO, { ...base, extraer: conFallo(3, "PyMuPDF no está instalado (pip install pymupdf)") }),
+    (error) => error.status === 503,
+  );
+
+  await assert.rejects(
+    () => ingerirPDF(PDF_MINIMO, { ...base, extraer: conFallo(5, "El PDF está protegido con contraseña") }),
+    (error) => {
+      assert.equal(error.status, 422, "el PDF cifrado es culpa del archivo");
+      assert.match(error.message, /contraseña/);
+      return true;
+    },
+  );
+
+  const { rows } = await db.query(`SELECT count(*)::int AS n FROM documents;`);
+  assert.equal(rows[0].n, 0, "ningún fallo de extracción deja documento a medias");
+  await db.close();
+});
+
 test("sin almacenamiento configurado no se ingiere nada", async () => {
   const db = await baseDeDatos();
   await assert.rejects(

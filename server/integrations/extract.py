@@ -16,20 +16,63 @@ import json
 import sys
 
 
+def importar_pymupdf():
+    """Devuelve el módulo de PyMuPDF, o None si no está instalado.
+
+    Se importa como `pymupdf` y NO como `fitz`: desde la versión 1.26 el alias
+    antiguo escribe un aviso de obsolescencia en **stdout**, que es justo el
+    canal por el que este script devuelve el JSON. Importarlo por el nombre
+    viejo corrompía la salida y el extractor entero pasaba por ilegible.
+    El respaldo a `fitz` cubre las versiones anteriores a 1.24.3, que aún no
+    exponían el nombre nuevo.
+    """
+    try:
+        import pymupdf
+        return pymupdf
+    except ImportError:
+        pass
+    try:
+        import fitz
+        return fitz
+    except ImportError:
+        return None
+
+
+def comprobar() -> int:
+    """Modo diagnóstico (--check): confirma que el intérprete arranca y que
+    PyMuPDF se puede importar, sin necesidad de subir un PDF de prueba.
+
+    Existe porque las dos cosas que faltan en un despliegue nuevo (el runtime de
+    Python y la librería) solo se notaban a mitad de la ingesta, con el archivo
+    ya aceptado.
+    """
+    pymupdf = importar_pymupdf()
+    if pymupdf is None:
+        print(json.dumps({"error": "PyMuPDF no está instalado (pip install pymupdf)"}), file=sys.stderr)
+        return 3
+
+    # El atributo cambia de nombre entre versiones; ninguna es imprescindible.
+    version = getattr(pymupdf, "__version__", None) or getattr(pymupdf, "VersionBind", "") or "desconocida"
+    json.dump({"pymupdf": str(version).strip(), "python": sys.version.split()[0]}, sys.stdout)
+    return 0
+
+
 def main() -> int:
+    if "--check" in sys.argv[1:]:
+        return comprobar()
+
     datos = sys.stdin.buffer.read()
     if not datos:
         print(json.dumps({"error": "PDF vacío"}), file=sys.stderr)
         return 2
 
-    try:
-        import fitz  # PyMuPDF
-    except ImportError:
+    pymupdf = importar_pymupdf()
+    if pymupdf is None:
         print(json.dumps({"error": "PyMuPDF no está instalado (pip install pymupdf)"}), file=sys.stderr)
         return 3
 
     try:
-        doc = fitz.open(stream=datos, filetype="pdf")
+        doc = pymupdf.open(stream=datos, filetype="pdf")
     except Exception as e:  # PDF corrupto o cifrado
         print(json.dumps({"error": f"No se pudo abrir el PDF: {e}"}), file=sys.stderr)
         return 4

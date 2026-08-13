@@ -1,0 +1,14 @@
+# Dependencias Python del extractor de PDF (server/integrations/extract.py).
+#
+# Vive aquí y no en la raíz a propósito: en la raíz, Nixpacks detectaría el
+# proyecto como Python además de como Node y añadiría una segunda instalación
+# de dependencias que nadie ha pedido.
+#
+# Rango en vez de pin exacto: PyMuPDF publica ruedas binarias y las correcciones
+# de parche importan (son las que arreglan PDF que revientan el parser). El
+# límite superior evita entrar en una major sin revisarla.
+#
+# El mínimo es 1.24.3 porque es la primera versión que expone el módulo con su
+# nombre nuevo, `pymupdf`. El alias `fitz` escribe un aviso de obsolescencia en
+# stdout y ese es el canal del protocolo JSON del extractor.
+pymupdf>=1.24.3,<2.0

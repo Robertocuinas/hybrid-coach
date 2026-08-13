@@ -6,7 +6,8 @@ import { pool } from "../db/repositories/_helpers.js";
 import * as documentsRepo from "../db/repositories/documents.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/authorization.js";
-import { createStorageClient } from "../integrations/storage/r2.js";
+import { createStorageClient, missingStorageVars } from "../integrations/storage/r2.js";
+import { comprobarExtractor } from "../integrations/pdf-extractor.js";
 import { createEmbeddingProvider, createLLMProvider, createRerankProvider, readEmbeddingConfig, readRAGConfig, readRerankConfig } from "../ai/factory.js";
 import { ingerirPDF, IngestaError, MAX_BYTES } from "../ingestion/pipeline.js";
 import { recuperar } from "../rag/retrieval.js";
@@ -104,8 +105,27 @@ router.get("/documents/:id/pdf", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-router.get("/storage/estado", (_req, res) => {
-  res.json({ ok: true, r2: !!getStorage(), ia: !!getProvider(), embeddings: !!getEmbeddingProvider(), maxBytes: MAX_BYTES });
+/* Diagnóstico de la subida: las tres cosas que tienen que estar antes de que
+   un PDF entre en la biblioteca. Devuelve NOMBRES de variables que faltan y
+   motivos de fallo, nunca valores de secretos (CLAUDE.md §4.6). */
+router.get("/storage/estado", async (_req, res, next) => {
+  try {
+    const almacen = getStorage();
+    const [extractor, acceso] = await Promise.all([
+      comprobarExtractor(),
+      almacen ? almacen.comprobar() : null,
+    ]);
+    res.json({
+      ok: true,
+      r2: !!almacen,
+      r2Faltan: missingStorageVars(),
+      r2Acceso: acceso,
+      extractor,
+      ia: !!getProvider(),
+      embeddings: !!getEmbeddingProvider(),
+      maxBytes: MAX_BYTES,
+    });
+  } catch (error) { next(error); }
 });
 
 /* ============================================================

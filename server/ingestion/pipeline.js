@@ -16,6 +16,10 @@ export const MAX_BYTES = Number(process.env.PDF_MAX_BYTES || 50 * 1024 * 1024);
    por el Content-Type: los dos los controla quien sube (docs/08-seguridad.md §8). */
 export const esPDF = (buffer) => Buffer.isBuffer(buffer) && buffer.length > 4 && buffer.subarray(0, 5).toString("latin1") === "%PDF-";
 
+/* Códigos de salida de extract.py que significan "el problema está en este
+   PDF", no en la instalación: vacío, ilegible y protegido con contraseña. */
+const CODIGOS_DE_ARCHIVO = new Set([2, 4, 5]);
+
 export class IngestaError extends Error {
   constructor(status, message, extra = {}) {
     super(message);
@@ -43,7 +47,16 @@ export async function ingerirPDF(buffer, { db, storage, provider, embeddingProvi
   if (yaPorHash) throw new IngestaError(409, "Este PDF ya está en la biblioteca", { documento: yaPorHash, motivo: "hash" });
 
   // 2. Extracción y limpieza.
-  const extraido = await extraer(buffer);
+  let extraido;
+  try {
+    extraido = await extraer(buffer);
+  } catch (error) {
+    /* Culpa del archivo (corrupto, cifrado, vacío) o culpa del servidor (sin
+       intérprete de Python, sin PyMuPDF). Devolver 500 para ambos hacía que un
+       despliegue sin extractor pareciera un PDF malo. */
+    if (CODIGOS_DE_ARCHIVO.has(error.codigoExtractor)) throw new IngestaError(422, error.message);
+    throw new IngestaError(503, `Este servidor no puede extraer texto de PDF: ${error.message}`);
+  }
   if (!extraido.tieneCapaDeTexto) {
     throw new IngestaError(422, "El PDF no tiene capa de texto (parece escaneado). Este flujo no hace OCR: convierte el PDF a texto y vuelve a subirlo.");
   }

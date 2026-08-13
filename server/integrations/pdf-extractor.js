@@ -9,15 +9,42 @@
    El subproceso se lanza con execFile (sin shell) y recibe el PDF por stdin:
    nunca se escribe el archivo subido en disco. */
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(AQUI, "extract.py");
+const RAIZ = path.resolve(AQUI, "..", "..");
 const TIMEOUT_MS = Number(process.env.PDF_EXTRACT_TIMEOUT_MS || 120000);
 
-export const pythonBin = (env = process.env) =>
-  String(env.PYTHON_BIN || "").trim() || (process.platform === "win32" ? "python" : "python3");
+/* PyMuPDF no se instala en el Python del sistema sino en un entorno virtual del
+   propio proyecto (ver nixpacks.toml): es lo único que funciona igual en el
+   contenedor de Railway y en una máquina de desarrollo. Si ese entorno existe
+   se usa sin que haya que declarar PYTHON_BIN; la variable sigue mandando. */
+const VENV = [
+  path.join(RAIZ, ".venv", "bin", "python"),
+  path.join(RAIZ, ".venv", "Scripts", "python.exe"),
+];
+
+export const pythonBin = (env = process.env) => {
+  const declarado = String(env.PYTHON_BIN || "").trim();
+  if (declarado) return declarado;
+  return VENV.find((candidato) => existsSync(candidato))
+    || (process.platform === "win32" ? "python" : "python3");
+};
+
+/* El código de salida distingue "este servidor no puede extraer PDF" (falta el
+   intérprete o la librería) de "este PDF concreto no se puede leer". Sin él,
+   los dos casos llegan arriba como el mismo error genérico. */
+function errorExtractor(error, stderr, env) {
+  let detalle = String(stderr || error.message).trim();
+  try { detalle = JSON.parse(detalle).error || detalle; } catch { /* stderr no era JSON */ }
+  if (error.code === "ENOENT") detalle = `No se encontró el intérprete de Python (${pythonBin(env)}). Instálalo o define PYTHON_BIN.`;
+  const fallo = new Error(detalle);
+  fallo.codigoExtractor = error.code;
+  return fallo;
+}
 
 /* ---------- 1. Extracción ---------- */
 export function ejecutarExtractor(buffer, { env = process.env } = {}) {
@@ -27,16 +54,29 @@ export function ejecutarExtractor(buffer, { env = process.env } = {}) {
       maxBuffer: 64 * 1024 * 1024,
       windowsHide: true,
     }, (error, stdout, stderr) => {
-      if (error) {
-        let detalle = String(stderr || error.message).trim();
-        try { detalle = JSON.parse(detalle).error || detalle; } catch { /* stderr no era JSON */ }
-        if (error.code === "ENOENT") detalle = `No se encontró el intérprete de Python (${pythonBin(env)}). Instálalo o define PYTHON_BIN.`;
-        return reject(new Error(detalle));
-      }
+      if (error) return reject(errorExtractor(error, stderr, env));
       try { resolve(JSON.parse(stdout)); }
       catch { reject(new Error("El extractor devolvió una salida ilegible")); }
     });
     hijo.stdin.end(buffer);
+  });
+}
+
+/* Diagnóstico del panel de administración: dice si este servidor puede extraer
+   PDF ANTES de que nadie suba uno. Nunca lanza; el estado es el valor. */
+export function comprobarExtractor({ env = process.env } = {}) {
+  return new Promise((resolve) => {
+    const hijo = execFile(pythonBin(env), [SCRIPT, "--check"], {
+      timeout: 20000,
+      windowsHide: true,
+    }, (error, stdout, stderr) => {
+      if (error) return resolve({ ok: false, motivo: errorExtractor(error, stderr, env).message });
+      try {
+        const { pymupdf, python } = JSON.parse(stdout);
+        resolve({ ok: true, pymupdf, python });
+      } catch { resolve({ ok: false, motivo: "El extractor devolvió una salida ilegible" }); }
+    });
+    hijo.stdin.end();
   });
 }
 

@@ -6,22 +6,37 @@
    Sin credenciales configuradas el módulo queda deshabilitado y la ingesta lo
    detecta antes de procesar nada, en vez de fallar a mitad. */
 import { createHash } from "node:crypto";
-import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, HeadObjectCommand, HeadBucketCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
-export function readStorageConfig(env = process.env) {
-  const accountId = String(env.R2_ACCOUNT_ID || "").trim();
-  const accessKeyId = String(env.R2_ACCESS_KEY_ID || "").trim();
-  const secretAccessKey = String(env.R2_SECRET_ACCESS_KEY || "").trim();
-  const bucket = String(env.R2_BUCKET || "").trim();
-  const publicBaseURL = String(env.R2_PUBLIC_BASE_URL || "").trim();
+const limpio = (valor) => String(valor || "").trim();
+
+/* Qué falta exactamente, por NOMBRE de variable. Con un booleano suelto,
+   configurar tres de las cuatro se ve igual que no configurar ninguna y quien
+   administra no sabe qué corregir. Nunca se devuelven valores, solo nombres
+   (CLAUDE.md §4.6). */
+export function missingStorageVars(env = process.env) {
+  const faltan = [];
   /* El endpoint se puede forzar (pruebas contra un S3 local); si no, se deriva
      del identificador de cuenta como indica la documentación de R2. */
-  const endpoint = String(env.R2_ENDPOINT || "").trim()
-    || (accountId ? `https://${accountId}.r2.cloudflarestorage.com` : "");
+  if (!limpio(env.R2_ENDPOINT) && !limpio(env.R2_ACCOUNT_ID)) faltan.push("R2_ACCOUNT_ID");
+  if (!limpio(env.R2_ACCESS_KEY_ID)) faltan.push("R2_ACCESS_KEY_ID");
+  if (!limpio(env.R2_SECRET_ACCESS_KEY)) faltan.push("R2_SECRET_ACCESS_KEY");
+  if (!limpio(env.R2_BUCKET)) faltan.push("R2_BUCKET");
+  return faltan;
+}
 
-  if (!endpoint || !accessKeyId || !secretAccessKey || !bucket) return { enabled: false };
-  return { enabled: true, endpoint, accessKeyId, secretAccessKey, bucket, publicBaseURL };
+export function readStorageConfig(env = process.env) {
+  if (missingStorageVars(env).length) return { enabled: false };
+  const accountId = limpio(env.R2_ACCOUNT_ID);
+  return {
+    enabled: true,
+    endpoint: limpio(env.R2_ENDPOINT) || `https://${accountId}.r2.cloudflarestorage.com`,
+    accessKeyId: limpio(env.R2_ACCESS_KEY_ID),
+    secretAccessKey: limpio(env.R2_SECRET_ACCESS_KEY),
+    bucket: limpio(env.R2_BUCKET),
+    publicBaseURL: limpio(env.R2_PUBLIC_BASE_URL),
+  };
 }
 
 export const sha256 = (buffer) => createHash("sha256").update(buffer).digest("hex");
@@ -53,6 +68,26 @@ export function createStorageClient(env = process.env, { clientFactory, signer =
 
   return {
     bucket: config.bucket,
+
+    /* Tener las cuatro variables puestas no significa que sirvan: un token
+       caducado o un bucket que no existe dan credenciales "configuradas" y una
+       subida que revienta al final, después de haber pagado la extracción, el
+       LLM y los embeddings. Esto lo comprueba antes y por separado. */
+    async comprobar() {
+      try {
+        await client.send(new HeadBucketCommand({ Bucket: config.bucket }));
+        return { ok: true };
+      } catch (error) {
+        const estado = error?.$metadata?.httpStatusCode;
+        if (estado === 404 || error?.name === "NotFound") {
+          return { ok: false, motivo: `El bucket "${config.bucket}" no existe en esa cuenta de R2` };
+        }
+        if (estado === 401 || estado === 403) {
+          return { ok: false, motivo: "Las credenciales de R2 no dan acceso a ese bucket" };
+        }
+        return { ok: false, motivo: `No se pudo contactar con R2: ${error.message}` };
+      }
+    },
 
     async guardarPDF(buffer, hash) {
       const key = storageKeyForHash(hash);

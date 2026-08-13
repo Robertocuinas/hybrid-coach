@@ -2904,7 +2904,7 @@ function Razonamiento({ st, P, update, notify }) {
 const SECCION_ES = { abstract: "Resumen", introduction: "Introducción", methods: "Métodos", results: "Resultados", discussion: "Discusión", conclusion: "Conclusión", other: "Otras" };
 
 function PanelAdmin({ notify, onRevisar }) {
-  const [estado, setEstado] = useState(null);        // { r2, ia, maxBytes }
+  const [estado, setEstado] = useState(null);        // { r2, r2Faltan, r2Acceso, extractor, ia, embeddings, maxBytes }
   const [pendientes, setPendientes] = useState([]);
   const [subiendo, setSubiendo] = useState(false);
   const [ultima, setUltima] = useState(null);        // resultado de la última subida
@@ -2962,13 +2962,35 @@ function PanelAdmin({ notify, onRevisar }) {
     </div>))}
   </div>);
 
+  /* La subida necesita las dos mitades: el almacén del original Y el extractor
+     de texto. Antes solo se comprobaba la primera, así que un servidor sin
+     PyMuPDF dejaba subir el archivo para fallar a mitad del proceso. */
+  const almacenListo = estado && estado.r2 && (!estado.r2Acceso || estado.r2Acceso.ok);
+  const extractorListo = estado && (!estado.extractor || estado.extractor.ok);
+  const puedeSubir = almacenListo && extractorListo;
+
   return (<div>
     {estado && !estado.r2 && (<div className="card" style={{ borderColor: "var(--alert)" }}>
       <span className="tag alert">Almacenamiento sin configurar</span>
       <p className="sm" style={{ margin: "8px 0 0" }}>Faltan las credenciales de R2 en el servidor. Sin ellas no se puede subir ningún PDF, porque el original hay que conservarlo para poder reprocesar la biblioteca más adelante.</p>
+      {estado.r2Faltan && estado.r2Faltan.length > 0 && (
+        <p className="xs mono" style={{ margin: "8px 0 0" }}>Variables sin valor: {estado.r2Faltan.join(", ")}</p>
+      )}
     </div>)}
-    {estado && estado.r2 && !estado.ia && (<div className="card" style={{ borderColor: "var(--gym)" }}>
+    {estado && estado.r2 && estado.r2Acceso && !estado.r2Acceso.ok && (<div className="card" style={{ borderColor: "var(--alert)" }}>
+      <span className="tag alert">Almacenamiento inaccesible</span>
+      <p className="sm" style={{ margin: "8px 0 0" }}>Las variables de R2 están puestas, pero el bucket no responde: {estado.r2Acceso.motivo}</p>
+    </div>)}
+    {estado && estado.extractor && !estado.extractor.ok && (<div className="card" style={{ borderColor: "var(--alert)" }}>
+      <span className="tag alert">Extractor de PDF no disponible</span>
+      <p className="sm" style={{ margin: "8px 0 0" }}>El servidor no puede leer PDF: {estado.extractor.motivo}</p>
+      <p className="xs muted" style={{ margin: "6px 0 0" }}>La extracción corre en un subproceso de Python con PyMuPDF. Revisa <span className="mono">nixpacks.toml</span> en el despliegue.</p>
+    </div>)}
+    {puedeSubir && !estado.ia && (<div className="card" style={{ borderColor: "var(--gym)" }}>
       <p className="sm" style={{ margin: 0 }}>No hay proveedor de IA configurado: los PDF se trocearán igual, pero la ficha habrá que rellenarla a mano.</p>
+    </div>)}
+    {puedeSubir && !estado.embeddings && (<div className="card" style={{ borderColor: "var(--gym)" }}>
+      <p className="sm" style={{ margin: 0 }}>No hay proveedor de embeddings: el documento se guardará, pero no entrará en la memoria del coach hasta ejecutar <span className="mono xs">npm run embeddings:reindex</span>.</p>
     </div>)}
 
     <div className="card">
@@ -2976,7 +2998,7 @@ function PanelAdmin({ notify, onRevisar }) {
       <p className="xs muted" style={{ margin: "4px 0 10px" }}>
         PDF con capa de texto, hasta {estado ? Math.round(estado.maxBytes / 1024 / 1024) : 50} MB. Los escaneados sin texto se rechazan: este flujo no hace OCR.
       </p>
-      <input type="file" accept="application/pdf" disabled={subiendo || (estado && !estado.r2)}
+      <input type="file" accept="application/pdf" disabled={subiendo || (estado && !puedeSubir)}
         onChange={(e) => { subir(e.target.files[0]); e.target.value = ""; }} />
       {subiendo && <p className="sm" style={{ marginTop: 10 }}>Extrayendo texto, troceando y clasificando… puede tardar medio minuto.</p>}
       {error && <p className="xs" style={{ color: "var(--alert)", marginTop: 10 }}>{error}</p>}

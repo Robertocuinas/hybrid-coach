@@ -1,12 +1,27 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { createStorageClient, readStorageConfig, signedURLTTL, storageKeyForHash, sha256 } from "./r2.js";
+import { createStorageClient, missingStorageVars, readStorageConfig, signedURLTTL, storageKeyForHash, sha256 } from "./r2.js";
 
 test("sin credenciales el almacenamiento queda deshabilitado, no a medias", () => {
   assert.equal(readStorageConfig({}).enabled, false);
   assert.equal(createStorageClient({}), null);
   assert.equal(readStorageConfig({ R2_ACCOUNT_ID: "abc", R2_BUCKET: "papers" }).enabled, false, "faltan las claves");
+});
+
+test("se dice qué variable falta, por nombre y sin filtrar valores", () => {
+  assert.deepEqual(missingStorageVars({}), ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"]);
+  assert.deepEqual(
+    missingStorageVars({ R2_ACCOUNT_ID: "abc", R2_ACCESS_KEY_ID: "k", R2_BUCKET: "papers" }),
+    ["R2_SECRET_ACCESS_KEY"],
+  );
+  // Un endpoint forzado sustituye al identificador de cuenta: no falta nada.
+  assert.deepEqual(
+    missingStorageVars({ R2_ENDPOINT: "http://127.0.0.1:1", R2_ACCESS_KEY_ID: "k", R2_SECRET_ACCESS_KEY: "s", R2_BUCKET: "b" }),
+    [],
+  );
+  // Espacios en blanco no cuentan como valor: pegar mal una variable es común.
+  assert.deepEqual(missingStorageVars({ R2_ACCOUNT_ID: "abc", R2_ACCESS_KEY_ID: "  ", R2_SECRET_ACCESS_KEY: "s", R2_BUCKET: "b" }), ["R2_ACCESS_KEY_ID"]);
 });
 
 test("el endpoint se deriva del identificador de cuenta si no se fuerza", () => {
@@ -27,10 +42,12 @@ test("la clave del objeto sale del hash, nunca del nombre subido", () => {
 /* Servidor S3 mínimo en memoria: confirma que el SDK firma, enruta y sube el
    binario intacto. No sustituye a una prueba contra Cloudflare real, pero
    cubre todo lo que este módulo controla. */
-function servidorS3Falso() {
+function servidorS3Falso({ estadoBucket = 200 } = {}) {
   const objetos = new Map();
   const server = http.createServer((req, res) => {
     const key = decodeURIComponent(req.url.replace(/^\//, "").split("?")[0]);
+    /* HeadBucket: la ruta es el bucket y su barra final, sin clave detrás. */
+    if (req.method === "HEAD" && !key.replace(/\/$/, "").includes("/")) return res.writeHead(estadoBucket).end();
     if (req.method === "PUT") {
       const trozos = [];
       req.on("data", (t) => trozos.push(t));
@@ -74,6 +91,34 @@ test("guarda, comprueba y recupera el PDF contra un endpoint S3 real", async () 
 
   storage.cerrar();
   await new Promise((listo) => server.close(listo));
+});
+
+/* Credenciales presentes y credenciales que funcionan son cosas distintas: sin
+   esta comprobación un token caducado solo se descubre al final de la ingesta,
+   con la extracción y los embeddings ya pagados. */
+test("comprobar() distingue bucket accesible, inexistente y sin permiso", async () => {
+  const conBucket = async (estadoBucket) => {
+    const { server } = servidorS3Falso({ estadoBucket });
+    await new Promise((listo) => server.listen(0, "127.0.0.1", listo));
+    const storage = createStorageClient({
+      R2_ENDPOINT: `http://127.0.0.1:${server.address().port}`,
+      R2_ACCESS_KEY_ID: "clave", R2_SECRET_ACCESS_KEY: "secreto", R2_BUCKET: "papers",
+    });
+    const resultado = await storage.comprobar();
+    storage.cerrar();
+    await new Promise((listo) => server.close(listo));
+    return resultado;
+  };
+
+  assert.deepEqual(await conBucket(200), { ok: true });
+
+  const inexistente = await conBucket(404);
+  assert.equal(inexistente.ok, false);
+  assert.match(inexistente.motivo, /papers.*no existe/);
+
+  const prohibido = await conBucket(403);
+  assert.equal(prohibido.ok, false);
+  assert.match(prohibido.motivo, /no dan acceso/);
 });
 
 test("urlPublica solo existe si hay dominio propio configurado", () => {
