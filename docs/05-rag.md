@@ -83,6 +83,25 @@ Dos capas, ambas necesarias:
 - `hash_archivo` (SHA-256 del PDF): detecta el mismo archivo re-subido.
 - `doi` UNIQUE: detecta el mismo paper subido desde otro PDF (otra fuente, otra maquetación).
 
+### 2.4b De dónde salen los proveedores
+
+Las dos llamadas de IA de la ingesta tienen ámbitos distintos, y no es un detalle:
+
+- **La ficha (LLM) es por usuario.** `server/routes/admin.js` resuelve el proveedor con
+  `resolveUserLLMProvider(userId, { fallbackProvider })`: manda la clave que el admin haya
+  guardado en sus ajustes y, si no tiene, la del servidor. Cada ingesta es independiente,
+  así que no hay nada que homogeneizar.
+- **Los embeddings son de instancia.** Los vectores van a un índice compartido
+  (`embedding_index_state`, una sola fila con `active=true`) y solo son comparables entre sí
+  si salen del mismo modelo. Se resuelven en `server/ai/instance-embeddings.js`, que lee la
+  tabla `instance_embedding_settings` y cae a las variables `EMBEDDING_*` si no hay nada
+  guardado. La restricción `solo_una_fila` de la migración 0009 impide tener dos
+  configuraciones a la vez desde la propia base de datos.
+
+Cambiar el proveedor o el modelo de embeddings invalida los vectores existentes: el panel
+lo advierte al guardar y hay que ejecutar `npm run embeddings:reindex`. Anthropic no expone
+API de embeddings; las parejas válidas son `voyage`, `openai` y `openai-compatible`.
+
 ### 2.5 Revisión humana
 
 `revisado = true` sigue siendo la única condición para participar en el retrieval, pero no

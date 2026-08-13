@@ -4,12 +4,20 @@
 import express from "express";
 import { pool } from "../db/repositories/_helpers.js";
 import * as documentsRepo from "../db/repositories/documents.js";
-import { requireAuth } from "../middleware/auth.js";
+import { aiRateLimiter, requireAuth } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/authorization.js";
 import { createStorageClient, missingStorageVars } from "../integrations/storage/r2.js";
 import { comprobarExtractor } from "../integrations/pdf-extractor.js";
-import { createEmbeddingProvider, createLLMProvider, createRerankProvider, readEmbeddingConfig, readRAGConfig, readRerankConfig } from "../ai/factory.js";
+import { createLLMProvider, createRerankProvider, readRAGConfig, readRerankConfig } from "../ai/factory.js";
 import { resolveUserLLMProvider } from "../ai/user-provider.js";
+import {
+  EMBEDDING_PROVIDERS_UI, cifrarClaveEmbeddings, crearDesdeConfig, invalidarEmbeddingsDeInstancia,
+  publicEmbeddingSettings, resolveEmbeddingConfig, resolveEmbeddingProvider,
+} from "../ai/instance-embeddings.js";
+import {
+  deleteInstanceEmbeddingSettings, findInstanceEmbeddingSettings,
+  saveInstanceEmbeddingSettings, updateInstanceEmbeddingTest,
+} from "../db/repositories/embeddingSettings.js";
 import { ingerirPDF, IngestaError, MAX_BYTES } from "../ingestion/pipeline.js";
 import { recuperar } from "../rag/retrieval.js";
 
@@ -34,15 +42,8 @@ const getProvider = () => {
   }
   return provider;
 };
-let embeddingProvider = null;
-let embeddingProviderIniciado = false;
-const getEmbeddingProvider = () => {
-  if (!embeddingProviderIniciado) {
-    embeddingProvider = createEmbeddingProvider();
-    embeddingProviderIniciado = true;
-  }
-  return embeddingProvider;
-};
+/* Los embeddings NO se cachean aquí: su configuración vive en la base de datos
+   y puede cambiar sin reiniciar. El resolutor tiene su propia memoria corta. */
 
 /* El PDF llega como cuerpo binario en bruto, no como multipart: no hace falta
    una dependencia de parseo para subir UN archivo, y así no existe siquiera
@@ -72,7 +73,7 @@ router.post("/documents/upload", cuerpoPDF, async (req, res, next) => {
       db: pool,
       storage: getStorage(),
       provider: await resolveUserLLMProvider(req.auth.userId, { fallbackProvider: getProvider() }),
-      embeddingProvider: getEmbeddingProvider(),
+      embeddingProvider: await resolveEmbeddingProvider(),
       repo: documentsRepo,
       nombre: nombreSeguro(req),
       userId: req.auth.userId,
@@ -122,10 +123,11 @@ router.get("/storage/estado", async (req, res, next) => {
     /* `ia` responde a "¿tendría ficha un PDF que suba YO?", no a "¿hay
        LLM_PROVIDER?": si no, el panel avisaba de que no había IA a un admin
        que sí tiene su propia clave configurada. */
-    const [extractor, acceso, llm] = await Promise.all([
+    const [extractor, acceso, llm, embeddingConfig] = await Promise.all([
       comprobarExtractor(),
       almacen ? almacen.comprobar() : null,
       resolveUserLLMProvider(req.auth.userId, { fallbackProvider: getProvider() }),
+      resolveEmbeddingConfig(),
     ]);
     res.json({
       ok: true,
@@ -134,7 +136,7 @@ router.get("/storage/estado", async (req, res, next) => {
       r2Acceso: acceso,
       extractor,
       ia: !!llm,
-      embeddings: !!getEmbeddingProvider(),
+      embeddings: !!embeddingConfig.enabled,
       maxBytes: MAX_BYTES,
     });
   } catch (error) { next(error); }
@@ -171,7 +173,7 @@ router.post("/retrieval", async (req, res, next) => {
     const consulta = String(cuerpo.consulta || "").trim();
     if (!consulta) return res.status(400).json({ ok: false, message: "Falta la consulta" });
 
-    const embeddingConfig = readEmbeddingConfig();
+    const embeddingConfig = await resolveEmbeddingConfig();
     if (!embeddingConfig.enabled) {
       return res.status(503).json({ ok: false, message: "Los embeddings no están configurados: el retrieval solo tendría la mitad léxica." });
     }
@@ -184,7 +186,7 @@ router.post("/retrieval", async (req, res, next) => {
     const resultado = await recuperar(consulta, {
       db: pool,
       repo: documentsRepo,
-      embeddingProvider: getEmbeddingProvider(),
+      embeddingProvider: crearDesdeConfig(embeddingConfig),
       rerankProvider: getRerankProvider(),
       indice,
       config,
@@ -217,17 +219,115 @@ function sobrescrituras(cuerpo = {}) {
   return salida;
 }
 
-router.get("/retrieval/config", (_req, res) => {
-  /* Nunca se devuelve apiKey: los secretos no salen del proceso ni para un
-     admin (CLAUDE.md §4.6). Solo qué proveedor y qué modelo están en uso. */
-  const { provider, model, baseURL } = readRerankConfig();
-  const embeddings = readEmbeddingConfig();
-  res.json({
-    ok: true,
-    rag: readRAGConfig(),
-    rerank: { provider, model: model || null, baseURL: baseURL || null },
-    embeddings: embeddings.enabled ? { provider: embeddings.provider, model: embeddings.model, dimensions: embeddings.dimensions } : null,
-  });
+router.get("/retrieval/config", async (_req, res, next) => {
+  try {
+    /* Nunca se devuelve apiKey: los secretos no salen del proceso ni para un
+       admin (CLAUDE.md §4.6). Solo qué proveedor y qué modelo están en uso. */
+    const { provider, model, baseURL } = readRerankConfig();
+    const embeddings = await resolveEmbeddingConfig();
+    res.json({
+      ok: true,
+      rag: readRAGConfig(),
+      rerank: { provider, model: model || null, baseURL: baseURL || null },
+      embeddings: embeddings.enabled ? { provider: embeddings.provider, model: embeddings.model, dimensions: embeddings.dimensions } : null,
+    });
+  } catch (error) { next(error); }
+});
+
+/* ============================================================
+   EMBEDDINGS — configuración de instancia
+
+   Es un ajuste del SERVIDOR, no de la cuenta: los vectores de toda la
+   biblioteca tienen que salir del mismo modelo. Cambiar de modelo invalida el
+   índice existente y obliga a `npm run embeddings:reindex`, así que la
+   respuesta lo advierte en lugar de dejarlo a la memoria de quien lo toca.
+   ============================================================ */
+
+function validarAjustesEmbeddings({ provider, model, baseURL }) {
+  const proveedor = String(provider || "").trim().toLowerCase();
+  const modelo = String(model || "").trim();
+  const base = String(baseURL || "").trim();
+  if (!EMBEDDING_PROVIDERS_UI.includes(proveedor)) throw new Error("Proveedor de embeddings no válido");
+  if (!modelo || modelo.length > 200 || !/^[a-zA-Z0-9._:/-]+$/.test(modelo)) throw new Error("Nombre de modelo no válido");
+  return { provider: proveedor, model: modelo, baseURL: base };
+}
+
+const respuestaAjustes = async (res, extra = {}) => {
+  const [config, settings] = await Promise.all([resolveEmbeddingConfig(), findInstanceEmbeddingSettings(pool)]);
+  res.json({ ok: true, embeddings: publicEmbeddingSettings(config, settings), proveedores: EMBEDDING_PROVIDERS_UI, ...extra });
+};
+
+router.get("/embeddings/config", async (_req, res, next) => {
+  try { await respuestaAjustes(res); }
+  catch (error) { next(error); }
+});
+
+router.put("/embeddings/config", async (req, res, next) => {
+  try {
+    const draft = validarAjustesEmbeddings(req.body || {});
+    const anterior = await resolveEmbeddingConfig();
+    const existente = await findInstanceEmbeddingSettings(pool);
+    const apiKey = String(req.body?.apiKey || "").trim();
+
+    let apiKeyCiphertext = existente?.api_key_ciphertext ?? null;
+    if (apiKey) apiKeyCiphertext = cifrarClaveEmbeddings(apiKey);
+    else if (!existente || existente.provider !== draft.provider) {
+      /* openai-compatible admite servidores locales sin clave; el resto no. */
+      if (draft.provider !== "openai-compatible") {
+        return res.status(400).json({ ok: false, message: "Introduce una clave para el proveedor seleccionado" });
+      }
+      apiKeyCiphertext = null;
+    }
+
+    await saveInstanceEmbeddingSettings({ ...draft, apiKeyCiphertext, updatedBy: req.auth.userId }, pool);
+    invalidarEmbeddingsDeInstancia();
+
+    /* Si el modelo o el proveedor cambian, los vectores ya guardados dejan de
+       ser comparables con los nuevos: hay que reindexar antes de que el coach
+       vuelva a citar bien. */
+    const cambioDeIndice = anterior.enabled
+      && (anterior.provider !== draft.provider || anterior.model !== draft.model);
+    await respuestaAjustes(res, {
+      avisoReindexado: cambioDeIndice
+        ? `El índice existente se generó con ${anterior.provider}/${anterior.model}. Ejecuta npm run embeddings:reindex antes de confiar en las respuestas del coach.`
+        : null,
+    });
+  } catch (error) {
+    if (/Proveedor|modelo|clave|EMBEDDING_/i.test(error.message || "")) {
+      return res.status(400).json({ ok: false, message: error.message });
+    }
+    next(error);
+  }
+});
+
+router.post("/embeddings/config/test", aiRateLimiter, async (req, res, next) => {
+  try {
+    const config = await resolveEmbeddingConfig();
+    if (!config.enabled) return res.status(400).json({ ok: false, message: "No hay proveedor de embeddings configurado" });
+    const provider = crearDesdeConfig(config);
+    const { vectors } = await provider.embed(["prueba de conexión"], { inputType: "document" });
+    const dimensiones = vectors?.[0]?.length ?? 0;
+    if (dimensiones !== config.dimensions) {
+      throw new Error(`El modelo devolvió ${dimensiones} dimensiones y el proyecto exige ${config.dimensions}`);
+    }
+    if (config.origen === "instancia") await updateInstanceEmbeddingTest(true, pool).catch(() => {});
+    res.json({ ok: true, provider: config.provider, model: config.model, dimensions: dimensiones });
+  } catch (error) {
+    const config = await resolveEmbeddingConfig().catch(() => ({ origen: null }));
+    if (config.origen === "instancia") await updateInstanceEmbeddingTest(false, pool).catch(() => {});
+    if (error?.status || /dimensiones|EMBEDDING_/i.test(error.message || "")) {
+      return res.status(400).json({ ok: false, message: error.message });
+    }
+    next(error);
+  }
+});
+
+router.delete("/embeddings/config", async (_req, res, next) => {
+  try {
+    await deleteInstanceEmbeddingSettings(pool);
+    invalidarEmbeddingsDeInstancia();
+    await respuestaAjustes(res);
+  } catch (error) { next(error); }
 });
 
 export default router;

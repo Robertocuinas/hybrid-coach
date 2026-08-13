@@ -27,7 +27,8 @@ import aiSettingsRoutes from "./server/routes/ai-settings.js";
 import { startReconciliationJob } from "./server/jobs/reconciliation.js";
 import { aiRateLimiter, loginRateLimiter, registrationRateLimiter, requireAuth, uploadRateLimiter } from "./server/middleware/auth.js";
 import { requireTrustedOrigin, securityHeaders } from "./server/middleware/security.js";
-import { createEmbeddingProvider, createLLMProvider, createToolRouterProvider, readEmbeddingConfig } from "./server/ai/factory.js";
+import { createLLMProvider, createToolRouterProvider, readEmbeddingConfig } from "./server/ai/factory.js";
+import { resolveEmbeddingConfig } from "./server/ai/instance-embeddings.js";
 import { resolveUserLLMProvider } from "./server/ai/user-provider.js";
 import { getEmbeddingStatus, validateEmbeddingStartup } from "./server/embeddings/index-state.js";
 
@@ -47,10 +48,12 @@ if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
   throw new Error("SESSION_SECRET es obligatoria y debe tener al menos 32 caracteres.");
 }
 const llmProvider = createLLMProvider(process.env);
-const embeddingConfig = readEmbeddingConfig(process.env);
-const embeddingProvider = createEmbeddingProvider(process.env);
+/* La configuración de embeddings puede venir de la base de datos (ajuste de
+   instancia editable desde la aplicación) o del entorno. Se resuelve aquí para
+   que la validación de arranque compruebe la que se va a usar de verdad. */
+const embeddingConfig = await resolveEmbeddingConfig({ db: pool, env: process.env });
 const toolRouterProvider = createToolRouterProvider(process.env);
-if (embeddingConfig.enabled && !process.env.DATABASE_URL) {
+if (readEmbeddingConfig(process.env).enabled && !process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL es obligatoria cuando los embeddings están activados.");
 }
 await validateEmbeddingStartup(embeddingConfig, pool);
@@ -323,7 +326,7 @@ app.get("*", (_req, res) => res.sendFile(path.join(__dirname, "public", "index.h
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Hybrid Coach escuchando en el puerto ${PORT}`);
   console.log(`  IA:     ${llmProvider ? `${process.env.LLM_PROVIDER}/${process.env.LLM_MODEL}` : "sin proveedor (la app funciona igual)"}`);
-  console.log(`  Embed:  ${embeddingProvider ? `${embeddingConfig.provider}/${embeddingConfig.model} (${embeddingConfig.dimensions}d)` : "desactivados"}`);
+  console.log(`  Embed:  ${embeddingConfig.enabled ? `${embeddingConfig.provider}/${embeddingConfig.model} (${embeddingConfig.dimensions}d, ${embeddingConfig.origen})` : "desactivados"}`);
   console.log(`  Local:  ${toolRouterProvider ? "needle/tool-routing" : "desactivado"}`);
   console.log(`  Hoja:   ${APPS_SCRIPT_URL ? "vía Apps Script" : SHEET_ID && GOOGLE_SERVICE_ACCOUNT_JSON ? "vía cuenta de servicio" : "sin configurar"}`);
   console.log(`  Strava: ${STRAVA_CLIENT_ID ? "configurado" : "sin configurar"}`);

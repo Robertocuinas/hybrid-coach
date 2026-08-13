@@ -2903,6 +2903,131 @@ function Razonamiento({ st, P, update, notify }) {
    extracción y la ficha no se calculan en el navegador.                      */
 const SECCION_ES = { abstract: "Resumen", introduction: "Introducción", methods: "Métodos", results: "Resultados", discussion: "Discusión", conclusion: "Conclusión", other: "Otras" };
 
+/* Modelos que sabemos que pueden entregar los 1024 valores que exige el
+   esquema: voyage-3 los da de forma nativa y los de OpenAI aceptan el
+   parámetro `dimensions`. La lista es una ayuda, no una garantía: quien
+   valida de verdad es el botón «Probar», que compara la dimensión real. */
+const MODELOS_EMBEDDINGS = {
+  voyage: ["voyage-3"],
+  openai: ["text-embedding-3-small", "text-embedding-3-large"],
+  "openai-compatible": [],
+};
+
+function AjustesEmbeddings({ notify }) {
+  const [cfg, setCfg] = useState(null);
+  const [provider, setProvider] = useState("voyage");
+  const [model, setModel] = useState(MODELOS_EMBEDDINGS.voyage[0]);
+  const [baseURL, setBaseURL] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [resultado, setResultado] = useState(null);
+
+  const aplicar = (data) => {
+    setCfg(data.embeddings);
+    if (data.embeddings?.configured) {
+      setProvider(data.embeddings.provider);
+      setModel(data.embeddings.model);
+      setBaseURL(data.embeddings.baseURL || "");
+    }
+    setApiKey("");
+  };
+
+  const cargar = async () => {
+    try {
+      const r = await fetch("/api/admin/embeddings/config", { credentials: "same-origin" });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.message || "No se pudo leer la configuración de embeddings");
+      aplicar(data);
+    } catch (e) { notify(e.message); }
+  };
+  useEffect(() => { void cargar(); }, []);
+
+  const cambiarProveedor = (value) => {
+    setProvider(value);
+    setModel(MODELOS_EMBEDDINGS[value][0] || "");
+    setResultado(null);
+  };
+
+  const enviar = async (path, method) => {
+    setBusy(true); setResultado(null);
+    try {
+      const r = await fetch(path, {
+        method, credentials: "same-origin", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, model: model.trim(), baseURL: baseURL.trim(), ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}) }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.message || "No se pudo guardar");
+      if (path.endsWith("/test")) {
+        setResultado({ ok: true, message: `Conexión correcta con ${data.provider}/${data.model} · ${data.dimensions} dimensiones.` });
+      } else {
+        aplicar(data);
+        notify("Proveedor de embeddings guardado para todo el servidor.");
+        if (data.avisoReindexado) setResultado({ ok: false, message: data.avisoReindexado });
+      }
+    } catch (e) { setResultado({ ok: false, message: e.message }); }
+    finally { setBusy(false); }
+  };
+
+  const eliminar = async () => {
+    if (!window.confirm("¿Borrar la configuración guardada y volver a las variables de entorno?")) return;
+    setBusy(true); setResultado(null);
+    try {
+      const r = await fetch("/api/admin/embeddings/config", { method: "DELETE", credentials: "same-origin" });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.message || "No se pudo borrar");
+      aplicar(data);
+      notify("Configuración de embeddings borrada. Se usará la del entorno.");
+    } catch (e) { setResultado({ ok: false, message: e.message }); }
+    finally { setBusy(false); }
+  };
+
+  const guardadoEnBD = cfg?.origen === "instancia";
+  const puedeReusarClave = guardadoEnBD && cfg?.provider === provider;
+  const necesitaClave = provider !== "openai-compatible";
+  const canSubmit = !!model.trim() && (!!apiKey.trim() || puedeReusarClave || !necesitaClave);
+
+  return (<div className="card">
+    <div className="between"><h3>Embeddings de la biblioteca</h3>
+      <span className="tag">{cfg?.configured ? (guardadoEnBD ? "Guardado aquí" : "Desde el entorno") : "Sin configurar"}</span></div>
+    <p className="sm muted">Ajuste del servidor, no de tu cuenta: todos los fragmentos de la biblioteca deben vectorizarse con el mismo modelo o el coach dejará de encontrar la mitad. Anthropic no ofrece embeddings; usa Voyage u OpenAI.</p>
+
+    <label>PROVEEDOR</label>
+    <select value={provider} onChange={(e) => cambiarProveedor(e.target.value)} disabled={busy}>
+      <option value="voyage">Voyage AI</option>
+      <option value="openai">OpenAI</option>
+      <option value="openai-compatible">Compatible con OpenAI (servidor propio)</option>
+    </select>
+
+    <div style={{ height: 9 }} /><label>MODELO</label>
+    <input list={`emb-${provider}`} value={model} onChange={(e) => { setModel(e.target.value); setResultado(null); }}
+      placeholder={MODELOS_EMBEDDINGS[provider][0] || "nombre del modelo"} autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+    <datalist id={`emb-${provider}`}>{MODELOS_EMBEDDINGS[provider].map((m) => <option key={m} value={m} />)}</datalist>
+    <p className="xs muted" style={{ marginTop: 5 }}>Debe entregar exactamente 1024 dimensiones, que es lo que guarda la base de datos. «Probar» lo comprueba antes de que lo uses.</p>
+
+    {provider === "openai-compatible" && <>
+      <label>URL BASE</label>
+      <input value={baseURL} onChange={(e) => { setBaseURL(e.target.value); setResultado(null); }}
+        placeholder="http://localhost:11434/v1" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+    </>}
+
+    <label>CLAVE DE API</label>
+    <input type="password" value={apiKey} onChange={(e) => { setApiKey(e.target.value); setResultado(null); }}
+      placeholder={puedeReusarClave ? "Deja vacío para conservar la guardada" : necesitaClave ? "clave del proveedor" : "opcional en servidores locales"}
+      autoComplete="new-password" autoCapitalize="none" autoCorrect="off" spellCheck={false} />
+
+    <div className="row" style={{ marginTop: 9 }}>
+      <button className="btn sm ghost" style={{ flex: 1 }} onClick={() => enviar("/api/admin/embeddings/config/test", "POST")} disabled={busy || !cfg?.configured}>{busy ? "Probando…" : "Probar"}</button>
+      <button className="btn sm" style={{ flex: 1 }} onClick={() => enviar("/api/admin/embeddings/config", "PUT")} disabled={busy || !canSubmit}>Guardar</button>
+    </div>
+    {resultado && <p className="sm" style={{ color: resultado.ok ? "var(--ok)" : "var(--alert)", marginBottom: 0 }}>{resultado.message}</p>}
+    {cfg?.error && <p className="xs" style={{ color: "var(--alert)", margin: "6px 0 0" }}>La configuración guardada no se pudo usar y se ha caído al entorno: {cfg.error}</p>}
+    {guardadoEnBD && <>
+      <p className="xs muted" style={{ margin: "7px 0" }}>Activo: <span className="mono">{cfg.provider}/{cfg.model}</span>{cfg.lastTestedAt ? ` · última prueba ${cfg.lastTestOk ? "correcta" : "fallida"}` : ""}</p>
+      <button className="btn danger sm" style={{ width: "100%" }} onClick={eliminar} disabled={busy}>Borrar y volver al entorno</button>
+    </>}
+  </div>);
+}
+
 function PanelAdmin({ notify, onRevisar }) {
   const [estado, setEstado] = useState(null);        // { r2, r2Faltan, r2Acceso, extractor, ia, embeddings, maxBytes }
   const [pendientes, setPendientes] = useState([]);
@@ -2992,8 +3117,10 @@ function PanelAdmin({ notify, onRevisar }) {
       <p className="sm" style={{ margin: 0 }}>No hay proveedor de IA configurado: los PDF se trocearán igual, pero la ficha habrá que rellenarla a mano.</p>
     </div>)}
     {puedeSubir && !estado.embeddings && (<div className="card" style={{ borderColor: "var(--gym)" }}>
-      <p className="sm" style={{ margin: 0 }}>No hay proveedor de embeddings: el documento se guardará, pero no entrará en la memoria del coach hasta ejecutar <span className="mono xs">npm run embeddings:reindex</span>.</p>
+      <p className="sm" style={{ margin: 0 }}>No hay proveedor de embeddings: el documento se guardará y el coach podrá encontrarlo por texto, pero sin búsqueda semántica. Configúralo abajo y ejecuta <span className="mono xs">npm run embeddings:reindex</span> para vectorizar lo ya subido.</p>
     </div>)}
+
+    <AjustesEmbeddings notify={notify} />
 
     <div className="card">
       <h3>Subir un artículo</h3>

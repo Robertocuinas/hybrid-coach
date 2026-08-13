@@ -6,7 +6,8 @@ import { pool } from "../db/repositories/_helpers.js";
 import * as documentsRepo from "../db/repositories/documents.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireActiveProfile } from "../middleware/authorization.js";
-import { createEmbeddingProvider, createLLMProvider, createRerankProvider, createToolRouterProvider, readEmbeddingConfig, readRAGConfig } from "../ai/factory.js";
+import { createLLMProvider, createRerankProvider, createToolRouterProvider, readRAGConfig } from "../ai/factory.js";
+import { crearDesdeConfig, resolveEmbeddingConfig } from "../ai/instance-embeddings.js";
 import { responder } from "../domain/coach/chat.js";
 import { decisionesIA } from "../domain/coach/decisiones.js";
 import { listarDecisionesConCitas } from "../db/repositories/trainingPlans.js";
@@ -27,17 +28,18 @@ const perezoso = (fabrica) => {
   };
 };
 const getLLM = perezoso(() => createLLMProvider());
-const getEmbeddings = perezoso(() => createEmbeddingProvider());
 const getRerank = perezoso(() => createRerankProvider());
 const getToolRouter = perezoso(() => createToolRouterProvider());
 
 async function dependencias(userId) {
-  const embeddingConfig = readEmbeddingConfig();
+  /* El proveedor de embeddings no se cachea aquí: su configuración vive en la
+     base de datos y un admin puede cambiarla sin reiniciar el servidor. */
+  const embeddingConfig = await resolveEmbeddingConfig();
   return {
     db: pool,
     repo: documentsRepo,
     llmProvider: await resolveUserLLMProvider(userId, { fallbackProvider: getLLM() }),
-    embeddingProvider: getEmbeddings(),
+    embeddingProvider: embeddingConfig.enabled ? crearDesdeConfig(embeddingConfig) : null,
     rerankProvider: getRerank(),
     indice: embeddingConfig.enabled
       ? { provider: embeddingConfig.provider, model: embeddingConfig.model, dimensions: embeddingConfig.dimensions }
