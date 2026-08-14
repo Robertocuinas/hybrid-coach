@@ -49,7 +49,7 @@ const ESQUEMA = `
   CREATE TABLE weekly_plan_revisions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), training_week_id uuid,
     revision int, status text, week_start date, week_end date);
   CREATE TABLE weekly_plan_sessions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), weekly_plan_revision_id uuid,
-    fecha date, codigo_sesion text, modality text, session_type text, titulo text, duracion_min int,
+    fecha date, session_code text, modality text, session_type text, title text, duration_min int,
     intensity jsonb, priority text);
   CREATE TABLE plan_decisions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), training_plan_id uuid,
     titulo text, justificacion text, fuente text, confianza text, estado text DEFAULT 'pendiente',

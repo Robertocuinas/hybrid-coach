@@ -41,8 +41,8 @@ export async function cargarContexto(profileId, { db = pool, dias = VENTANA_DIAS
                  SELECT id FROM training_plans WHERE athlete_profile_id=$1 AND activo=true
                  ORDER BY generado_en DESC LIMIT 1
                ), accepted AS (
-                 SELECT wps.fecha,wps.codigo_sesion,wps.modality AS tipo,wps.session_type,
-                        wps.titulo,wps.duracion_min,wps.intensity,wps.priority
+                 SELECT wps.fecha,wps.session_code AS codigo_sesion,wps.modality AS tipo,wps.session_type,
+                        wps.title AS titulo,wps.duration_min AS duracion_min,wps.intensity,wps.priority
                    FROM training_weeks tw
                    JOIN active_plan ap ON ap.id=tw.training_plan_id
                    JOIN weekly_plan_revisions wpr ON wpr.training_week_id=tw.id AND wpr.status='accepted'
