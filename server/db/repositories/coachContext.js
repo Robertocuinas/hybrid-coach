@@ -15,7 +15,7 @@ export async function cargarContexto(profileId, { db = pool, dias = VENTANA_DIAS
   desde.setDate(desde.getDate() - dias);
   const desdeISO = desde.toISOString().slice(0, 10);
 
-  const [perfil, lesiones, plan, sesiones, checkins, recuperacion, cargas, nutricion] = await Promise.all([
+  const [perfil, lesiones, plan, disponibilidad, planificadas, sesiones, checkins, recuperacion, cargas, nutricion] = await Promise.all([
     unaFila(db, `SELECT nombre, edad, sexo, altura_cm, peso_kg, grasa_pct, distancia_objetivo, fecha_carrera,
                         meta_tipo, meta_tiempo, prioridades, exp_carrera, km_semana, sesiones_carrera,
                         tirada_larga_min, paron, exp_fuerza, tecnica, equipamiento, cargas, estructural,
@@ -30,6 +30,36 @@ export async function cargarContexto(profileId, { db = pool, dias = VENTANA_DIAS
                    FROM training_plans
                   WHERE athlete_profile_id = $1 AND activo = true
                   ORDER BY generado_en DESC LIMIT 1;`, [profileId]),
+
+    unaFila(db, `SELECT vigente_desde,dias,min_gym,min_run,min_finde
+                   FROM availability WHERE athlete_profile_id=$1
+                  ORDER BY vigente_desde DESC NULLS LAST,id DESC LIMIT 1;`, [profileId]),
+
+    /* Calendario real de ayer a los próximos siete días. Si existe una
+       revisión IA aceptada manda sobre los slots del plan maestro. */
+    filas(db, `WITH active_plan AS (
+                 SELECT id FROM training_plans WHERE athlete_profile_id=$1 AND activo=true
+                 ORDER BY generado_en DESC LIMIT 1
+               ), accepted AS (
+                 SELECT wps.fecha,wps.codigo_sesion,wps.modality AS tipo,wps.session_type,
+                        wps.titulo,wps.duracion_min,wps.intensity,wps.priority
+                   FROM training_weeks tw
+                   JOIN active_plan ap ON ap.id=tw.training_plan_id
+                   JOIN weekly_plan_revisions wpr ON wpr.training_week_id=tw.id AND wpr.status='accepted'
+                   JOIN weekly_plan_sessions wps ON wps.weekly_plan_revision_id=wpr.id
+                  WHERE wps.fecha BETWEEN ($2::date - 1) AND ($2::date + 7)
+               ), master AS (
+                 SELECT (tw.inicio + ps.dia_semana)::date AS fecha,ps.codigo_sesion,ps.tipo,
+                        NULL::text AS session_type,ps.codigo_sesion AS titulo,ps.duracion_min,
+                        jsonb_build_object('label',ps.intensidad) AS intensity,NULL::text AS priority
+                   FROM training_weeks tw
+                   JOIN active_plan ap ON ap.id=tw.training_plan_id
+                   JOIN planned_sessions ps ON ps.training_week_id=tw.id
+                  WHERE ps.dia_semana IS NOT NULL
+                    AND (tw.inicio + ps.dia_semana) BETWEEN ($2::date - 1) AND ($2::date + 7)
+                    AND NOT EXISTS (SELECT 1 FROM accepted)
+               )
+               SELECT * FROM accepted UNION ALL SELECT * FROM master ORDER BY fecha;`, [profileId, hoy.toISOString().slice(0, 10)]),
 
     /* Sesiones de la ventana, con el detalle de carrera. Se ordena descendente
        porque lo reciente es lo que más pesa al responder. */
@@ -70,11 +100,11 @@ export async function cargarContexto(profileId, { db = pool, dias = VENTANA_DIAS
   const decisiones = plan
     ? await filas(db, `SELECT titulo, justificacion, fuente, confianza
                          FROM plan_decisions
-                        WHERE training_plan_id = $1 AND estado <> 'rechazada'
+                        WHERE training_plan_id = $1 AND estado = 'aceptada'
                         ORDER BY created_at LIMIT 12;`, [plan.id])
     : [];
 
-  return { perfil, lesiones, plan, decisiones, sesiones, checkins, recuperacion, cargas, nutricion, ventanaDias: dias };
+  return { perfil, lesiones, plan, disponibilidad, planificadas, decisiones, sesiones, checkins, recuperacion, cargas, nutricion, ventanaDias: dias };
 }
 
 async function unaFila(db, sql, params) {

@@ -70,7 +70,14 @@ router.post("/chat", async (req, res, next) => {
     const deps = await dependencias(req.auth.userId);
     if (!deps.llmProvider) return res.status(503).json({ ok: false, message: "Este servidor no tiene proveedor de IA configurado" });
 
-    const salida = await responder(perfil(req), consulta, { ...deps, conversationId: req.body?.conversationId || null });
+    const salida = await responder(perfil(req), consulta, {
+      ...deps,
+      conversationId: req.body?.conversationId || null,
+      /* Contexto de la pantalla desde la que se abre el coach. Se filtra por
+         lista blanca en describirPantalla(): el cliente no puede inyectar
+         texto arbitrario en el prompt por esta vía. */
+      pantalla: req.body?.pantalla || null,
+    });
     res.json({ ok: true, ...salida });
   } catch (error) { next(error); }
 });
@@ -96,6 +103,21 @@ router.get("/decisiones", async (req, res, next) => {
     res.json({ ok: true, decisiones: await listarDecisionesConCitas(rows[0].id) });
   } catch (error) { next(error); }
 });
+
+async function decidirDecision(req, res, next, estado) {
+  try {
+    const { rows } = await pool.query(`UPDATE plan_decisions pd SET estado=$3
+      FROM training_plans tp
+      WHERE pd.id=$1 AND pd.training_plan_id=tp.id AND tp.athlete_profile_id=$2
+        AND pd.estado='pendiente'
+      RETURNING pd.*`, [req.params.id, perfil(req), estado]);
+    if (!rows[0]) return res.status(404).json({ ok: false, message: "Decisión pendiente no encontrada" });
+    res.json({ ok: true, decision: rows[0] });
+  } catch (error) { next(error); }
+}
+
+router.post("/decisiones/:id/accept", (req, res, next) => decidirDecision(req, res, next, "aceptada"));
+router.post("/decisiones/:id/reject", (req, res, next) => decidirDecision(req, res, next, "rechazada"));
 
 router.get("/conversations", async (req, res, next) => {
   try { res.json({ ok: true, conversations: await listConversationsByProfile(perfil(req)) }); }

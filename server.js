@@ -306,9 +306,14 @@ app.get("/api/strava/actividades", requireAuth, requireLegacyStravaEnabled, asyn
 });
 
 app.use((error, _req, res, _next) => {
-  const status = error.code === "23505" ? 409 : 500;
+  const requested = Number(error.status);
+  const status = error.code === "23505" ? 409
+    : Number.isInteger(requested) && requested >= 400 && requested < 600 ? requested
+      : 500;
   if (status === 500) console.error("Error interno de API:", error.name, error.code || "");
-  res.status(status).json({ ok: false, message: status === 409 ? "El registro ya existe" : "Error interno" });
+  const safeMessage = status < 500 && error.message ? error.message
+    : status === 409 ? "El registro ya existe" : "Error interno";
+  res.status(status).json({ ok: false, message: safeMessage, ...(error.publicCode ? { code: error.publicCode } : {}) });
 });
 
 /* ============================================================

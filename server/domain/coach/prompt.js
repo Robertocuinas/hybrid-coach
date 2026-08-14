@@ -82,7 +82,7 @@ TONO: español, directo, sin adornos. Nada de "es importante destacar". Frases c
 /* Instrucciones de respuesta del coach conversacional. Los avisos clínicos y
    el suelo calórico siguen siendo `if` en el código (CLAUDE.md §4.5): esto es
    solo el refuerzo en prompt, no el mecanismo. */
-export const REGLAS_COACH = `CÓMO RESPONDES
+const REGLAS_COACH_BASE = `CÓMO RESPONDES
 1. Consulta SIEMPRE los datos del bloque DATOS y menciona el dato concreto en el que te apoyas. Si falta el dato, dilo y pídelo.
 2. Distingue lo que tiene respaldo en el bloque EVIDENCIA de lo que es práctica habitual. Si algo no está demostrado, dilo con esas palabras.
 3. Cuando te apoyes en la evidencia, cita autor, año y página, así: "[Wilson 2012, pág. 4]".
@@ -91,6 +91,32 @@ export const REGLAS_COACH = `CÓMO RESPONDES
 6. Si propones un cambio concreto de planificación, termina con un bloque exactamente así:
 <<CAMBIO>>{"tipo":"mover|sustituir|reducir_volumen|reducir_intensidad|eliminar|descansar","dia":"jueves","de":"RUN B","a":"RUN C","motivo":"frase breve"}<<FIN>>
 Solo uno por mensaje y solo si es concreto y accionable.`;
+
+export const REGLAS_COACH = `${REGLAS_COACH_BASE}
+
+GROUNDING DE CAMBIOS DEL CALENDARIO
+- Una recomendación que mueva, reduzca, sustituya, elimine o aumente una sesión necesita evidencia aplicable. Si no la hay, no emitas <<CAMBIO>> y explica la limitación del corpus.
+- Al usar evidencia incluye siempre el id exacto junto a autor, año y página: [Autor año, pág. N; id:UUID]. Nunca inventes ni abrevies el id.
+- <<CAMBIO>> crea una propuesta pendiente. Nunca afirmes que el calendario ya se ha modificado.`;
+
+/* Acciones ejecutables. Se genera desde el catálogo para que añadir una acción
+   no obligue a acordarse de tocar el prompt (server/domain/coach/acciones.js).
+
+   El modelo NO ejecuta: propone. Quien valida es el servidor y quien ejecuta
+   es el cliente, con las mismas funciones que usa la interfaz. */
+export const reglasAcciones = (catalogo, hoy) => `ACCIONES QUE PUEDES PEDIR
+Hoy es ${hoy}. Cuando el atleta pida algo que la aplicación sabe hacer, termina el mensaje con un bloque:
+<<ACCION>>{"accion":"nombre","parametros":{…},"motivo":"una frase"}<<FIN>>
+
+Acciones disponibles:
+${catalogo}
+
+REGLAS DE LAS ACCIONES
+- Solo un bloque por mensaje, y solo si tienes TODOS los parámetros. Si te falta uno, pregúntalo en texto y no emitas bloque.
+- Las fechas van siempre en formato AAAA-MM-DD. Resuelve tú "hoy", "ayer" o "el jueves" a partir de la fecha de hoy.
+- No inventes datos que el atleta no haya dicho. Si dice "dormí poco" sin dar un número, pregunta cuántas horas.
+- Las de nivel "lectura" y "escritura" se aplican directamente; las de "confirmacion" se le muestran al atleta para que acepte o rechace. No prometas que algo ya está hecho: di lo que vas a hacer.
+- Si lo que te piden no está en la lista, respóndelo en texto y no fuerces una acción que no encaja.`;
 
 /* Reglas de distribución del planificador, conservadas literalmente: son las
    que explican al modelo por qué la semana está repartida como está. */

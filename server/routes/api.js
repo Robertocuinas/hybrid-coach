@@ -1,6 +1,6 @@
 import express from "express";
 import { pool } from "../db/repositories/_helpers.js";
-import { createProfile, listProfilesByUser, updateProfile, listActiveInjuries, addInjury } from "../db/repositories/athleteProfiles.js";
+import { createProfile, listProfilesByUser, updateProfile, listActiveInjuries, addInjury, getCurrentAvailability, setAvailability } from "../db/repositories/athleteProfiles.js";
 import { createPlanVersion, activarPlan, getActivePlan, listWeeksWithSessions } from "../db/repositories/trainingPlans.js";
 import { createCompletedSession, addRunningDetail, addStrengthSession, addStrengthSet, findOrCreateExercise, listRoutines, addRoutineEntry } from "../db/repositories/completedSessions.js";
 import { upsertRecoveryLog, listRecoveryByProfile, addFeedbackLog, listFeedbackByProfile } from "../db/repositories/recovery.js";
@@ -24,6 +24,21 @@ router.get("/profile", ...active(async (req, res, next) => { try { const { rows 
 router.patch("/profile", ...active(async (req, res, next) => { try { res.json({ ok: true, profile: await updateProfile(profileId(req), req.body || {}) }); } catch (e) { next(e); } }));
 router.get("/profile/injuries", ...active(async (req, res, next) => { try { res.json({ ok: true, injuries: await listActiveInjuries(profileId(req)) }); } catch (e) { next(e); } }));
 router.post("/profile/injuries", ...active(async (req, res, next) => { try { res.status(201).json({ ok: true, injury: await addInjury(profileId(req), req.body || {}) }); } catch (e) { next(e); } }));
+router.get("/profile/availability", ...active(async (req, res, next) => { try {
+  res.json({ ok: true, availability: await getCurrentAvailability(profileId(req)) });
+} catch (e) { next(e); } }));
+router.put("/profile/availability", ...active(async (req, res, next) => { try {
+  const input = req.body || {};
+  const days = Array.isArray(input.dias) ? [...new Set(input.dias.map(Number))].sort() : [];
+  if (!days.length || days.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) {
+    return res.status(400).json({ ok: false, message: "dias debe contener índices entre 0 y 6" });
+  }
+  const availability = await setAvailability(profileId(req), {
+    vigenteDesde: input.vigenteDesde || new Date().toISOString().slice(0, 10),
+    dias: days, minGym: input.minGym, minRun: input.minRun, minFinde: input.minFinde,
+  });
+  res.json({ ok: true, availability });
+} catch (e) { next(e); } }));
 
 const readActivePlan = async (req, res, next) => { try { const plan = await getActivePlan(profileId(req)); res.json({ ok: true, plan, weeks: plan ? await listWeeksWithSessions(plan.id) : [] }); } catch (e) { next(e); } };
 router.get("/plan", ...active(readActivePlan));

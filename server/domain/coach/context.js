@@ -13,7 +13,21 @@
    atleta con una afirmación de un paper. */
 import { cargarContexto } from "../../db/repositories/coachContext.js";
 import { recuperar } from "../../rag/retrieval.js";
-import { formatearEvidencia, REGLAS_COACH, REGLAS_DISTRIBUCION } from "./prompt.js";
+import { catalogoParaPrompt } from "./acciones.js";
+
+/* El planificador IA + RAG está en desarrollo. Mientras sus rutas no existan,
+   sus acciones NO se le ofrecen al modelo: prometer "te preparo la semana" y
+   fallar después es peor que decir desde el principio que aún no se puede.
+   Cuando se monte server/routes/planning.js, esto se activa solo. */
+let hayPlanificador = null;
+export async function planificadorDisponible() {
+  if (hayPlanificador === null) {
+    try { await import("../../routes/planning.js"); hayPlanificador = true; }
+    catch { hayPlanificador = false; }
+  }
+  return hayPlanificador;
+}
+import { formatearEvidencia, reglasAcciones, REGLAS_COACH, REGLAS_DISTRIBUCION } from "./prompt.js";
 
 const guion = (valor, sufijo = "") => (valor === null || valor === undefined || valor === "" ? null : `${valor}${sufijo}`);
 const listaOTexto = (lista, vacio) => (lista?.length ? lista.join("; ") : vacio);
@@ -29,10 +43,11 @@ export function describirLesiones(lesiones = []) {
    "me duele el gemelo" recupera poco; con la distancia objetivo y el historial
    de lesiones recupera lo que hace falta (docs/05-rag.md §6). */
 export function contextoParaRetrieval(datos) {
-  const { perfil, lesiones, plan } = datos;
+  const { perfil, lesiones, plan, planificadas } = datos;
+  const siguiente = (planificadas || []).find((session) => new Date(session.fecha) >= new Date());
   return {
     distanciaObjetivo: perfil?.distancia_objetivo || plan?.distancia_objetivo || null,
-    fase: plan ? `semana de ${plan.total_semanas}` : null,
+    fase: siguiente?.session_type || (plan ? `plan de ${plan.total_semanas} semanas` : null),
     lesiones: (lesiones || []).map((l) => ({ zona: l.zona, recurrente: l.recurrente })),
     molestias: (datos.checkins || [])
       .filter((c) => c.dolor >= 3 && c.zona_dolor)
@@ -43,9 +58,9 @@ export function contextoParaRetrieval(datos) {
 }
 
 function bloqueDatos(datos, hoy) {
-  const { perfil: p, plan, lesiones, sesiones, checkins, recuperacion, cargas, nutricion, decisiones } = datos;
+  const { perfil: p, plan, lesiones, disponibilidad, planificadas, sesiones, checkins, recuperacion, cargas, nutricion, decisiones } = datos;
 
-  const carreras = sesiones.filter((s) => s.tipo === "run" || s.codigo_sesion);
+  const carreras = sesiones.filter((s) => ["run", "running"].includes(s.tipo) || s.codigo_sesion);
   const lineaCarreras = carreras.length
     ? carreras.slice(0, 8).map((r) => `${fecha(r.fecha)} ${r.codigo_sesion || "carrera"} ${r.distancia_km ?? "?"}km/${r.duracion_min ?? "?"}min RPE${r.rpe ?? "?"} dolor${r.dolor ?? 0}${r.notas ? ` «${r.notas}»` : ""}`).join(" | ")
     : "sin registros";
@@ -62,12 +77,22 @@ function bloqueDatos(datos, hoy) {
     ? recuperacion.map((r) => `${fecha(r.fecha)} sueño${r.horas_sueno ?? "?"}h fatiga${r.fatiga ?? "?"}`).join(" | ")
     : "sin registros";
 
+  const lineaPlanificadas = planificadas?.length
+    ? planificadas.map((s) => `${fecha(s.fecha)} ${s.codigo_sesion || s.titulo || s.tipo}${s.duracion_min ? ` ${s.duracion_min}min` : ""}${s.priority ? ` prioridad ${s.priority}` : ""}`).join(" | ")
+    : "sin calendario diario persistido";
+
   const minUltimos7 = carreras
     .filter((r) => diasDesde(r.fecha, hoy) <= 7)
     .reduce((total, r) => total + (Number(r.duracion_min) || 0), 0);
 
+  const lineaDisponibilidad = disponibilidad
+    ? `Disponibilidad vigente: días ${(disponibilidad.dias || []).join(", ")}; gimnasio ${disponibilidad.min_gym ?? "?"}min; carrera ${disponibilidad.min_run ?? "?"}min; fin de semana ${disponibilidad.min_finde ?? "?"}min.`
+    : "Disponibilidad: sin registro canónico.";
+
   return [
     "DATOS DEL ATLETA",
+    `Calendario de ayer a +7 días: ${lineaPlanificadas}`,
+    lineaDisponibilidad,
     `${p.nombre || "Atleta"}, ${guion(p.edad, " años") || "edad no declarada"}, ${p.sexo || "sexo no declarado"}, ${guion(p.altura_cm, " cm") || "altura no declarada"}, ${guion(p.peso_kg, " kg") || "peso no declarado"}${p.grasa_pct ? `, ${p.grasa_pct}% de grasa` : ""}.`,
     `Objetivo: ${p.distancia_objetivo || "sin definir"} el ${fecha(p.fecha_carrera) || "sin fecha"} — ${p.meta_tipo || "sin meta declarada"}${p.meta_tiempo ? ` (${p.meta_tiempo})` : ""}.`,
     `Prioridades: ${(p.prioridades || []).join(" > ") || "sin declarar"}.`,
@@ -90,7 +115,7 @@ function bloqueDatos(datos, hoy) {
 
 function planificacion(plan, decisiones) {
   return [
-    "PLAN VIGENTE (lo ha calculado un motor determinista: no lo recalcules ni propongas cambiarlo)",
+    "PLAN MAESTRO VIGENTE (no cambies objetivo, fecha, fases ni límites; los ajustes tácticos semanales solo se proponen y requieren confirmación)",
     `${plan.total_semanas ?? "?"} semanas · ${plan.run_dias ?? "?"} carreras y ${plan.gym_dias ?? "?"} sesiones de gimnasio por semana · tirada larga máxima ${plan.techo_tirada_larga_min ?? "?"} min · taper de ${plan.taper_semanas ?? "?"} semana(s).`,
     `Riesgo estructural: ${plan.riesgo_score ?? "?"}/10${Array.isArray(plan.riesgo_causas) && plan.riesgo_causas.length ? ` (${plan.riesgo_causas.join("; ")})` : ""}.`,
     decisiones.length
@@ -118,10 +143,29 @@ const diasDesde = (valor, hoy) => {
  *
  * @returns { system, chunks, hayEvidencia, retrieval, datos }
  */
+/* Traduce el contexto de pantalla que envía el cliente a una línea de texto.
+   Lista blanca estricta: lo que no esté aquí no viaja al prompt, para que
+   ampliar la interfaz no filtre datos nuevos sin querer (§12 del encargo). */
+export function describirPantalla(pantalla = {}) {
+  const partes = [];
+  const vista = String(pantalla.vista || "").slice(0, 30);
+  if (vista) partes.push(`Pantalla: ${vista}`);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(pantalla.fecha || ""))) partes.push(`Día que está mirando: ${pantalla.fecha}`);
+  const sesion = String(pantalla.sesion || "").slice(0, 20);
+  if (sesion) partes.push(`Sesión en pantalla: ${sesion}`);
+  const semana = Number.parseInt(pantalla.semana, 10);
+  if (Number.isInteger(semana) && semana > 0 && semana < 100) partes.push(`Semana: ${semana}`);
+  return partes.length
+    ? `${partes.join(" · ")}
+Si dice "esto", "este entrenamiento" o "hoy" sin más contexto, se refiere a lo anterior.`
+    : "(sin contexto de pantalla)";
+}
+
 export async function buildContext(profileId, consulta, deps) {
-  const { db, repo, embeddingProvider, rerankProvider, indice, config, hoy = new Date() } = deps;
+  const { db, repo, embeddingProvider, rerankProvider, indice, config, hoy = new Date(), pantalla = null } = deps;
   const datos = await cargarContexto(profileId, { db, hoy });
   if (!datos.perfil) throw new Error("El perfil no existe o no tiene datos");
+  const planificador = await planificadorDisponible();
 
   const retrieval = await recuperar(consulta || "", {
     db, repo, embeddingProvider, rerankProvider, indice, config,
@@ -144,6 +188,12 @@ export async function buildContext(profileId, consulta, deps) {
     evidencia,
     "",
     REGLAS_COACH,
+    "",
+    reglasAcciones(catalogoParaPrompt({ planificador }), new Date(hoy).toISOString().slice(0, 10)),
+    /* Contexto de la pantalla desde la que se abre el coach: permite que
+       "¿puedo hacer esto mañana?" se refiera a lo que el atleta está mirando
+       sin que tenga que describirlo. Solo lo mínimo, nunca la página entera. */
+    ...(pantalla ? ["", "DÓNDE ESTÁ EL ATLETA AHORA MISMO", describirPantalla(pantalla)] : []),
   ].join("\n");
 
   return { system, chunks: retrieval.chunks, hayEvidencia: retrieval.hayEvidencia, retrieval, datos };

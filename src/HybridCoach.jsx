@@ -8,6 +8,9 @@ import {
 } from "./agenda.js";
 import { BIBLIO_SEED } from "./data/biblioSeed.js";
 import { documentoDesdeAPI, documentoParaAPI } from "./data/documentAdapter.js";
+import {
+  acceptPlanningProposal, createWeekProposal, formatPlanningIntensity, normalizeProposal, proposalSessionsToAssignments, rejectPlanningProposal,
+} from "./planningApi.js";
 
 /* ============================================================
    HYBRID COACH v2 — multiperfil · plan generado · base de evidencia
@@ -625,13 +628,32 @@ function NavFecha({ fecha, onCambio, hoy, P, conTira = true }) {
 
 function sessionDetail(plan, perfil, w, code, P) {
   const sp = semanaPlan(plan, w);
-  if (code === "RECOVERY") return { titulo: "Recuperación sin impacto", dur: 28, desc: "25-30′ de bici, elíptica o natación a RPE 3. O descanso completo si la fatiga es alta." };
-  if (sp.runs[code]) {
+  let base;
+  if (code === "RECOVERY") base = { titulo: "Recuperación sin impacto", dur: 28, desc: "25-30′ de bici, elíptica o natación a RPE 3. O descanso completo si la fatiga es alta." };
+  else if (sp.runs[code]) {
     const nombres = { "RUN A": sp.w === plan.totalSemanas ? "COMPETICIÓN" : "Tirada larga", "RUN B": "Rodaje medio", "RUN C": "Rodaje corto fácil", "RUN D": "Rodaje regenerativo" };
-    return { titulo: nombres[code] || code, dur: sp.runs[code].t, desc: sp.runs[code].d };
+    base = { titulo: nombres[code] || code, dur: sp.runs[code].t, desc: sp.runs[code].d };
+  } else {
+    const g = gymSession(plan, perfil, w, code, P);
+    base = { titulo: g.foco, dur: g.dur, desc: g.mod + ". " + g.ej.length + " ejercicios." };
   }
-  const g = gymSession(plan, perfil, w, code, P);
-  return { titulo: g.foco, dur: g.dur, desc: g.mod + ". " + g.ej.length + " ejercicios." };
+  /* Durante el dual-write la agenda conserva day/code, pero el detalle aceptado
+     por IA vive junto a la semana. Así Hoy, Entrenar y Nutrición no vuelven a
+     enseñar la prescripción maestra anterior después de aceptar la propuesta. */
+  const accepted = P?.weeks?.[w]?.source === "ai-rag"
+    ? (P.weeks[w].sessions || []).find((session) => {
+        try { return proposalSessionsToAssignments([session], sp.inicio)[0].code === String(code); }
+        catch { return false; }
+      })
+    : null;
+  if (!accepted) return base;
+  const duration = Number(accepted.duration ?? accepted.durationMinutes ?? accepted.durationMin ?? accepted.duration_min);
+  const description = [accepted.objective || accepted.objetivo, formatPlanningIntensity(accepted.intensity || accepted.intensidad), accepted.reason || accepted.motivo || accepted.publicReason || accepted.public_reason].filter(Boolean).join(" · ");
+  return {
+    titulo: accepted.title || accepted.titulo || base.titulo,
+    dur: Number.isFinite(duration) ? duration : base.dur,
+    desc: description || base.desc,
+  };
 }
 
 function gymSession(plan, perfil, w, code, P) {
@@ -1763,31 +1785,87 @@ function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia }
   const [gym, setGym] = useState(true), [correr, setCorrer] = useState(true);
   const [dolor, setDolor] = useState(0), [fatiga, setFatiga] = useState(3);
   const [draft, setDraft] = useState(null);
+  const [planningBusy, setPlanningBusy] = useState("");
+  const [planningError, setPlanningError] = useState("");
   /* Con una semana ya activa el panel de disponibilidad arranca cerrado: lo que
      importa al entrar es ver qué toca, no volver a configurarla (§2). */
   const [reconfig, setReconfig] = useState(!yaProgramada);
   useEffect(() => {
     const s = P.weeks[w];
     setSel(s ? s.assign.map((a) => a.day) : (perfil.dias || [0, 1, 3, 4, 6]));
-    setDraft(null); setReconfig(!s?.assign?.length);
+    setDraft(null); setPlanningError(""); setPlanningBusy(""); setReconfig(!s?.assign?.length);
   }, [w]);
 
-  const gen = () => { if (!sel.length) return notify("Marca al menos un día disponible.");
-    setDraft(generateWeek(plan, perfil, w, [...sel].sort((a, b) => a - b), { gym, correr, dolor, fatiga })); };
-  const accept = () => {
+  const gen = async () => {
+    if (!sel.length) return notify("Marca al menos un día disponible.");
+    setPlanningBusy("generate"); setPlanningError(""); setDraft(null);
+    try {
+      const proposal = await createWeekProposal(w, {
+        availabilityDays: [...sel].sort((a, b) => a - b), gym, correr, dolor, fatiga,
+      });
+      const spActual = semanaPlan(plan, w);
+      const assign = proposalSessionsToAssignments(proposal.sessions, spActual.inicio);
+      if (!assign.length) throw new Error("El planificador no devolvió ninguna sesión compatible.");
+      setDraft({ source: "server", proposal, assign, notes: [], violations: proposal.warnings || [] });
+    } catch (error) {
+      setPlanningError(error.message || "No se pudo generar la propuesta basada en evidencia.");
+    } finally { setPlanningBusy(""); }
+  };
+  const baseline = () => {
+    if (!sel.length) return notify("Marca al menos un día disponible.");
+    const generated = generateWeek(plan, perfil, w, [...sel].sort((a, b) => a - b), { gym, correr, dolor, fatiga });
+    setDraft({ ...generated, source: "baseline", proposal: null });
+    setPlanningError("");
+  };
+  const accept = async () => {
     /* Sustituir una programación ya aceptada se confirma: puede haber sesiones
        registradas contra ella y el reparto cambia (§2). */
     if (yaProgramada && !window.confirm(`La semana ${w} ya tiene una programación activa. ¿Sustituirla por esta nueva?`)) return;
+    setPlanningBusy("accept"); setPlanningError("");
+    try {
+      if (draft.source === "server") await acceptPlanningProposal(draft.proposal.id, draft.proposal.revisionNumber);
+    } catch (error) {
+      setPlanningError(error.message || "No se pudo aceptar la propuesta en el servidor. El plan activo no ha cambiado.");
+      setPlanningBusy("");
+      return;
+    }
     update((s) => { const p = s.perfiles[P.id];
-      p.weeks[w] = { assign: draft.assign, done: p.weeks[w]?.done || [], notes: draft.notes, generated: today };
-      p.changes.push({ fecha: today, semana: w, plan_original: "—", cambio: "Semana generada: " + draft.assign.map((a) => DSHORT[a.day] + "=" + a.code).join(" "), motivo: "Días disponibles " + sel.map((d) => DSHORT[d]).join(""), datos: "dolor " + dolor + "/10, fatiga " + fatiga + "/10" });
+      p.weeks[w] = {
+        assign: draft.assign, done: p.weeks[w]?.done || [], notes: draft.notes || [], generated: today,
+        source: draft.source === "server" ? "ai-rag" : "deterministic-baseline",
+        proposalId: draft.proposal?.id || null, summary: draft.proposal?.summary || null,
+        evidenceState: draft.proposal?.evidenceState || "none",
+        warnings: draft.proposal?.warnings || draft.violations || [],
+        citations: draft.proposal?.citations || [], sessions: draft.proposal?.sessions || null,
+      };
+      p.changes.push({ fecha: today, semana: w, plan_original: "—", cambio: "Semana generada: " + draft.assign.map((a) => DSHORT[a.day] + "=" + a.code).join(" "), motivo: draft.source === "server" ? "Propuesta IA grounded en RAG aceptada" : "Fallback determinista aceptado", datos: "dolor " + dolor + "/10, fatiga " + fatiga + "/10" });
       return s; });
-    notify(yaProgramada ? "✓ Semana " + w + " reorganizada." : "✓ Semana " + w + " guardada.");
+    notify(draft.source === "server" ? "✓ Propuesta aceptada y semana activada." : "✓ Plan base determinista activado.");
+    setPlanningBusy("");
     setDraft(null); setReconfig(false); if (w === curW) setTab("hoy");
+  };
+  const rejectDraft = async () => {
+    if (!draft) return;
+    setPlanningBusy("reject"); setPlanningError("");
+    try {
+      if (draft.source === "server") await rejectPlanningProposal(draft.proposal.id, draft.proposal.revisionNumber);
+      setDraft(null);
+      notify(draft.source === "server" ? "Propuesta rechazada." : "Plan base descartado.");
+    } catch (error) {
+      setPlanningError(error.message || "No se pudo rechazar la propuesta.");
+    } finally { setPlanningBusy(""); }
   };
   const shown = draft ? draft.assign : (saved?.assign || []);
   const sp = semanaPlan(plan, w);
   const hechas = shown.filter((a) => (saved?.done || []).includes(a.code)).length;
+  const proposalByDay = {};
+  const detailedSessions = draft?.source === "server" ? draft.proposal.sessions
+    : (!draft && saved?.source === "ai-rag" ? (saved.sessions || []) : []);
+  detailedSessions.forEach((session) => {
+    const assignment = proposalSessionsToAssignments([session], sp.inicio)[0];
+    proposalByDay[assignment.day] = session;
+  });
+  const warningText = (value) => typeof value === "string" ? value : value?.message || value?.text || JSON.stringify(value);
 
   return (<div>
     <div className="row" style={{ margin: "10px 0 4px" }}>
@@ -1805,16 +1883,19 @@ function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia }
         <span className="tag ok">Programación activa</span>
         <span className="xs muted mono">{hechas}/{shown.length} completados</span>
       </div>
+      <p className="xs" style={{ margin: "8px 0 0", color: saved.source === "ai-rag" ? "var(--evid)" : "var(--mut)" }}>
+        {saved.source === "ai-rag" ? "Planificación IA + RAG aceptada" : saved.source === "deterministic-baseline" ? "Plan base determinista aceptado" : "Planificación anterior"}
+      </p>
       <div className="prog" style={{ marginTop: 9 }}><span style={{ width: (shown.length ? (hechas / shown.length) * 100 : 0) + "%" }} /></div>
       <p className="xs muted" style={{ margin: "9px 0 0" }}>Generada el {saved.generated || "—"}. Si te cambia la disponibilidad, puedes reorganizarla.</p>
       <div style={{ height: 10 }} />
       <button className="btn ghost sm" style={{ width: "100%" }} onClick={() => setReconfig(true)}>Volver a generar semana</button>
     </div>)}
 
-    {(reconfig || !yaProgramada) && (<div className="card">
+    {(reconfig || !yaProgramada) && (<div className="card" aria-busy={planningBusy === "generate"}>
       <div className="between">
         <h3>Días que puedo entrenar</h3>
-        {yaProgramada && <button className="btn ghost sm" onClick={() => { setReconfig(false); setDraft(null); }}>Cancelar</button>}
+        {yaProgramada && <button className="btn ghost sm" onClick={() => { setReconfig(false); setDraft(null); setPlanningError(""); }}>Cancelar</button>}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 7, marginTop: 9 }}>
         {DSHORT.map((d, i) => <button key={i} className={"chip" + (sel.includes(i) ? " on" : "")} onClick={() => setSel(sel.includes(i) ? sel.filter((x) => x !== i) : [...sel, i])}>{d}</button>)}
@@ -1830,7 +1911,18 @@ function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia }
       <label style={{ marginTop: 6 }}>Fatiga general: <span className="mono">{fatiga}/10</span></label>
       <input type="range" min="1" max="10" value={fatiga} onChange={(e) => setFatiga(+e.target.value)} />
       <div style={{ height: 12 }} />
-      <button className="btn primary" onClick={gen}>{yaProgramada ? "Reorganizar semana" : "Generar mi semana"}</button>
+      <button className="btn primary" onClick={gen} disabled={!!planningBusy} aria-busy={planningBusy === "generate"}>{planningBusy === "generate" ? "Consultando datos y evidencia…" : yaProgramada ? "Proponer nueva semana con IA + RAG" : "Generar con IA + RAG"}</button>
+      <p className="xs muted" style={{ margin: "8px 0 0" }}>El servidor consulta tu contexto y la bibliografía antes de proponer. Nada cambia hasta que aceptes.</p>
+    </div>)}
+
+    {planningError && !draft && (<div className="card" role="alert" aria-live="assertive" style={{ borderColor: "var(--alert)" }}>
+      <span className="tag alert">Planificador no disponible</span>
+      <p className="sm" style={{ margin: "8px 0 0" }}>{planningError}</p>
+      <p className="xs muted">{yaProgramada ? "La semana aceptada sigue intacta." : "No se ha activado ninguna semana inventada."} Puedes reintentar o usar expresamente el motor de reglas anterior.</p>
+      <div className="row" style={{ marginTop: 9 }}>
+        <button className="btn primary sm" style={{ flex: 1 }} onClick={gen} disabled={!!planningBusy}>Reintentar IA + RAG</button>
+        <button className="btn ghost sm" style={{ flex: 1 }} onClick={baseline} disabled={!!planningBusy}>Usar plan base determinista</button>
+      </div>
     </div>)}
 
     {shown.length === 0 && !reconfig && (<div className="card vacio">
@@ -1839,17 +1931,34 @@ function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia }
       <button className="btn primary" onClick={() => setReconfig(true)}>Generar mi semana</button>
     </div>)}
 
-    {shown.length > 0 && (<div className="card">
-      <div className="between"><h3>{draft ? "Propuesta" : "Semana guardada"}</h3>{draft && <span className="tag gym">Sin guardar</span>}</div>
-      <Strip assign={shown.map((a) => ({ ...a, dur: sessionDetail(plan, perfil, w, a.code, P).dur }))} todayIdx={w === curW && !wk.fuera ? wk.dayIdx : -1} />
+    {shown.length > 0 && (<div className="card" aria-live={draft ? "polite" : undefined} aria-busy={planningBusy === "accept" || planningBusy === "reject"}>
+      <div className="between"><h3>{draft ? "Propuesta" : "Semana guardada"}</h3>{draft && <span className={"tag " + (draft.source === "server" ? "evid" : "gym")}>{draft.source === "server" ? "IA + RAG · sin aceptar" : "Base determinista · sin aceptar"}</span>}</div>
+      {draft?.source === "server" && (<div className="card flat" style={{ marginTop: 8 }}>
+        <p className="sm" style={{ margin: 0 }}>{draft.proposal.summary}</p>
+        <p className="xs muted" style={{ margin: "7px 0 0" }}>Estado de evidencia: <span className="mono">{draft.proposal.evidenceState}</span></p>
+      </div>)}
+      {draft?.source === "baseline" && <p className="xs" style={{ color: "var(--gym)" }}>Fallback reproducible del motor anterior. No utiliza IA ni bibliografía recuperada y no se presenta como basado en evidencia.</p>}
+      <Strip assign={shown.map((a) => {
+        const serverSession = proposalByDay[a.day];
+        let dur = +(serverSession?.duration ?? serverSession?.durationMinutes ?? serverSession?.durationMin ?? serverSession?.duration_min) || 0;
+        if (!dur) { try { dur = sessionDetail(plan, perfil, w, a.code, P).dur; } catch { dur = 25; } }
+        return { ...a, dur };
+      })} todayIdx={w === curW && !wk.fuera ? wk.dayIdx : -1} />
       {DAYS.map((d, i) => { const s = shown.find((a) => a.day === i);
+        const proposed = proposalByDay[i];
         const fecha = addDays(sp.inicio, i);
         const est = draft ? "pendiente" : estadoDia(P, fecha, today);
         return (<div className="day" key={i}><div className="dcol eyebrow" style={{ paddingTop: 3 }}>{d.slice(0, 3)}</div>
           <div style={{ flex: 1 }}>
             <div className="between" style={{ alignItems: "flex-start" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                {s ? <SessionCard P={P} plan={plan} perfil={perfil} code={s.code} w={w} /> : <span className="muted sm">Descanso</span>}
+                {s ? proposed ? (<div>
+                  <div className="row" style={{ marginBottom: 6 }}><span className={"tag " + colorOf(s.code)}>{s.code}</span><strong className="disp" style={{ fontSize: 19 }}>{proposed.title || proposed.titulo || s.code}</strong>
+                    {(proposed.duration || proposed.durationMinutes || proposed.durationMin || proposed.duration_min) && <span className="mono muted sm" style={{ marginLeft: "auto" }}>{proposed.duration || proposed.durationMinutes || proposed.durationMin || proposed.duration_min}′</span>}</div>
+                  {(proposed.intensity || proposed.intensidad) && <p className="xs mono" style={{ color: "var(--evid)", margin: "3px 0" }}>Intensidad: {formatPlanningIntensity(proposed.intensity || proposed.intensidad)}</p>}
+                  {(proposed.objective || proposed.objetivo) && <p className="sm" style={{ margin: "4px 0" }}>{proposed.objective || proposed.objetivo}</p>}
+                  {(proposed.reason || proposed.motivo || proposed.publicReason || proposed.public_reason) && <p className="xs muted" style={{ margin: "4px 0 0" }}>Motivo: {proposed.reason || proposed.motivo || proposed.publicReason || proposed.public_reason}</p>}
+                </div>) : <SessionCard P={P} plan={plan} perfil={perfil} code={s.code} w={w} /> : <span className="muted sm">Descanso</span>}
               </div>
               {/* El estado va aquí y no en un icono suelto: leer la semana de un
                   vistazo es lo que §2 pide como acción principal. */}
@@ -1861,16 +1970,25 @@ function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia }
           </div></div>); })}
       {draft && (<>
         <hr /><h3>Por qué así</h3>
-        <ul className="sm" style={{ paddingLeft: 18, margin: "8px 0 0" }}>
+        {draft.source === "server" ? <p className="sm" style={{ margin: "8px 0 0" }}>{draft.proposal.summary}</p> : (<ul className="sm" style={{ paddingLeft: 18, margin: "8px 0 0" }}>
           {draft.notes.length ? draft.notes.map((n, i) => <li key={i} style={{ marginBottom: 5 }}>{n}</li>)
-            : <li>Reparto estándar: la sesión larga cae en fin de semana, la pierna pesada queda a ≥48 h de ella y no hay dos sesiones de gimnasio seguidas.</li>}
-        </ul>
+            : <li>Reparto estándar del motor determinista anterior.</li>}
+        </ul>)}
         {draft.violations.length > 0 && (<div style={{ marginTop: 10, border: "1px solid #7A3A36", borderRadius: 9, padding: 10 }}>
-          <span className="tag alert">Reglas forzadas</span>
-          <ul className="sm" style={{ paddingLeft: 18, margin: "8px 0 0" }}>{draft.violations.map((v, i) => <li key={i}>{v}</li>)}</ul>
-          <p className="xs muted" style={{ marginBottom: 0 }}>Con esos días no hay ninguna distribución que las respete todas. Si puedes mover un día, mejora.</p></div>)}
+          <span className="tag alert">{draft.source === "server" ? "Avisos del planificador" : "Reglas forzadas"}</span>
+          <ul className="sm" style={{ paddingLeft: 18, margin: "8px 0 0" }}>{draft.violations.map((v, i) => <li key={i}>{warningText(v)}</li>)}</ul>
+          {draft.source === "baseline" && <p className="xs muted" style={{ marginBottom: 0 }}>Con esos días el motor anterior no encuentra una distribución que respete todas sus reglas.</p>}</div>)}
+        {draft.source === "server" && (<div style={{ marginTop: 12 }}>
+          <h3>Evidencia recuperada</h3>
+          {draft.proposal.citations.length ? draft.proposal.citations.map((citation, i) => (<details key={citation.chunkId || citation.id || i} className="card flat" style={{ marginTop: 7 }}>
+            <summary className="sm" style={{ cursor: "pointer" }}>{citation.title || citation.titulo || `Fragmento ${String(citation.chunkId || citation.id || i + 1).slice(0, 8)}`}{citation.year || citation.anio ? ` · ${citation.year || citation.anio}` : ""}</summary>
+            <p className="xs muted">{citation.authors || citation.autores || "Autor no indicado"}{citation.section || citation.seccion ? ` · ${citation.section || citation.seccion}` : ""}{citation.page || citation.pagina ? ` · p. ${citation.page || citation.pagina}` : ""}</p>
+            {(citation.text || citation.texto || citation.excerpt) && <p className="xs" style={{ marginBottom: 0 }}>{citation.text || citation.texto || citation.excerpt}</p>}
+          </details>)) : <p className="xs muted">El corpus no aportó citas para esta propuesta. No se atribuye respaldo bibliográfico.</p>}
+        </div>)}
         <div style={{ height: 12 }} />
-        <div className="row"><button className="btn primary" onClick={accept}>Aceptar semana</button><button className="btn ghost" onClick={() => setDraft(null)}>Descartar</button></div>
+        {planningError && <p className="xs" style={{ color: "var(--alert)" }}>{planningError}</p>}
+        <div className="row"><button className="btn primary" onClick={accept} disabled={!!planningBusy}>{planningBusy === "accept" ? "Aceptando…" : "Aceptar semana"}</button><button className="btn ghost" onClick={rejectDraft} disabled={!!planningBusy}>{planningBusy === "reject" ? "Rechazando…" : "Rechazar"}</button></div>
       </>)}
     </div>)}
   </div>);
@@ -2280,6 +2398,7 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab }) {
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [cargando, setCargando] = useState(false);
+  const [resolviendo, setResolviendo] = useState(null);
   const [drawer, setDrawer] = useState(null);      // "hist" | "acc" en móvil
   const endRef = useRef(null);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
@@ -2335,7 +2454,7 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab }) {
     try {
       const data = await api("/api/coach/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ consulta: content, conversationId: enHistorial ? null : convId }),
+        body: JSON.stringify({ consulta: content, conversationId: enHistorial ? null : convId, weekNumber: curW }),
       });
       if (data.conversationId) setConvId(data.conversationId);
       setMsgs([...next, {
@@ -2347,17 +2466,55 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab }) {
       setMsgs([...next, { role: "assistant", content: "No he podido conectar con el coach: " + e.message + ". Tus datos siguen guardados." }]);
     } finally { setBusy(false); }
   };
-  const resolve = (i, accept) => {
+  const resolve = async (i, accept) => {
     const m = msgs[i];
-    setMsgs(msgs.map((x, j) => (j === i ? { ...x, pendiente: false, aceptado: accept } : x)));
-    /* El mensaje ya está en PostgreSQL; lo que se registra aquí es la decisión
-       del atleta sobre el cambio, que sigue viviendo en su plan local. */
-    if (accept) {
-      update((s) => { const p = s.perfiles[P.id];
-        p.changes.push({ fecha: today, semana: curW, plan_original: m.cambio.de, cambio: m.cambio.tipo + " → " + (m.cambio.a || "-") + " (" + (m.cambio.dia || "") + ")", motivo: m.cambio.motivo, datos: "Propuesto por el coach" });
-        return s; });
+    const proposalId = m.cambio?.proposalId || m.cambio?.proposal_id;
+    const proposalRevision = m.cambio?.proposalRevision ?? m.cambio?.proposal_revision ?? m.cambio?.revision ?? null;
+    setResolviendo(i);
+    try {
+      /* Los cambios nuevos son propuestas persistidas: el servidor decide la
+         transición de estado. Los mensajes antiguos no tienen proposalId y
+         conservan el registro local anterior por compatibilidad. */
+      let acceptedWeek = null;
+      if (proposalId) {
+        if (accept) {
+          const result = await acceptPlanningProposal(proposalId, proposalRevision);
+          /* Si el endpoint devuelve la semana aceptada, se materializa también
+             en el snapshot local. Si solo devuelve el cambio de estado, no se
+             envía un snapshot local obsoleto que pueda pisar al servidor. */
+          try {
+            const candidate = result?.proposal || result;
+            if (Array.isArray(candidate?.sessions)) {
+              const proposal = normalizeProposal(result);
+              const weekNumber = +(proposal.weekNumber || proposal.week_number || proposal.week?.number || m.cambio?.semana || curW);
+              const weekPlan = semanaPlan(P.plan, weekNumber);
+              acceptedWeek = { proposal, weekNumber, assign: proposalSessionsToAssignments(proposal.sessions, weekPlan.inicio) };
+            }
+          } catch { /* la aceptación remota sigue siendo válida */ }
+        } else await rejectPlanningProposal(proposalId, proposalRevision);
+      }
+      setMsgs((current) => current.map((x, j) => (j === i ? { ...x, pendiente: false, aceptado: accept } : x)));
+      if (accept && acceptedWeek) {
+        update((s) => { const p = s.perfiles[P.id]; const old = p.weeks[acceptedWeek.weekNumber];
+          p.weeks[acceptedWeek.weekNumber] = {
+            assign: acceptedWeek.assign, done: old?.done || [], notes: [], generated: today,
+            source: "ai-rag", proposalId: acceptedWeek.proposal.id, summary: acceptedWeek.proposal.summary,
+            evidenceState: acceptedWeek.proposal.evidenceState, warnings: acceptedWeek.proposal.warnings,
+            citations: acceptedWeek.proposal.citations, sessions: acceptedWeek.proposal.sessions,
+          };
+          p.changes.push({ fecha: today, semana: acceptedWeek.weekNumber, plan_original: m.cambio.de, cambio: m.cambio.tipo + " → " + (m.cambio.a || "-") + " (" + (m.cambio.dia || "") + ")", motivo: m.cambio.motivo, datos: "Propuesta del coach aceptada en servidor · " + proposalId });
+          return s; });
+      } else if (accept && !proposalId) {
+        update((s) => { const p = s.perfiles[P.id];
+          p.changes.push({ fecha: today, semana: curW, plan_original: m.cambio.de, cambio: m.cambio.tipo + " → " + (m.cambio.a || "-") + " (" + (m.cambio.dia || "") + ")", motivo: m.cambio.motivo, datos: "Propuesto por el coach · flujo legacy" });
+          return s; });
+      }
+      notify(accept ? (acceptedWeek ? "✓ Cambio aceptado y semana local actualizada." : proposalId ? "✓ Cambio aceptado en el servidor." : "✓ Cambio legacy aceptado y registrado.") : "Cambio rechazado.");
+    } catch (error) {
+      notify("No se pudo resolver la propuesta: " + (error.message || String(error)) + ". El plan activo no ha cambiado.");
+    } finally {
+      setResolviendo(null);
     }
-    notify(accept ? "✓ Cambio aceptado y registrado." : "Cambio rechazado.");
   };
 
   /* Historial y accesos: el mismo contenido sirve para la columna de escritorio
@@ -2408,7 +2565,7 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab }) {
       {m.cambio && (<div className="card" style={{ borderColor: "#7A5730" }}>
         <span className="tag gym">Cambio propuesto</span>
         <p className="sm" style={{ margin: "8px 0" }}><strong>{String(m.cambio.tipo || "").replace("_", " ")}</strong>{m.cambio.dia ? " · " + m.cambio.dia : ""}<br />{m.cambio.de} → {m.cambio.a || "—"}<br /><span className="muted">{m.cambio.motivo}</span></p>
-        {m.pendiente && !abierta ? (<div className="row"><button className="btn primary sm" style={{ flex: 1 }} onClick={() => resolve(i, true)}>Aceptar cambio</button><button className="btn ghost sm" style={{ flex: 1 }} onClick={() => resolve(i, false)}>Rechazar</button></div>)
+        {m.pendiente && !abierta ? (<div className="row" aria-busy={resolviendo === i}><button className="btn primary sm" style={{ flex: 1 }} disabled={resolviendo !== null} onClick={() => resolve(i, true)}>{resolviendo === i ? "Resolviendo…" : "Aceptar cambio"}</button><button className="btn ghost sm" style={{ flex: 1 }} disabled={resolviendo !== null} onClick={() => resolve(i, false)}>Rechazar</button></div>)
           : <span className={"tag " + (m.aceptado ? "ok" : "")}>{m.aceptado ? "Aceptado y registrado" : m.pendiente ? "Sin resolver" : "Rechazado"}</span>}
       </div>)}
     </div>))}

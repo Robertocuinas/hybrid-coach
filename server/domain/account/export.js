@@ -2,6 +2,7 @@ const profileTables = [
   "injuries", "availability", "training_plans", "plan_modifications", "completed_sessions",
   "recovery_logs", "feedback_logs", "routines", "ai_recommendations", "conversations",
   "nutrition_targets", "meal_catalog", "client_state_snapshots", "reconciliation_runs",
+  "planning_runs", "weekly_plan_revisions", "plan_change_proposals",
 ];
 
 export async function exportUserData(userId, db) {
@@ -33,6 +34,31 @@ export async function exportUserData(userId, db) {
   const decisionIds = data.plan_decisions.map((row) => row.id);
   data.plan_decision_citations = decisionIds.length
     ? (await db.query(`SELECT * FROM plan_decision_citations WHERE plan_decision_id=ANY($1::uuid[])`, [decisionIds])).rows : [];
+
+  /* Las tablas hijas del planificador no llevan athlete_profile_id. Se recorren
+     únicamente desde padres ya filtrados por los perfiles de la cuenta para que
+     una FK inconsistente nunca convierta la exportación en una fuga entre usuarios. */
+  const weeklyRevisionIds = data.weekly_plan_revisions.map((row) => row.id);
+  data.weekly_plan_sessions = weeklyRevisionIds.length
+    ? (await db.query(
+        `SELECT * FROM weekly_plan_sessions WHERE weekly_plan_revision_id=ANY($1::uuid[])`,
+        [weeklyRevisionIds],
+      )).rows
+    : [];
+
+  const planningRunIds = data.planning_runs.map((row) => row.id);
+  data.planning_run_evidence = planningRunIds.length
+    ? (await db.query(
+        `SELECT * FROM planning_run_evidence WHERE planning_run_id=ANY($1::uuid[])`,
+        [planningRunIds],
+      )).rows
+    : [];
+  data.guardrail_results = planningRunIds.length
+    ? (await db.query(
+        `SELECT * FROM guardrail_results WHERE planning_run_id=ANY($1::uuid[])`,
+        [planningRunIds],
+      )).rows
+    : [];
 
   const completedIds = data.completed_sessions.map((row) => row.id);
   data.running_sessions = completedIds.length

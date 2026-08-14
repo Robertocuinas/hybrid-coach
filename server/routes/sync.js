@@ -1,4 +1,5 @@
 import express from "express";
+import { createHash } from "node:crypto";
 import { pool } from "../db/repositories/_helpers.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireActiveProfile } from "../middleware/authorization.js";
@@ -22,6 +23,31 @@ const paceOrNull = (value) => {
 };
 const source = (value) => value === "strava" ? "strava" : "manual";
 
+const stableObject = (value) => {
+  if (Array.isArray(value)) return value.map(stableObject);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableObject(value[key])]));
+};
+
+export const planStructureHash = (plan = {}) => createHash("sha256")
+  .update(JSON.stringify(stableObject({
+    totalSemanas: plan.totalSemanas,
+    taper: plan.taper,
+    runDias: plan.runDias,
+    gymDias: plan.gymDias,
+    techo: plan.techo,
+    riesgo: plan.riesgo,
+    gymCodes: plan.gymCodes,
+    semanas: (plan.semanas || []).map((week) => ({
+      w: week.w, inicio: week.inicio, fase: week.fase, cp: week.cp,
+      gym: week.gym, deload: week.deload, taper: week.taper, runs: week.runs,
+    })),
+  })))
+  .digest("hex");
+
+const sameArray = (left, right) => JSON.stringify([...(left || [])].map(Number).sort())
+  === JSON.stringify([...(right || [])].map(Number).sort());
+
 export function compareSnapshotTimes(incoming, stored) {
   const incomingMs = Date.parse(String(incoming || ""));
   if (!Number.isFinite(incomingMs)) return { valid: false, newer: false };
@@ -36,35 +62,137 @@ export async function replaceProfileState(client, profileId, snapshot) {
   await client.query(`UPDATE athlete_profiles SET
       nombre=$2, edad=$3, sexo=$4, altura_cm=$5, peso_kg=$6, grasa_pct=$7,
       distancia_objetivo=$8, fecha_carrera=$9, meta_tipo=$10, meta_tiempo=$11,
-      prioridades=$12, updated_at=now()
+      prioridades=$12, exp_carrera=$13, km_semana=$14, sesiones_carrera=$15,
+      tirada_larga_min=$16, ritmo_comodo=$17, paron=$18, superficie=$19,
+      exp_fuerza=$20, equipamiento=$21, cargas=$22, tecnica=$23,
+      estructural=$24, cirugias=$25, banderas=$26, momento_entreno=$27,
+      cross_training=$28, horas_sueno=$29, calidad_sueno=$30, estres=$31,
+      trabajo=$32, nutricion_objetivo=$33, suplementos=$34, reloj=$35,
+      current_complaints=$36, updated_at=now()
     WHERE id=$1`, [
     profileId, profile.nombre ?? wrapper.nombre ?? null, intOrNull(profile.edad), profile.sexo ?? null,
     intOrNull(profile.altura ?? profile.altura_cm), numberOrNull(profile.peso ?? profile.peso_kg),
     numberOrNull(profile.grasa ?? profile.grasa_pct), profile.distancia ?? profile.distancia_objetivo ?? null,
     profile.fechaCarrera ?? profile.fecha_carrera ?? null, profile.metaTipo ?? profile.meta_tipo ?? null,
     profile.metaTiempo ?? profile.meta_tiempo ?? null, profile.prioridad ?? profile.prioridades ?? [],
+    profile.expCarrera ?? profile.exp_carrera ?? null, intOrNull(profile.kmSemana ?? profile.km_semana),
+    intOrNull(profile.sesionesCarrera ?? profile.sesiones_carrera),
+    intOrNull(profile.tiradaLarga ?? profile.tirada_larga_min), profile.ritmoComodo ?? profile.ritmo_comodo ?? null,
+    profile.paron ?? null, profile.superficie ?? [], profile.expFuerza ?? profile.exp_fuerza ?? null,
+    profile.equipamiento ?? null, JSON.stringify(profile.cargas || {}), profile.tecnica ?? null,
+    profile.estructural ?? [], profile.cirugias ?? null, profile.banderas ?? [],
+    profile.momento ?? profile.momento_entreno ?? null, profile.crossTraining ?? profile.cross_training ?? null,
+    numberOrNull(profile.sueno ?? profile.horas_sueno), profile.calidadSueno ?? profile.calidad_sueno ?? null,
+    numberOrNull(profile.estres), profile.trabajo ?? null,
+    profile.nutricion ?? profile.nutricion_objetivo ?? null, profile.suplementos ?? [], profile.reloj ?? null,
+    JSON.stringify(profile.molestias || []),
   ]);
+
+  /* Lesiones y disponibilidad sí forman parte del contexto científico. Antes
+     se quedaban exclusivamente dentro del snapshot y el Coach recibía arrays
+     vacíos aunque el usuario los hubiera declarado en el Wizard. */
+  await client.query(`DELETE FROM injuries WHERE athlete_profile_id=$1`, [profileId]);
+  for (const injury of profile.lesiones || []) {
+    if (!String(injury?.zona || "").trim()) continue;
+    await client.query(`INSERT INTO injuries (athlete_profile_id,zona,recurrente,contexto,activa)
+      VALUES ($1,$2,$3,$4,true)`, [profileId, String(injury.zona).slice(0, 160), !!injury.recurrente, injury.contexto ?? null]);
+  }
+
+  const availableDays = Array.isArray(profile.dias)
+    ? [...new Set(profile.dias.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))].sort()
+    : [];
+  if (availableDays.length) {
+    const { rows: latestAvailability } = await client.query(`SELECT dias,min_gym,min_run,min_finde
+      FROM availability WHERE athlete_profile_id=$1 ORDER BY vigente_desde DESC NULLS LAST,id DESC LIMIT 1`, [profileId]);
+    const latest = latestAvailability[0];
+    const changed = !latest || !sameArray(latest.dias, availableDays)
+      || intOrNull(latest.min_gym) !== intOrNull(profile.minGym)
+      || intOrNull(latest.min_run) !== intOrNull(profile.minRun)
+      || intOrNull(latest.min_finde) !== intOrNull(profile.finde);
+    if (changed) {
+      await client.query(`INSERT INTO availability
+        (athlete_profile_id,vigente_desde,dias,min_gym,min_run,min_finde)
+        VALUES ($1,$2,$3,$4,$5,$6)`, [profileId,
+        String(snapshot.capturedAt || new Date().toISOString()).slice(0, 10), availableDays,
+        intOrNull(profile.minGym), intOrNull(profile.minRun), intOrNull(profile.finde)]);
+    }
+  }
 
   if (wrapper.plan) {
     const plan = wrapper.plan;
-    const current = await client.query(`SELECT id FROM training_plans WHERE athlete_profile_id=$1 AND activo=true ORDER BY generado_en DESC LIMIT 1`, [profileId]);
-    if (current.rows[0]) {
-      await client.query(`UPDATE training_plans SET distancia_objetivo=$2, fecha_carrera=$3,
-        total_semanas=$4, taper_semanas=$5, run_dias=$6, gym_dias=$7,
-        techo_tirada_larga_min=$8, riesgo_score=$9, riesgo_causas=$10 WHERE id=$1`, [
-        current.rows[0].id, profile.distancia ?? null, profile.fechaCarrera ?? null,
-        intOrNull(plan.totalSemanas), intOrNull(plan.taper), intOrNull(plan.runDias), intOrNull(plan.gymDias),
-        intOrNull(plan.techo), numberOrNull(plan.riesgo?.score), JSON.stringify(plan.riesgo?.causas || []),
-      ]);
-    } else {
-      await client.query(`INSERT INTO training_plans
-        (athlete_profile_id, distancia_objetivo, fecha_carrera, total_semanas, taper_semanas,
-         run_dias, gym_dias, techo_tirada_larga_min, riesgo_score, riesgo_causas, activo)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true)`, [
+    const structureHash = planStructureHash(plan);
+    const current = await client.query(`SELECT id,version,structure_hash FROM training_plans
+      WHERE athlete_profile_id=$1 AND activo=true ORDER BY generado_en DESC LIMIT 1 FOR UPDATE`, [profileId]);
+    let planId = current.rows[0]?.id || null;
+
+    if (!planId) {
+      const inserted = await client.query(`INSERT INTO training_plans
+        (athlete_profile_id,version,distancia_objetivo,fecha_carrera,total_semanas,taper_semanas,
+         run_dias,gym_dias,techo_tirada_larga_min,riesgo_score,riesgo_causas,structure_hash,activo)
+        VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true) RETURNING id`, [
         profileId, profile.distancia ?? null, profile.fechaCarrera ?? null, intOrNull(plan.totalSemanas),
         intOrNull(plan.taper), intOrNull(plan.runDias), intOrNull(plan.gymDias), intOrNull(plan.techo),
-        numberOrNull(plan.riesgo?.score), JSON.stringify(plan.riesgo?.causas || []),
+        numberOrNull(plan.riesgo?.score), JSON.stringify(plan.riesgo?.causas || []), structureHash,
       ]);
+      planId = inserted.rows[0].id;
+    } else if (!current.rows[0].structure_hash) {
+      /* Primer snapshot tras la migración: se completa la versión heredada sin
+         crear una copia artificial del mismo plan. */
+      await client.query(`UPDATE training_plans SET distancia_objetivo=$2,fecha_carrera=$3,
+        total_semanas=$4,taper_semanas=$5,run_dias=$6,gym_dias=$7,techo_tirada_larga_min=$8,
+        riesgo_score=$9,riesgo_causas=$10,structure_hash=$11 WHERE id=$1`, [
+        planId, profile.distancia ?? null, profile.fechaCarrera ?? null, intOrNull(plan.totalSemanas),
+        intOrNull(plan.taper), intOrNull(plan.runDias), intOrNull(plan.gymDias), intOrNull(plan.techo),
+        numberOrNull(plan.riesgo?.score), JSON.stringify(plan.riesgo?.causas || []), structureHash,
+      ]);
+    } else if (current.rows[0].structure_hash !== structureHash) {
+      const version = await client.query(`SELECT COALESCE(max(version),0)+1 AS version
+        FROM training_plans WHERE athlete_profile_id=$1`, [profileId]);
+      await client.query(`UPDATE training_plans SET activo=false WHERE id=$1`, [planId]);
+      const inserted = await client.query(`INSERT INTO training_plans
+        (athlete_profile_id,version,distancia_objetivo,fecha_carrera,total_semanas,taper_semanas,
+         run_dias,gym_dias,techo_tirada_larga_min,riesgo_score,riesgo_causas,structure_hash,activo)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,true) RETURNING id`, [
+        profileId, intOrNull(version.rows[0].version), profile.distancia ?? null, profile.fechaCarrera ?? null,
+        intOrNull(plan.totalSemanas), intOrNull(plan.taper), intOrNull(plan.runDias), intOrNull(plan.gymDias),
+        intOrNull(plan.techo), numberOrNull(plan.riesgo?.score), JSON.stringify(plan.riesgo?.causas || []), structureHash,
+      ]);
+      planId = inserted.rows[0].id;
+    }
+
+    /* La estructura completa deja de ser invisible para el backend. Cada
+       código es un slot del plan maestro; el día refleja la última asignación
+       local conocida solo durante el periodo de dual-write. */
+    for (const masterWeek of plan.semanas || []) {
+      const weekNumber = intOrNull(masterWeek.w);
+      if (!weekNumber) continue;
+      const savedWeek = await client.query(`INSERT INTO training_weeks
+        (training_plan_id,numero_semana,inicio,fase,techo_tirada_larga_min,es_deload,es_taper,checkpoint)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        ON CONFLICT (training_plan_id,numero_semana) DO UPDATE SET
+          inicio=excluded.inicio,fase=excluded.fase,techo_tirada_larga_min=excluded.techo_tirada_larga_min,
+          es_deload=excluded.es_deload,es_taper=excluded.es_taper,checkpoint=excluded.checkpoint
+        RETURNING id`, [planId, weekNumber, masterWeek.inicio ?? null, masterWeek.fase ?? null,
+        intOrNull(plan.techo), !!masterWeek.deload, !!masterWeek.taper, masterWeek.cp ?? null]);
+      const weekId = savedWeek.rows[0].id;
+      const assignments = new Map(((wrapper.weeks || {})[weekNumber]?.assign || []).map((entry) => [entry.code, intOrNull(entry.day)]));
+      const codes = [
+        ...Object.keys(masterWeek.runs || {}),
+        ...(masterWeek.taper ? (plan.gymCodes || []).slice(0, 1) : (plan.gymCodes || [])),
+      ];
+      for (const code of [...new Set(codes)]) {
+        const running = masterWeek.runs?.[code];
+        const type = code.startsWith("RUN") ? "run" : code === "RECOVERY" ? "recovery" : "gym";
+        await client.query(`INSERT INTO planned_sessions
+          (training_week_id,dia_semana,codigo_sesion,tipo,descripcion,duracion_min,intensidad)
+          VALUES ($1,$2,$3,$4,$5,$6,$7)
+          ON CONFLICT (training_week_id,codigo_sesion) DO UPDATE SET
+            dia_semana=excluded.dia_semana,tipo=excluded.tipo,descripcion=excluded.descripcion,
+            duracion_min=excluded.duracion_min,intensidad=excluded.intensidad`, [
+          weekId, assignments.get(code) ?? null, code, type, running?.d ?? null,
+          intOrNull(running?.t), /RPE\s*[5-9]|calidad/i.test(String(running?.d || "")) ? "calidad" : "facil",
+        ]);
+      }
     }
   }
 
@@ -72,8 +200,14 @@ export async function replaceProfileState(client, profileId, snapshot) {
   // dentro de la misma transacción y las tablas detalle caen por ON DELETE CASCADE.
   await client.query(`DELETE FROM completed_sessions WHERE athlete_profile_id=$1`, [profileId]);
   for (const run of wrapper.running || []) {
-    const completed = await client.query(`INSERT INTO completed_sessions (athlete_profile_id, fecha, tipo, semana)
-      VALUES ($1,$2,'running',$3) RETURNING id`, [profileId, run.date ?? run.fecha ?? null, intOrNull(run.semana)]);
+    const completed = await client.query(`INSERT INTO completed_sessions
+      (athlete_profile_id,planned_session_id,fecha,tipo,semana)
+      VALUES ($1,(SELECT ps.id FROM training_plans tp
+        JOIN training_weeks tw ON tw.training_plan_id=tp.id
+        JOIN planned_sessions ps ON ps.training_week_id=tw.id
+        WHERE tp.athlete_profile_id=$1 AND tp.activo=true
+          AND tw.numero_semana=$3 AND ps.codigo_sesion=$4 LIMIT 1),$2,'running',$3)
+      RETURNING id`, [profileId, run.date ?? run.fecha ?? null, intOrNull(run.semana), run.session_code ?? run.codigo_sesion ?? null]);
     await client.query(`INSERT INTO running_sessions
       (completed_session_id,codigo_sesion,distancia_km,duracion_min,ritmo,fc_media,fc_max,desnivel,cadencia,rpe,dolor,notas,origen,external_id)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`, [
@@ -92,8 +226,14 @@ export async function replaceProfileState(client, profileId, snapshot) {
   }
   for (const [key, sets] of strengthGroups) {
     const [date, code] = key.split("|");
-    const completed = await client.query(`INSERT INTO completed_sessions (athlete_profile_id, fecha, tipo, semana)
-      VALUES ($1,$2,'strength',$3) RETURNING id`, [profileId, date || null, intOrNull(sets[0]?.semana)]);
+    const completed = await client.query(`INSERT INTO completed_sessions
+      (athlete_profile_id,planned_session_id,fecha,tipo,semana)
+      VALUES ($1,(SELECT ps.id FROM training_plans tp
+        JOIN training_weeks tw ON tw.training_plan_id=tp.id
+        JOIN planned_sessions ps ON ps.training_week_id=tw.id
+        WHERE tp.athlete_profile_id=$1 AND tp.activo=true
+          AND tw.numero_semana=$3 AND ps.codigo_sesion=$4 LIMIT 1),$2,'strength',$3)
+      RETURNING id`, [profileId, date || null, intOrNull(sets[0]?.semana), code]);
     const strength = await client.query(`INSERT INTO strength_sessions (completed_session_id,codigo_sesion) VALUES ($1,$2) RETURNING id`, [completed.rows[0].id, code]);
     for (const [index, set] of sets.entries()) {
       const name = String(set.exercise ?? set.ejercicio ?? "Ejercicio sin nombre").trim();
