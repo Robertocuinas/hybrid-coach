@@ -3475,6 +3475,7 @@ function PanelAdmin({ notify, onRevisar }) {
   const [estado, setEstado] = useState(null);        // { r2, r2Faltan, r2Acceso, extractor, ia, embeddings, maxBytes }
   const [pendientes, setPendientes] = useState([]);
   const [subiendo, setSubiendo] = useState(false);
+  const [cola, setCola] = useState([]);              // lote en curso, un elemento por archivo
   const [ultima, setUltima] = useState(null);        // resultado de la última subida
   const [error, setError] = useState("");
   const [fragmentos, setFragmentos] = useState(null);
@@ -3490,27 +3491,53 @@ function PanelAdmin({ notify, onRevisar }) {
   };
   useEffect(() => { cargar(); }, []);
 
-  const subir = async (file) => {
-    if (!file) return;
+  /* El PDF va como cuerpo binario, no como formulario: el servidor no necesita
+     el nombre del archivo para nada crítico (la clave en R2 sale del hash),
+     solo para mostrarlo y para el prompt de la ficha. */
+  const subirUno = async (file) => {
+    const r = await fetch("/api/admin/documents/upload", {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/pdf", "X-Nombre-Archivo": encodeURIComponent(file.name) },
+      body: file,
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(data.message || `HTTP ${r.status}`); e.status = r.status; throw e; }
+    return data;
+  };
+
+  /* Cola de uno en uno, no en paralelo: cada documento gasta una llamada al
+     modelo y varias de embeddings, y lanzarlos a la vez es la vía rápida a que
+     el proveedor devuelva 429 a mitad del lote. Un fallo no detiene la cola;
+     un duplicado tampoco es un fallo, es lo que hace que repetir una carpeta
+     salte lo ya hecho. */
+  const subir = async (files) => {
+    const lista = Array.from(files || []).filter(Boolean);
+    if (!lista.length) return;
     setSubiendo(true); setError(""); setUltima(null);
-    try {
-      /* El PDF va como cuerpo binario, no como formulario: el servidor no
-         necesita el nombre del archivo para nada crítico (la clave en R2 sale
-         del hash), solo para mostrarlo y para el prompt de la ficha.         */
-      const r = await fetch("/api/admin/documents/upload", {
-        method: "POST", credentials: "same-origin",
-        headers: { "Content-Type": "application/pdf", "X-Nombre-Archivo": encodeURIComponent(file.name) },
-        body: file,
-      });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.message || `HTTP ${r.status}`);
-      setUltima(data);
-      notify(data.revisado
-        ? `PDF procesado: ${data.chunks} fragmentos. Ya disponible para el coach.`
-        : `PDF procesado: ${data.chunks} fragmentos. Revisa la ficha para que el coach pueda citarlo.`);
-      await cargar();
-    } catch (e) { setError(e.message); }
-    finally { setSubiendo(false); }
+    setCola(lista.map((f) => ({ nombre: f.name, estado: "espera" })));
+
+    let ingeridos = 0, duplicados = 0, fallidos = 0;
+    for (let i = 0; i < lista.length; i++) {
+      setCola((c) => c.map((x, j) => (j === i ? { ...x, estado: "subiendo" } : x)));
+      try {
+        const data = await subirUno(lista[i]);
+        ingeridos++;
+        setUltima(data);
+        setCola((c) => c.map((x, j) => (j === i ? { ...x, estado: "ok", detalle: `${data.chunks} fragmentos${data.revisado ? " · disponible" : " · a revisar"}` } : x)));
+      } catch (e) {
+        if (e.status === 409) { duplicados++; setCola((c) => c.map((x, j) => (j === i ? { ...x, estado: "dup", detalle: "ya estaba en la biblioteca" } : x))); }
+        else { fallidos++; setCola((c) => c.map((x, j) => (j === i ? { ...x, estado: "fallo", detalle: e.message } : x))); }
+        /* El 429 del limitador sí detiene la cola: seguir solo acumularía el
+           mismo error en todos los documentos restantes. */
+        if (e.status === 429) {
+          setError("Límite de subidas por hora alcanzado. Para tandas grandes usa npm run biblio:ingest, que no pasa por este límite.");
+          break;
+        }
+      }
+    }
+    await cargar();
+    setSubiendo(false);
+    notify(`${ingeridos} ingeridos · ${duplicados} ya estaban${fallidos ? ` · ${fallidos} con error` : ""}.`);
   };
 
   const verFragmentos = async (doc) => {
@@ -3566,14 +3593,39 @@ function PanelAdmin({ notify, onRevisar }) {
     <AjustesEmbeddings notify={notify} />
 
     <div className="card">
-      <h3>Subir un artículo</h3>
+      <h3>Subir bibliografía</h3>
       <p className="xs muted" style={{ margin: "4px 0 10px" }}>
-        PDF con capa de texto, hasta {estado ? Math.round(estado.maxBytes / 1024 / 1024) : 50} MB. Los escaneados sin texto se rechazan: este flujo no hace OCR.
+        PDF con capa de texto, hasta {estado ? Math.round(estado.maxBytes / 1024 / 1024) : 50} MB cada uno. Puedes seleccionar varios a la vez. Los escaneados sin texto se rechazan: este flujo no hace OCR.
       </p>
-      <input type="file" accept="application/pdf" disabled={subiendo || (estado && !puedeSubir)}
-        onChange={(e) => { subir(e.target.files[0]); e.target.value = ""; }} />
-      {subiendo && <p className="sm" style={{ marginTop: 10 }}>Extrayendo texto, troceando y clasificando… puede tardar medio minuto.</p>}
+      <input type="file" accept="application/pdf" multiple disabled={subiendo || (estado && !puedeSubir)}
+        onChange={(e) => { subir(e.target.files); e.target.value = ""; }} />
+
+      {/* Progreso por archivo: en un lote hay que poder ver cuál falló sin
+          perder los que sí entraron. */}
+      {cola.length > 0 && (<div style={{ marginTop: 12 }}>
+        <div className="between">
+          <span className="eyebrow">{cola.filter((x) => x.estado !== "espera" && x.estado !== "subiendo").length} de {cola.length}</span>
+          {!subiendo && <button className="btn ghost sm" onClick={() => setCola([])}>Limpiar</button>}
+        </div>
+        <div className="prog" style={{ margin: "7px 0 10px" }}>
+          <span style={{ width: (cola.filter((x) => x.estado !== "espera" && x.estado !== "subiendo").length / cola.length) * 100 + "%" }} />
+        </div>
+        {cola.map((f, i) => (<div key={i} className="between" style={{ padding: "5px 0", borderBottom: i < cola.length - 1 ? "1px solid var(--line)" : 0, gap: 8 }}>
+          <span className="xs mono" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            color: f.estado === "espera" ? "var(--mut)" : "inherit" }}>{f.nombre}</span>
+          <span className={"tag " + (f.estado === "ok" ? "ok" : f.estado === "fallo" ? "alert" : "")} style={{ flexShrink: 0 }}>
+            {f.estado === "espera" ? "en cola" : f.estado === "subiendo" ? "procesando" : f.estado === "ok" ? "hecho" : f.estado === "dup" ? "repetido" : "error"}
+          </span>
+        </div>))}
+        {cola.filter((f) => f.detalle && f.estado !== "ok").map((f, i) =>
+          <p key={i} className="xs muted" style={{ margin: "6px 0 0" }}>{f.nombre}: {f.detalle}</p>)}
+      </div>)}
+
+      {subiendo && <p className="sm" style={{ marginTop: 10 }}>Extrayendo texto, troceando y clasificando… medio minuto por documento. No cierres esta pestaña.</p>}
       {error && <p className="xs" style={{ color: "var(--alert)", marginTop: 10 }}>{error}</p>}
+      <p className="xs muted" style={{ margin: "10px 0 0" }}>
+        Para tandas grandes usa <span className="mono">npm run biblio:ingest -- --dir ./papers</span>: no pasa por el límite horario de subidas ni depende del navegador.
+      </p>
     </div>
 
     {ultima && (<div className="card" style={{ borderColor: ultima.revisado ? "var(--ok)" : "var(--gym)" }}>

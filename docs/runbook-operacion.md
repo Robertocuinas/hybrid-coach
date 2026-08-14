@@ -46,6 +46,53 @@ El servicio cron usa el mismo repositorio, `/railway.cron.json`, el comando
 Cuando exista el cron, el servicio web debe usar `RECONCILIATION_MODE=external` para no
 duplicar el job. Hasta entonces puede conservar `RECONCILIATION_MODE=web`.
 
+## Ingesta masiva de bibliografía
+
+El corpus del RAG son los `document_chunks`. **`npm run seed:biblio` no los crea**: inserta
+40 fichas en `documents` sin texto troceado, así que el retrieval no las ve. La única vía
+que llena el corpus es la ingesta de PDF.
+
+### Antes de lanzar
+
+Tres cosas, en este orden. Las tres las comprueba el propio script y aborta si falta la
+primera:
+
+1. **Extractor.** Python + PyMuPDF en la imagen; lo pone `nixpacks.toml`. Sin esto no se
+   ingiere nada.
+2. **Embeddings.** Panel de administración o `EMBEDDING_*`. Sin ellos los documentos entran
+   igual, pero sin vectorizar; se completa después con `npm run embeddings:reindex`.
+3. **Proveedor de IA.** Sin él los documentos entran sin ficha y quedan **todos** pendientes
+   de revisión manual, uno por uno. Con una tanda grande, esto importa.
+
+### Lanzar
+
+```bash
+npm run biblio:ingest -- --dir ./papers --user tu@correo.com --dry-run   # comprobar
+npm run biblio:ingest -- --dir ./papers --user tu@correo.com             # ejecutar
+```
+
+`--user` toma la clave de IA guardada en los ajustes de esa cuenta; sin él se usa
+`LLM_PROVIDER` del entorno. Otras opciones: `--limite n` para probar con los primeros,
+`--pausa ms` si el proveedor limita por minuto, `--informe salida.json` para el detalle
+completo y `--si` para no pedir confirmación.
+
+### Qué esperar
+
+- Va de uno en uno. Cada documento gasta **una** llamada al modelo (la ficha) y varias de
+  embeddings. Cien documentos son cien llamadas al modelo: cuenta el coste antes.
+- **Es reanudable.** La deduplicación por hash y por DOI hace que relanzar la misma carpeta
+  salte lo ya ingerido. Si se corta a mitad, se vuelve a lanzar y sigue.
+- Un duplicado no es un error y no detiene nada. Un fallo de configuración del servidor
+  (503) **sí** detiene el lote: se repetiría en todos los documentos restantes.
+- Al terminar, lo que tenga ficha completa queda disponible para el coach; el resto espera
+  revisión en el panel.
+
+### Por interfaz
+
+El panel admite selección múltiple y muestra el progreso por archivo. Sirve para tandas
+pequeñas; el límite de `UPLOAD_RATE_LIMIT_PER_HOUR` (60 por defecto) sigue aplicando, y el
+CLI no pasa por él.
+
 ## Backup lógico manual
 
 Requisito local: `pg_dump` y `pg_restore` de una versión igual o posterior a la del

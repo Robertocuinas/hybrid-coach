@@ -56,8 +56,12 @@ export const aiRateLimiter = rateLimit({
   standardHeaders: "draft-7", legacyHeaders: false, keyGenerator: accountKey,
   message: { ok: false, message: "Límite temporal de IA alcanzado." },
 });
+/* 60/hora y no 10: la subida es solo para admins, así que no protege de un
+   abuso externo sino del propio servidor, y con 10 no cabía ni una tanda
+   pequeña de bibliografía. Para lotes de verdad está `npm run biblio:ingest`,
+   que no pasa por HTTP y por tanto tampoco por aquí. */
 export const uploadRateLimiter = rateLimit({
-  windowMs: 60 * 60_000, limit: Number(process.env.UPLOAD_RATE_LIMIT_PER_HOUR || 10),
+  windowMs: 60 * 60_000, limit: Number(process.env.UPLOAD_RATE_LIMIT_PER_HOUR || 60),
   standardHeaders: "draft-7", legacyHeaders: false, keyGenerator: accountKey,
   message: { ok: false, message: "Límite temporal de subidas alcanzado." },
 });
