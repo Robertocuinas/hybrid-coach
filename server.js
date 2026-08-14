@@ -31,10 +31,13 @@ import { createLLMProvider, createToolRouterProvider, readEmbeddingConfig } from
 import { resolveEmbeddingConfig } from "./server/ai/instance-embeddings.js";
 import { resolveUserLLMProvider } from "./server/ai/user-provider.js";
 import { getEmbeddingStatus, validateEmbeddingStartup } from "./server/embeddings/index-state.js";
+import { readLegacyStravaConfig, requireLegacyStrava } from "./server/integrations/strava-config.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
+const legacyStravaConfig = readLegacyStravaConfig(process.env);
+const requireLegacyStravaEnabled = requireLegacyStrava(legacyStravaConfig);
 
 const {
   APPS_SCRIPT_URL,
@@ -77,7 +80,7 @@ app.get("/api/estado", async (_req, res) => {
     requiereLogin: true,
     ia: !!llmProvider,
     hoja: !!(APPS_SCRIPT_URL || (SHEET_ID && GOOGLE_SERVICE_ACCOUNT_JSON)),
-    strava: !!(STRAVA_CLIENT_ID && STRAVA_CLIENT_SECRET),
+    strava: legacyStravaConfig.enabled,
     db: dbStatus.db,
     pgvector: dbStatus.pgvector,
     embeddings,
@@ -236,8 +239,7 @@ app.get("/api/sheets", requireAuth, async (req, res) => {
    ============================================================ */
 const strava = { refresh: null, access: null, expira: 0 };
 
-app.get("/api/strava/entrar", requireAuth, (req, res) => {
-  if (!STRAVA_CLIENT_ID) return res.status(503).send("Strava no está configurado en este servidor.");
+app.get("/api/strava/entrar", requireAuth, requireLegacyStravaEnabled, (req, res) => {
   const vuelta = `${req.protocol}://${req.get("host")}/api/strava/vuelta`;
   res.redirect("https://www.strava.com/oauth/authorize"
     + `?client_id=${STRAVA_CLIENT_ID}&response_type=code`
@@ -245,7 +247,7 @@ app.get("/api/strava/entrar", requireAuth, (req, res) => {
     + "&approval_prompt=auto&scope=activity:read_all");
 });
 
-app.get("/api/strava/vuelta", async (req, res) => {
+app.get("/api/strava/vuelta", requireLegacyStravaEnabled, async (req, res) => {
   try {
     const r = await fetch("https://www.strava.com/oauth/token", {
       method: "POST", headers: { "content-type": "application/json" },
@@ -280,7 +282,7 @@ async function tokenStrava() {
   return d.access_token;
 }
 
-app.get("/api/strava/actividades", requireAuth, async (req, res) => {
+app.get("/api/strava/actividades", requireAuth, requireLegacyStravaEnabled, async (req, res) => {
   try {
     const desde = req.query.desde || "2026-01-01";
     const after = Math.floor(new Date(desde + "T00:00:00Z").getTime() / 1000);
@@ -329,7 +331,7 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`  Embed:  ${embeddingConfig.enabled ? `${embeddingConfig.provider}/${embeddingConfig.model} (${embeddingConfig.dimensions}d, ${embeddingConfig.origen})` : "desactivados"}`);
   console.log(`  Local:  ${toolRouterProvider ? "needle/tool-routing" : "desactivado"}`);
   console.log(`  Hoja:   ${APPS_SCRIPT_URL ? "vía Apps Script" : SHEET_ID && GOOGLE_SERVICE_ACCOUNT_JSON ? "vía cuenta de servicio" : "sin configurar"}`);
-  console.log(`  Strava: ${STRAVA_CLIENT_ID ? "configurado" : "sin configurar"}`);
+  console.log(`  Strava: ${legacyStravaConfig.enabled ? "legacy monousuario activo" : legacyStravaConfig.credentialsConfigured ? "credenciales presentes, legacy bloqueado" : "sin configurar"}`);
   console.log("  Acceso: sesiones autenticadas");
 });
 
