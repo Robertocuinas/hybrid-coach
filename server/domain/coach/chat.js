@@ -45,6 +45,7 @@ export async function responder(profileId, consulta, deps) {
   const {
     db, repo, llmProvider, embeddingProvider, rerankProvider, indice, config,
     conversationId = null, hoy = new Date(), persistir = true, pantalla = null,
+    onValidatedChange = null,
   } = deps;
   if (!llmProvider) throw new Error("No hay proveedor de IA configurado");
 
@@ -107,6 +108,24 @@ export async function responder(profileId, consulta, deps) {
   if (cambio && !citadas.length) {
     avisos.push("Cambio descartado: no citó ningún fragmento entregado. El calendario permanece intacto.");
     cambio = null;
+  }
+
+  /* Un <<CAMBIO>> válido sigue sin ser un calendario. Si la capa de
+     aplicación está disponible, se transforma en una revisión semanal completa
+     pasando otra vez por RAG, schema y guardrails. Así el botón Aceptar activa
+     exactamente el mismo artefacto que la pantalla Mi semana. */
+  if (cambio && typeof onValidatedChange === "function") {
+    try {
+      const linked = await onValidatedChange({
+        profileId, consulta, cambio, datos: contexto.datos,
+        citedChunkIds: citadas, conversationId: conversacion?.id || null,
+      });
+      if (!linked?.proposalId || !linked?.proposalRevision) throw new Error("el planificador no devolvió una revisión persistida");
+      cambio = { ...cambio, ...linked };
+    } catch (error) {
+      avisos.push(`El cambio no se convirtió en una propuesta segura: ${String(error?.message || error).slice(0, 240)} El calendario permanece intacto.`);
+      cambio = null;
+    }
   }
 
   if (conversacion) {

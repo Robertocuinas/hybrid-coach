@@ -57,7 +57,11 @@ export async function cargarContexto(profileId, { db = pool, dias = VENTANA_DIAS
                    JOIN planned_sessions ps ON ps.training_week_id=tw.id
                   WHERE ps.dia_semana IS NOT NULL
                     AND (tw.inicio + ps.dia_semana) BETWEEN ($2::date - 1) AND ($2::date + 7)
-                    AND NOT EXISTS (SELECT 1 FROM accepted)
+                    AND NOT EXISTS (
+                      SELECT 1 FROM weekly_plan_revisions active_revision
+                       WHERE active_revision.training_week_id=tw.id
+                         AND active_revision.status='accepted'
+                    )
                )
                SELECT * FROM accepted UNION ALL SELECT * FROM master ORDER BY fecha;`, [profileId, hoy.toISOString().slice(0, 10)]),
 

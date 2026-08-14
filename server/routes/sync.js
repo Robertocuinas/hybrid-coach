@@ -91,11 +91,13 @@ export async function replaceProfileState(client, profileId, snapshot) {
   /* Lesiones y disponibilidad sí forman parte del contexto científico. Antes
      se quedaban exclusivamente dentro del snapshot y el Coach recibía arrays
      vacíos aunque el usuario los hubiera declarado en el Wizard. */
-  await client.query(`DELETE FROM injuries WHERE athlete_profile_id=$1`, [profileId]);
-  for (const injury of profile.lesiones || []) {
-    if (!String(injury?.zona || "").trim()) continue;
-    await client.query(`INSERT INTO injuries (athlete_profile_id,zona,recurrente,contexto,activa)
-      VALUES ($1,$2,$3,$4,true)`, [profileId, String(injury.zona).slice(0, 160), !!injury.recurrente, injury.contexto ?? null]);
+  if (Array.isArray(profile.lesiones)) {
+    await client.query(`DELETE FROM injuries WHERE athlete_profile_id=$1`, [profileId]);
+    for (const injury of profile.lesiones) {
+      if (!String(injury?.zona || "").trim()) continue;
+      await client.query(`INSERT INTO injuries (athlete_profile_id,zona,recurrente,contexto,activa)
+        VALUES ($1,$2,$3,$4,true)`, [profileId, String(injury.zona).slice(0, 160), !!injury.recurrente, injury.contexto ?? null]);
+    }
   }
 
   const availableDays = Array.isArray(profile.dias)
@@ -175,7 +177,16 @@ export async function replaceProfileState(client, profileId, snapshot) {
         RETURNING id`, [planId, weekNumber, masterWeek.inicio ?? null, masterWeek.fase ?? null,
         intOrNull(plan.techo), !!masterWeek.deload, !!masterWeek.taper, masterWeek.cp ?? null]);
       const weekId = savedWeek.rows[0].id;
-      const assignments = new Map(((wrapper.weeks || {})[weekNumber]?.assign || []).map((entry) => [entry.code, intOrNull(entry.day)]));
+      const localWeek = (wrapper.weeks || {})[weekNumber];
+      const tacticalRevision = localWeek?.source === "ai-rag" && !!localWeek?.proposalId;
+      const assignments = new Map((localWeek?.assign || []).map((entry) => [entry.code, intOrNull(entry.day)]));
+      /* Una revisión IA aceptada es táctica y vive en weekly_plan_*; no debe
+         reescribir por dual-write los días del plan maestro. Conservamos los
+         slots que ya estaban sincronizados antes de generar la propuesta. */
+      const existingDays = tacticalRevision
+        ? new Map((await client.query(`SELECT codigo_sesion,dia_semana FROM planned_sessions WHERE training_week_id=$1`, [weekId]))
+          .rows.map((row) => [row.codigo_sesion, intOrNull(row.dia_semana)]))
+        : new Map();
       const codes = [
         ...Object.keys(masterWeek.runs || {}),
         ...(masterWeek.taper ? (plan.gymCodes || []).slice(0, 1) : (plan.gymCodes || [])),
@@ -189,7 +200,7 @@ export async function replaceProfileState(client, profileId, snapshot) {
           ON CONFLICT (training_week_id,codigo_sesion) DO UPDATE SET
             dia_semana=excluded.dia_semana,tipo=excluded.tipo,descripcion=excluded.descripcion,
             duracion_min=excluded.duracion_min,intensidad=excluded.intensidad`, [
-          weekId, assignments.get(code) ?? null, code, type, running?.d ?? null,
+          weekId, (tacticalRevision ? existingDays.get(code) : assignments.get(code)) ?? null, code, type, running?.d ?? null,
           intOrNull(running?.t), /RPE\s*[5-9]|calidad/i.test(String(running?.d || "")) ? "calidad" : "facil",
         ]);
       }

@@ -126,5 +126,21 @@ test("un snapshot persiste perfil completo, disponibilidad, lesiones, plan maest
     (SELECT count(*)::int FROM planned_sessions) sessions,
     (SELECT count(*)::int FROM availability) availabilities`);
   assert.deepEqual(idempotency.rows[0], { plans: 1, weeks: 1, sessions: 4, availabilities: 1 });
+
+  const tactical = structuredClone(snapshot);
+  tactical.profile.weeks[1] = {
+    source: "ai-rag", proposalId: "11111111-1111-4111-8111-111111111111",
+    assign: [{ code: "RUN A", day: 0 }, { code: "GYM A", day: 2 },
+      { code: "RUN B", day: 3 }, { code: "GYM B", day: 6 }],
+  };
+  await replaceProfileState(db, profileId, tactical);
+  const masterAfterTacticalSync = await db.query(`SELECT codigo_sesion,dia_semana
+    FROM planned_sessions ORDER BY codigo_sesion`);
+  assert.deepEqual(masterAfterTacticalSync.rows, [
+    { codigo_sesion: "GYM A", dia_semana: 1 },
+    { codigo_sesion: "GYM B", dia_semana: 4 },
+    { codigo_sesion: "RUN A", dia_semana: 3 },
+    { codigo_sesion: "RUN B", dia_semana: 5 },
+  ], "la revisión táctica aceptada no reescribe los slots del plan maestro");
   await db.close();
 });

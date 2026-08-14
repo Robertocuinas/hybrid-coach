@@ -82,8 +82,8 @@ Content-Type: application/json
 
 {
   "availabilityDays": [0, 2, 4, 6],
-  "gym": 2,
-  "correr": 3,
+  "gym": true,
+  "correr": true,
   "dolor": 0,
   "fatiga": 4
 }
@@ -98,20 +98,21 @@ un envoltorio `proposal`):
 
 ```json
 {
-  "revision": {
+  "ok": true,
+  "proposal": {
     "id": "uuid",
-    "revision": 2,
+    "revisionNumber": 2,
     "status": "draft",
-    "week_number": 5,
-    "week_start": "2026-09-07",
-    "week_end": "2026-09-13",
+    "weekNumber": 5,
+    "weekStart": "2026-09-07",
+    "weekEnd": "2026-09-13",
     "summary": "Distribución ajustada a la disponibilidad",
-    "evidence_state": "sufficient",
-    "confidence": 0.82
-  },
-  "sessions": [],
-  "evidence": [],
-  "guardrails": []
+    "evidenceState": "sufficient",
+    "confidence": 0.82,
+    "sessions": [],
+    "evidence": [],
+    "guardrails": []
+  }
 }
 ```
 

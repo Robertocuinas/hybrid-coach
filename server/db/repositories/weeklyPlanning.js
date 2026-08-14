@@ -6,6 +6,7 @@ export class PlanningConflictError extends Error {
     super(message);
     this.name = "PlanningConflictError";
     this.code = "PLANNING_CONFLICT";
+    this.publicCode = this.code;
     this.status = 409;
     this.statusCode = 409;
     this.details = details;
@@ -17,6 +18,7 @@ export class PlanningNotFoundError extends Error {
     super(message);
     this.name = "PlanningNotFoundError";
     this.code = "PLANNING_NOT_FOUND";
+    this.publicCode = this.code;
     this.status = 404;
     this.statusCode = 404;
   }
@@ -262,6 +264,7 @@ export async function createPlanningDraft({
   sessions = [],
   evidence = [],
   guardrails = [],
+  changeProposal = null,
 }, db = pool) {
   if (!profileId || !planId) throw new TypeError("profileId y planId son obligatorios");
   if (!Number.isInteger(weekNumber) || weekNumber < 1) throw new TypeError("weekNumber debe ser un entero positivo");
@@ -407,7 +410,33 @@ export async function createPlanningDraft({
       guardrailRows.push(rows[0]);
     }
 
-    return { run: planningRun, revision: draft, sessions: sessionRows, evidence: evidenceRows, guardrails: guardrailRows };
+    let changeProposalRow = null;
+    if (changeProposal) {
+      const { rows } = await client.query(
+        `INSERT INTO plan_change_proposals
+          (athlete_profile_id, training_plan_id, planning_run_id, weekly_plan_revision_id,
+           conversation_id, message_id, revision_number, change_type, effective_date,
+           source_session_key, target_session_key, payload, reason, public_reason,
+           evidence_state, confidence)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+         RETURNING *;`,
+        [profileId, planId, planningRun.id, draft.id,
+          changeProposal.conversationId ?? changeProposal.conversation_id ?? null,
+          changeProposal.messageId ?? changeProposal.message_id ?? null,
+          changeProposal.revisionNumber ?? changeProposal.revision_number ?? revisionNumber,
+          changeProposal.changeType ?? changeProposal.change_type,
+          dateOnly(changeProposal.effectiveDate ?? changeProposal.effective_date),
+          changeProposal.sourceSessionKey ?? changeProposal.source_session_key ?? null,
+          changeProposal.targetSessionKey ?? changeProposal.target_session_key ?? null,
+          json(changeProposal.payload, {}), changeProposal.reason ?? null,
+          changeProposal.publicReason ?? changeProposal.public_reason ?? null,
+          changeProposal.evidenceState ?? changeProposal.evidence_state ?? null,
+          changeProposal.confidence ?? null],
+      );
+      changeProposalRow = rows[0];
+    }
+
+    return { run: planningRun, revision: draft, sessions: sessionRows, evidence: evidenceRows, guardrails: guardrailRows, changeProposal: changeProposalRow };
   });
 }
 
@@ -464,11 +493,21 @@ export async function acceptWeeklyPlanRevision({ revisionId, profileId, expected
             SET status='superseded', superseded_at=$2, updated_at=now()
           WHERE id=$1;`, [active.id, decidedAt],
       );
+      await client.query(
+        `UPDATE plan_change_proposals
+            SET status='superseded', superseded_at=$2, updated_at=now()
+          WHERE weekly_plan_revision_id=$1 AND status='accepted';`, [active.id, decidedAt],
+      );
     }
     await client.query(
       `UPDATE weekly_plan_revisions
           SET status='accepted', accepted_at=$2, updated_at=now()
         WHERE id=$1;`, [candidate.id, decidedAt],
+    );
+    await client.query(
+      `UPDATE plan_change_proposals
+          SET status='accepted', accepted_at=$2, updated_at=now()
+        WHERE weekly_plan_revision_id=$1 AND status='draft';`, [candidate.id, decidedAt],
     );
     return getWeeklyPlanRevision(candidate.id, profileId, client);
   });
@@ -487,6 +526,11 @@ export async function rejectWeeklyPlanRevision({ revisionId, profileId, expected
           SET status='rejected', rejected_at=$2, updated_at=now()
         WHERE id=$1;`, [candidate.id, decidedAt],
     );
+    await client.query(
+      `UPDATE plan_change_proposals
+          SET status='rejected', rejected_at=$2, updated_at=now()
+        WHERE weekly_plan_revision_id=$1 AND status='draft';`, [candidate.id, decidedAt],
+    );
     return getWeeklyPlanRevision(candidate.id, profileId, client);
   });
 }
@@ -496,7 +540,8 @@ export async function getWeeklyPlanRevision(revisionId, profileId, db = pool) {
     `SELECT r.*, tw.numero_semana AS week_number, tw.training_plan_id,
             pr.kind AS run_kind, pr.status AS run_status, pr.provider, pr.model,
             pr.prompt_version, pr.schema_version, pr.rules_version, pr.input_hash,
-            pr.retrieval_diagnostics, pr.validation_results, pr.latency_ms
+            pr.retrieval_diagnostics, pr.validation_results, pr.validated_output,
+            pr.latency_ms
        FROM weekly_plan_revisions r
        JOIN training_weeks tw ON tw.id = r.training_week_id
        JOIN planning_runs pr ON pr.id = r.planning_run_id

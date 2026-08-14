@@ -207,15 +207,25 @@ test("el coach responde citando y persiste la conversación con las citas", asyn
 test("un cambio propuesto se valida y se registra en ai_recommendations", async () => {
   const { db, profileId, chunks } = await escenario();
   const llm = llmQueDevuelve(`Descansa hoy con respaldo del fragmento ${chunks[0]}.\n<<CAMBIO>>{"tipo":"descansar","dia":"jueves","de":"RUN B","a":"","motivo":"dolor 3/10"}<<FIN>>`);
-  const salida = await responder(profileId, "me duele el sóleo", deps(db, llm));
+  let linked = null;
+  const salida = await responder(profileId, "me duele el sóleo", {
+    ...deps(db, llm),
+    onValidatedChange: async (request) => {
+      linked = request;
+      return { proposalId: "33333333-3333-4333-8333-333333333333", proposalRevision: 2, semana: 3 };
+    },
+  });
 
   assert.equal(salida.cambio.tipo, "descansar");
+  assert.equal(salida.cambio.proposalRevision, 2);
+  assert.equal(linked.cambio.tipo, "descansar", "el cambio validado se delega en el planificador semanal");
   assert.equal(salida.citas[0].id, chunks[0], "todo CAMBIO aceptado por el backend conserva una cita UUID entregada");
   assert.ok(!salida.texto.includes("<<CAMBIO>>"), "el bloque no se muestra al usuario");
   const rec = await db.query(`SELECT origen, tipo, provider, model FROM ai_recommendations;`);
   assert.deepEqual(rec.rows[0], { origen: "coach_chat", tipo: "descansar", provider: "local", model: "test-model" });
-  const mensajes = await db.query(`SELECT citas FROM messages WHERE role='assistant';`);
+  const mensajes = await db.query(`SELECT citas,cambio_propuesto FROM messages WHERE role='assistant';`);
   assert.deepEqual(mensajes.rows[0].citas, [chunks[0]]);
+  assert.equal(mensajes.rows[0].cambio_propuesto.proposalId, "33333333-3333-4333-8333-333333333333");
   await db.close();
 });
 

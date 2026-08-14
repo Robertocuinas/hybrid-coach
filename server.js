@@ -21,6 +21,7 @@ import authRoutes from "./server/routes/auth.js";
 import apiRoutes from "./server/routes/api.js";
 import adminRoutes from "./server/routes/admin.js";
 import coachRoutes from "./server/routes/coach.js";
+import planningRoutes from "./server/routes/planning.js";
 import evidenceRoutes from "./server/routes/evidence.js";
 import syncRoutes from "./server/routes/sync.js";
 import aiSettingsRoutes from "./server/routes/ai-settings.js";
@@ -105,6 +106,7 @@ app.use("/api/ai/settings", aiSettingsRoutes);
    y no debe caer en los manejadores JSON genéricos. */
 app.use("/api/admin/documents/upload", uploadRateLimiter);
 app.use("/api/admin", adminRoutes);
+app.use("/api/planning", aiRateLimiter, planningRoutes);
 app.use("/api/coach", aiRateLimiter, coachRoutes);
 app.use("/api/evidence", evidenceRoutes);
 app.use("/api", apiRoutes);
@@ -311,8 +313,8 @@ app.use((error, _req, res, _next) => {
     : Number.isInteger(requested) && requested >= 400 && requested < 600 ? requested
       : 500;
   if (status === 500) console.error("Error interno de API:", error.name, error.code || "");
-  const safeMessage = status < 500 && error.message ? error.message
-    : status === 409 ? "El registro ya existe" : "Error interno";
+  const safeMessage = error.publicMessage || (status < 500 && error.message ? error.message
+    : status === 409 ? "El registro ya existe" : "Error interno");
   res.status(status).json({ ok: false, message: safeMessage, ...(error.publicCode ? { code: error.publicCode } : {}) });
 });
 

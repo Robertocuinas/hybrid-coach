@@ -6,6 +6,7 @@ import {
   esGym, estadoDia, iso, lunesDe, parse, semanaPlan, sesionDeFecha,
   ultimaVezEjercicio, weekOf,
 } from "./agenda.js";
+import { ejecutarAccion } from "./acciones.js";
 import { BIBLIO_SEED } from "./data/biblioSeed.js";
 import { documentoDesdeAPI, documentoParaAPI } from "./data/documentAdapter.js";
 import {
@@ -200,6 +201,48 @@ const CSS = `
 /* ===== Estados vacíos (§18) ===== */
 .hc .vacio{text-align:center;padding:26px 14px}
 .hc .vacio .ic{font-size:30px;opacity:.5;display:block;margin-bottom:8px}
+
+/* ===== Coach global: acceso permanente =====
+   Va por encima de la nav inferior y desplazado a la derecha para no tapar
+   ninguna de las cinco pestañas. En móvil el pulgar llega sin recolocar la
+   mano; en escritorio queda en la esquina, fuera de la columna de contenido. */
+.hc .fab{position:fixed;right:16px;bottom:calc(84px + env(safe-area-inset-bottom));z-index:55;
+ width:54px;height:54px;border-radius:50%;border:1px solid var(--gym);background:var(--gym);
+ color:#12202C;font-size:22px;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.45);
+ display:grid;place-items:center;transition:transform .15s}
+.hc .fab:hover{transform:scale(1.06)}
+.hc .fab:active{transform:scale(.96)}
+.hc .fab .punto{position:absolute;top:2px;right:2px;width:11px;height:11px;border-radius:50%;
+ background:var(--run);border:2px solid var(--ink)}
+@media (min-width:1024px){.hc .fab{right:28px;bottom:28px;width:58px;height:58px}}
+
+/* El panel: hoja inferior en móvil, columna lateral en escritorio. En ambos
+   casos la pantalla de debajo sigue visible, que es el punto de §1. */
+.hc .cpanel{position:fixed;inset:0;z-index:75;background:rgba(4,9,14,.6);display:flex;
+ align-items:flex-end;justify-content:center}
+.hc .cpanel .hoja{background:var(--ink);border:1px solid var(--line);border-radius:16px 16px 0 0;
+ width:100%;max-width:620px;height:min(86vh,760px);display:flex;flex-direction:column;
+ padding:0 14px calc(12px + env(safe-area-inset-bottom));box-shadow:0 -10px 40px rgba(0,0,0,.5)}
+.hc .cpanel .asa{width:38px;height:4px;border-radius:2px;background:var(--line);margin:9px auto 4px;flex:0 0 auto}
+.hc .cpanel .cuerpo{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
+@media (min-width:1024px){
+ .hc .cpanel{align-items:stretch;justify-content:flex-end;background:transparent;pointer-events:none}
+ .hc .cpanel .hoja{pointer-events:auto;height:100%;max-width:420px;border-radius:0;
+  border-right:0;border-top:0;border-bottom:0;box-shadow:-10px 0 40px rgba(0,0,0,.45);padding-bottom:12px}
+ .hc .cpanel .asa{display:none}
+}
+
+/* Acciones rápidas: rejilla de atajos que cambian según la pantalla (§21, §22). */
+.hc .rapidas{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:10px 0}
+.hc .rapidas button{background:var(--surf2);border:1px solid var(--line);border-radius:10px;
+ padding:11px 10px;color:var(--paper);font-size:13px;text-align:left;cursor:pointer;min-height:48px}
+.hc .rapidas button:hover{border-color:var(--gym)}
+
+/* Tarjeta de resultado de una acción ejecutada. */
+.hc .accion{border:1px solid var(--line);border-left:3px solid var(--run);border-radius:9px;
+ background:var(--surf);padding:11px 13px;margin-bottom:9px}
+.hc .accion.pendiente{border-left-color:var(--gym)}
+.hc .accion.fallo{border-left-color:var(--alert)}
 
 /* ===== Tabla de series de fuerza (§23) ===== */
 .hc .series{display:grid;grid-template-columns:26px 1fr 1fr 62px;gap:6px;align-items:center;margin-bottom:7px}
@@ -1346,6 +1389,7 @@ export default function HybridCoach({ user, activeProfile, onLogout }) {
      cada pantalla para que abrir un día en el calendario y saltar a Entrenar
      conserve la fecha en vez de volver a hoy (§16). */
   const [fechaSel, setFechaSel] = useState(() => iso(new Date()));
+  const [coachAbierto, setCoachAbierto] = useState(false);
   const [toast, setToast] = useState(null);
   const stateKey = `${KEY_PREFIX}:${user.id}`;
   const syncRef = useRef(null);
@@ -1406,6 +1450,17 @@ export default function HybridCoach({ user, activeProfile, onLogout }) {
   const wk = weekOf(P.plan, today);
   const full = { ...ctx, wk, curW: wk.w };
 
+  /* Lo mínimo para que el coach sepa dónde está el atleta (§12). Solo cuatro
+     campos, no el estado de la pantalla: el servidor los filtra por lista
+     blanca y de ahí no puede salir texto arbitrario hacia el prompt. */
+  const diaMirado = tab === "entrenar" ? (fechaSel || today) : today;
+  const contextoPantalla = {
+    vista: pantalla || tab,
+    fecha: diaMirado,
+    sesion: sesionDeFecha(P, diaMirado).code || null,
+    semana: weekOf(P.plan, diaMirado).w,
+  };
+
   return (
     <div className="hc">
       <style>{CSS}</style>
@@ -1439,6 +1494,17 @@ export default function HybridCoach({ user, activeProfile, onLogout }) {
           </>)}
       </div>
       {toast && <Toast m={toast} />}
+
+      {/* Coach global (§20). No aparece en su propia pestaña —ahí ya está
+          entero— ni durante el cuestionario inicial, donde taparía el flujo. */}
+      {tab !== "coach" && (
+        <button className="fab" aria-label="Abrir el coach" title="Coach"
+          onClick={() => setCoachAbierto(true)}>🤖</button>
+      )}
+      {coachAbierto && (
+        <Coach {...full} modo="panel" pantalla={contextoPantalla} onCerrar={() => setCoachAbierto(false)} />
+      )}
+
       <nav className="nav">
         {[["hoy", "◉", "Hoy"], ["semana", "▤", "Semana"], ["entrenar", "▶", "Entrenar"], ["coach", "◍", "Coach"], ["progreso", "◢", "Progreso"]].map(([k, i, l]) => (
           <button key={k} className={tab === k && !pantalla ? "on" : ""} onClick={() => { setTab(k); setPantalla(null); }}><span className="ic">{i}</span>{l}</button>
@@ -2390,7 +2456,46 @@ const api = async (url, opciones = {}) => {
    persiste la conversación en PostgreSQL, y por tanto el único que la hace
    visible desde cualquier dispositivo con la misma cuenta. De paso trae el
    retrieval real, con citas comprobables contra la biblioteca. */
-function Coach({ P, curW, today, update, notify, setPantalla, setTab }) {
+/* Atajos que cambian según dónde estaba el atleta al abrir el coach (§21, §22).
+   No son rutas: solo redactan por él la primera frase de la conversación. */
+const RAPIDAS = {
+  entrenar: [["Explícame este entrenamiento", "¿Por qué me toca este entrenamiento hoy y qué busca?"],
+    ["No puedo hoy", "Hoy no voy a poder entrenar. ¿Qué hago?"],
+    ["Tengo molestias", "Tengo molestias y no sé si debería entrenar."],
+    ["Bajar intensidad", "¿Puedo bajar la intensidad de hoy?"]],
+  semana: [["Explica la semana", "¿Por qué está repartida así mi semana?"],
+    ["Cambiar un día", "Necesito cambiar un día de esta semana."],
+    ["Menos días", "Esta semana tengo menos días de los previstos."],
+    ["Sin gimnasio", "Esta semana no puedo ir al gimnasio."]],
+  progreso: [["¿Voy bien?", "¿Voy bien de cara a mi objetivo?"],
+    ["Mi progresión", "¿Cómo está evolucionando mi progresión?"]],
+  hoy: [["¿Qué entreno hoy?", "¿Qué entrenamiento me toca hoy?"],
+    ["Registrar sueño", "Anota que esta noche he dormido 7 horas."],
+    ["Cómo me siento", "Quiero registrar cómo me he encontrado hoy."],
+    ["Prepara mi semana", "Prepárame la semana."]],
+};
+const rapidasDe = (vista) => RAPIDAS[vista] || RAPIDAS.hoy;
+
+/* Qué va a pasar exactamente, en una frase. Se muestra ANTES de aplicar nada:
+   una confirmación que no dice qué se confirma no es una confirmación. */
+function descripcionAccion(accion) {
+  const p = accion?.parametros || {};
+  if (accion?.accion === "actualizar_perfil") {
+    const etiquetas = { dias: "días habituales", distancia: "objetivo", fechaCarrera: "fecha de carrera",
+      edad: "edad", peso: "peso", altura: "altura", equipamiento: "equipamiento",
+      expCarrera: "experiencia corriendo", expFuerza: "experiencia en gimnasio" };
+    return "Actualizar tu perfil: " + Object.entries(p.campos || {})
+      .map(([k, v]) => `${etiquetas[k] || k} → ${Array.isArray(v) ? v.map((d) => DSHORT[d]).join(" ") : v}`)
+      .join(", ") + ".";
+  }
+  if (accion?.accion === "generar_semana") {
+    return `Preparar la semana ${p.semana || "actual"} con estos días: ${(p.dias || []).map((d) => DAYS[d]).join(", ")}.`;
+  }
+  return "Aplicar el cambio propuesto.";
+}
+
+function Coach({ P, curW, today, update, notify, setPantalla, setTab, modo = "tab", pantalla = null, onCerrar = null }) {
+  const esPanel = modo === "panel";
   const [msgs, setMsgs] = useState([]);
   const [convId, setConvId] = useState(null);      // conversación viva en el servidor
   const [historial, setHistorial] = useState([]);
@@ -2413,6 +2518,26 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab }) {
   useEffect(() => { void cargarHistorial(); }, []);
 
   const abierta = verId ? historial.find((c) => c.id === verId) : null;
+
+  /* Lo que el ejecutor necesita de la aplicación. Se pasa por dependencia para
+     que src/acciones.js no importe nada del JSX y se pueda probar suelto. */
+  const depsAccion = {
+    update, hoy: today,
+    detalle: (w, code) => { try { return sessionDetail(P.plan, P.perfil, w, code, P); } catch { return null; } },
+    semanaDe: (fecha) => weekOf(P.plan, fecha || today).w,
+  };
+
+  /* Confirmar una acción de nivel "confirmacion": es el ACEPTAR de §16. */
+  const confirmarAccion = async (i, aceptar) => {
+    const m = msgs[i];
+    if (!aceptar) {
+      setMsgs((c) => c.map((x, j) => (j === i ? { ...x, accionPendiente: false, accionRechazada: true } : x)));
+      return;
+    }
+    const resultado = await ejecutarAccion(m.accion, P, depsAccion);
+    setMsgs((c) => c.map((x, j) => (j === i ? { ...x, accionPendiente: false, resultado } : x)));
+    notify(resultado.ok ? resultado.mensaje : "No se pudo aplicar: " + resultado.mensaje);
+  };
 
   const nueva = () => { setVerId(null); setConvId(null); setMsgs([]); setQ(""); setDrawer(null); };
 
@@ -2454,12 +2579,30 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab }) {
     try {
       const data = await api("/api/coach/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ consulta: content, conversationId: enHistorial ? null : convId, weekNumber: curW }),
+        body: JSON.stringify({
+          consulta: content, conversationId: enHistorial ? null : convId, weekNumber: curW,
+          /* Dónde estaba el atleta al escribir: permite que "esto" o "hoy" se
+             refieran a lo que tiene delante (§12). El servidor lo filtra por
+             lista blanca, así que no es una vía para inyectar en el prompt. */
+          pantalla,
+        }),
       });
       if (data.conversationId) setConvId(data.conversationId);
+
+      /* Acciones de nivel lectura y escritura se ejecutan en cuanto llegan: el
+         atleta ya las ha pedido explícitamente y confirmarlas sería ruido
+         (§15, §16). Las de nivel confirmación se muestran y esperan. */
+      let resultado = null;
+      const accion = data.accion || null;
+      if (accion && accion.nivel !== "confirmacion") {
+        resultado = await ejecutarAccion(accion, P, depsAccion);
+        if (resultado.ok && accion.nivel === "escritura") void cargarHistorial();
+      }
+
       setMsgs([...next, {
         role: "assistant", content: data.texto, cambio: data.cambio || null,
         pendiente: !!data.cambio, citas: data.citas || [], avisos: data.avisos || [],
+        accion, resultado, accionPendiente: accion?.nivel === "confirmacion",
       }]);
       void cargarHistorial();   // el título y la fecha los pone el servidor
     } catch (e) {
@@ -2552,8 +2695,15 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab }) {
     {cargando && <p className="eyebrow">Abriendo conversación…</p>}
     {!msgs.length && !cargando && (<div className="card flat">
       <h3>¿En qué puedo ayudarte hoy?</h3>
-      <p className="sm muted" style={{ marginTop: 6 }}>Conozco tu perfil, tu plan, tus reglas y todo lo que has registrado. También tu bibliografía: en cada respuesta selecciono las referencias relevantes para lo que preguntas.</p>
-      {sugerencias.map((s) => <button key={s} className="btn ghost sm" style={{ width: "100%", textAlign: "left", marginBottom: 7, textTransform: "none", fontFamily: "'IBM Plex Sans',sans-serif", letterSpacing: 0 }} onClick={() => send(s)}>{s}</button>)}
+      {/* Los atajos cambian según la pantalla desde la que se abrió (§22). */}
+      <div className="rapidas">
+        {rapidasDe(pantalla?.vista).map(([etiqueta, frase]) =>
+          <button key={etiqueta} onClick={() => send(frase)}>{etiqueta}</button>)}
+      </div>
+      {!esPanel && (<>
+        <p className="sm muted" style={{ marginTop: 6 }}>Conozco tu perfil, tu plan, tus reglas y todo lo que has registrado. También tu bibliografía: en cada respuesta selecciono las referencias relevantes para lo que preguntas.</p>
+        {sugerencias.map((s) => <button key={s} className="btn ghost sm" style={{ width: "100%", textAlign: "left", marginBottom: 7, textTransform: "none", fontFamily: "'IBM Plex Sans',sans-serif", letterSpacing: 0 }} onClick={() => send(s)}>{s}</button>)}
+      </>)}
     </div>)}
     {msgs.map((m, i) => (<div key={i}>
       <div className={"chatbox" + (m.role === "user" ? " me" : "")}>
@@ -2568,10 +2718,58 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab }) {
         {m.pendiente && !abierta ? (<div className="row" aria-busy={resolviendo === i}><button className="btn primary sm" style={{ flex: 1 }} disabled={resolviendo !== null} onClick={() => resolve(i, true)}>{resolviendo === i ? "Resolviendo…" : "Aceptar cambio"}</button><button className="btn ghost sm" style={{ flex: 1 }} disabled={resolviendo !== null} onClick={() => resolve(i, false)}>Rechazar</button></div>)
           : <span className={"tag " + (m.aceptado ? "ok" : "")}>{m.aceptado ? "Aceptado y registrado" : m.pendiente ? "Sin resolver" : "Rechazado"}</span>}
       </div>)}
+
+      {/* Resultado de una acción ya ejecutada: lectura o escritura simple. */}
+      {m.resultado && !m.accionPendiente && (
+        <div className={"accion" + (m.resultado.ok ? "" : " fallo")}>
+          <p className="sm" style={{ margin: 0 }}>{m.resultado.mensaje}</p>
+          {m.resultado.resumen?.tipo === "sesion" && m.resultado.resumen.desc && (
+            <p className="xs muted" style={{ margin: "6px 0 0" }}>{m.resultado.resumen.desc}</p>)}
+        </div>)}
+
+      {/* Acción que cambia algo importante: se propone y espera (§15, §16). */}
+      {m.accionPendiente && !abierta && (<div className="accion pendiente">
+        <span className="tag gym">Requiere tu confirmación</span>
+        <p className="sm" style={{ margin: "8px 0 4px" }}>{descripcionAccion(m.accion)}</p>
+        {m.accion.motivo && <p className="xs muted" style={{ margin: "0 0 9px" }}>{m.accion.motivo}</p>}
+        <div className="row">
+          <button className="btn primary sm" style={{ flex: 1 }} onClick={() => confirmarAccion(i, true)}>Aceptar</button>
+          <button className="btn ghost sm" style={{ flex: 1 }} onClick={() => confirmarAccion(i, false)}>Rechazar</button>
+        </div>
+      </div>)}
+      {m.accionRechazada && <span className="tag">Acción rechazada</span>}
+      {m.accion && !m.resultado && !m.accionPendiente && !m.accionRechazada && (
+        <p className="xs muted" style={{ margin: "0 0 9px" }}>La acción no se pudo preparar.</p>)}
     </div>))}
     {busy && <p className="eyebrow">Consultando tu historial…</p>}
     <div ref={endRef} />
   </>);
+
+  const escribir = (<div className="row" style={{ paddingTop: 8 }}>
+    <textarea rows="1" value={q} onChange={(e) => setQ(e.target.value)}
+      onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+      placeholder="Escribe a tu entrenador…" style={{ fontFamily: "'IBM Plex Sans',sans-serif", resize: "none" }} />
+    <button className="btn primary" style={{ width: 72 }} onClick={() => send()} disabled={busy}>Enviar</button>
+  </div>);
+
+  /* Modo panel: mismo componente y misma lógica, otra presentación. Sin
+     columnas ni historial desplegado, para que quepa sobre la pantalla en la
+     que está trabajando el atleta (§1). */
+  if (esPanel) return (<div className="cpanel" onClick={onCerrar}>
+    <div className="hoja" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Coach">
+      <div className="asa" />
+      <div className="between" style={{ padding: "4px 0 8px", borderBottom: "1px solid var(--line)" }}>
+        <span className="eyebrow" style={{ margin: 0 }}>Coach{pantalla?.vista ? ` · ${pantalla.vista}` : ""}</span>
+        <div className="row" style={{ gap: 6 }}>
+          <button className="btn ghost sm" onClick={nueva}>Nueva</button>
+          <button className="btn ghost sm" onClick={() => { setTab("coach"); onCerrar?.(); }}>Ampliar</button>
+          <button className="icobtn" aria-label="Cerrar" onClick={onCerrar}>×</button>
+        </div>
+      </div>
+      <div className="cuerpo">{hilo}</div>
+      {escribir}
+    </div>
+  </div>);
 
   return (<div>
     <div className="between" style={{ marginTop: 8 }}>
@@ -3403,7 +3601,7 @@ function Razonamiento({ st, P, update, notify }) {
 
   return (<div>
     <div className="card flat">
-      <p className="sm" style={{ marginTop: 0 }}>La estructura del plan —semanas, techo de tirada larga, descargas, riesgo— la calcula el motor y no la toca la IA. Lo que se genera aquí es el <strong>razonamiento</strong>: por qué esa estructura tiene sentido para ti, apoyado en tu biblioteca, y matices que caben dentro de ella.</p>
+      <p className="sm" style={{ marginTop: 0 }}>La estrategia global —objetivo, fases, techo de tirada larga, descargas y riesgo— la fija el plan maestro. Aquí se explica ese marco con evidencia. La adaptación táctica de cada semana se genera aparte, en <strong>Mi semana</strong>, consultando tus datos y la biblioteca antes de decidir.</p>
       <p className="xs muted">Nada se aplica hasta que lo aceptas. Lo aceptado pasa a las decisiones del plan y al contexto del coach.</p>
       <button className="btn primary" onClick={generar} disabled={busy} style={{ marginTop: 8 }}>
         {busy ? "Razonando sobre tu biblioteca…" : ia ? "Regenerar razonamiento" : "Generar razonamiento con IA"}

@@ -3,18 +3,17 @@
    (docs/03-modelo-datos.md §11). */
 import express from "express";
 import { pool } from "../db/repositories/_helpers.js";
-import * as documentsRepo from "../db/repositories/documents.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireActiveProfile } from "../middleware/authorization.js";
-import { createLLMProvider, createRerankProvider, createToolRouterProvider, readRAGConfig } from "../ai/factory.js";
-import { crearDesdeConfig, resolveEmbeddingConfig } from "../ai/instance-embeddings.js";
+import { createToolRouterProvider } from "../ai/factory.js";
+import { resolveRAGRuntime } from "../ai/runtime.js";
+import { generateWeeklyPlanningProposal, publicWeeklyProposal } from "../domain/planning/application.js";
 import { responder } from "../domain/coach/chat.js";
 import { decisionesIA } from "../domain/coach/decisiones.js";
 import { listarDecisionesConCitas } from "../db/repositories/trainingPlans.js";
 import { deleteConversation, listConversationsByProfile } from "../db/repositories/aiConversations.js";
 import { compararSistemas, PREGUNTAS_COMPARACION } from "../domain/coach/comparacion.js";
 import { COACH_LOCAL_TOOLS, NEEDLE_SYSTEM_PROMPT } from "../domain/coach/local-tools.js";
-import { resolveUserLLMProvider } from "../ai/user-provider.js";
 
 const router = express.Router();
 router.use(requireAuth, requireActiveProfile);
@@ -27,26 +26,9 @@ const perezoso = (fabrica) => {
     return valor;
   };
 };
-const getLLM = perezoso(() => createLLMProvider());
-const getRerank = perezoso(() => createRerankProvider());
 const getToolRouter = perezoso(() => createToolRouterProvider());
 
-async function dependencias(userId) {
-  /* El proveedor de embeddings no se cachea aquí: su configuración vive en la
-     base de datos y un admin puede cambiarla sin reiniciar el servidor. */
-  const embeddingConfig = await resolveEmbeddingConfig();
-  return {
-    db: pool,
-    repo: documentsRepo,
-    llmProvider: await resolveUserLLMProvider(userId, { fallbackProvider: getLLM() }),
-    embeddingProvider: embeddingConfig.enabled ? crearDesdeConfig(embeddingConfig) : null,
-    rerankProvider: getRerank(),
-    indice: embeddingConfig.enabled
-      ? { provider: embeddingConfig.provider, model: embeddingConfig.model, dimensions: embeddingConfig.dimensions }
-      : null,
-    config: readRAGConfig(),
-  };
-}
+const dependencias = (userId) => resolveRAGRuntime(userId);
 
 const perfil = (req) => req.auth.athleteProfileId;
 
@@ -73,6 +55,21 @@ router.post("/chat", async (req, res, next) => {
     const salida = await responder(perfil(req), consulta, {
       ...deps,
       conversationId: req.body?.conversationId || null,
+      onValidatedChange: async ({ cambio, conversationId }) => {
+        const weekNumber = Number(req.body?.weekNumber ?? req.body?.semana);
+        const saved = await generateWeeklyPlanningProposal(perfil(req), { weekNumber }, {
+          ...deps,
+          kind: "coach_change",
+          coachRequest: { consulta: consulta.slice(0, 1000), cambio, conversationId },
+        });
+        const dto = publicWeeklyProposal(saved).proposal;
+        return {
+          proposalId: dto.id,
+          proposalRevision: dto.revisionNumber,
+          semana: dto.weekNumber,
+          proposalEvidenceState: dto.evidenceState,
+        };
+      },
       /* Contexto de la pantalla desde la que se abre el coach. Se filtra por
          lista blanca en describirPantalla(): el cliente no puede inyectar
          texto arbitrario en el prompt por esta vía. */

@@ -145,6 +145,14 @@ test("escenario 4: dolor >=5 bloquea una propuesta con carrera", () => {
   assert.ok(result.hard.some((x) => x.code === "PAIN_HIGH_IMPACT"));
 });
 
+test("las modalidades desactivadas por el atleta son un guardrail duro", () => {
+  const proposal = outputFor();
+  const noRunning = evaluarGuardrailsPlan(proposal, context({ constraints: { allowRunning: false, allowStrength: true } }), {});
+  const noStrength = evaluarGuardrailsPlan(proposal, context({ constraints: { allowRunning: true, allowStrength: false } }), {});
+  assert.ok(noRunning.hard.some((item) => item.code === "RUNNING_NOT_SELECTED"));
+  assert.ok(noStrength.hard.some((item) => item.code === "STRENGTH_NOT_SELECTED"));
+});
+
 test("dolor en reposo activa fallback clínico antes de retrieval o LLM", async () => {
   let retrievals = 0, calls = 0;
   const result = await planificarSemana(context({ checkins: [{ fecha: "2026-08-16", dolor: 4, dolorEnReposo: true }] }), {

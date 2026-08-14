@@ -156,12 +156,19 @@ test("aceptar usa la base esperada, sustituye la revisión previa y rechaza borr
     revisionId: first.revision.id, profileId: ids.profileId, expectedRevision: 1,
   }, db);
 
-  const second = await createPlanningDraft(draftInput({ ...ids, baseRevisionId: first.revision.id }), db);
+  const secondInput = draftInput({ ...ids, baseRevisionId: first.revision.id });
+  secondInput.changeProposal = {
+    changeType: "mover", sourceSessionKey: "GYM A", targetSessionKey: "GYM A",
+    payload: { dia: "miércoles" }, reason: "Separar cargas.", evidenceState: "sufficient", confidence: 0.8,
+  };
+  const second = await createPlanningDraft(secondInput, db);
   const stale = await createPlanningDraft(draftInput({ ...ids, baseRevisionId: first.revision.id }), db);
   const accepted = await acceptWeeklyPlanRevision({
     revisionId: second.revision.id, profileId: ids.profileId, expectedRevision: 2,
   }, db);
   assert.equal(accepted.revision.status, "accepted");
+  const linkedAccepted = await db.query(`SELECT status FROM plan_change_proposals WHERE weekly_plan_revision_id=$1`, [second.revision.id]);
+  assert.equal(linkedAccepted.rows[0].status, "accepted", "aceptar la semana resuelve también el cambio del Coach enlazado");
 
   const { rows: states } = await db.query(
     `SELECT revision,status FROM weekly_plan_revisions ORDER BY revision;`,
@@ -175,12 +182,18 @@ test("aceptar usa la base esperada, sustituye la revisión previa y rechaza borr
     (error) => error instanceof PlanningConflictError && error.status === 409,
   );
 
-  const rejectedDraft = await createPlanningDraft(draftInput({ ...ids, baseRevisionId: second.revision.id }), db);
+  const rejectedInput = draftInput({ ...ids, baseRevisionId: second.revision.id });
+  rejectedInput.changeProposal = {
+    changeType: "reducir_volumen", payload: { de: "RUN A" }, reason: "Fatiga.", evidenceState: "sufficient", confidence: 0.7,
+  };
+  const rejectedDraft = await createPlanningDraft(rejectedInput, db);
   const rejected = await rejectWeeklyPlanRevision({
     revisionId: rejectedDraft.revision.id, profileId: ids.profileId,
     expectedRevision: rejectedDraft.revision.revision,
   }, db);
   assert.equal(rejected.revision.status, "rejected");
+  const linkedRejected = await db.query(`SELECT status FROM plan_change_proposals WHERE weekly_plan_revision_id=$1`, [rejectedDraft.revision.id]);
+  assert.equal(linkedRejected.rows[0].status, "rejected");
   await db.close();
 });
 

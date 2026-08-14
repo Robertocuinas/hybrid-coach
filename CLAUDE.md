@@ -61,6 +61,21 @@ docs/                   Documentación de la evolución a BD + RAG (leer antes d
 precarga de pesos). Vive fuera del JSX para poder probarse con `node --test`:
 ver `src/agenda.test.js`.
 
+### Acciones del Coach
+
+El Coach no ejecuta: propone. El reparto es deliberado y **no se rompe sin permiso**:
+
+| Pieza | Dónde | Qué hace |
+|---|---|---|
+| Catálogo y validación | `server/domain/coach/acciones.js` | Lista cerrada de acciones con lista blanca de parámetros y tres niveles: `lectura`, `escritura`, `confirmacion` |
+| Extracción | bloque `<<ACCION>>` en `chat.js` | Mismo patrón que `<<CAMBIO>>`. **No se usa tool calling nativo**: el formato difiere entre proveedores y la capa es neutra (§8) |
+| Ejecución en cliente | `src/acciones.js` | Consultas y registros propios. Escribe en el estado del cliente y viaja por el sync |
+| Ejecución de plan | `src/planningApi.js` | **Toda la programación semanal es del planificador IA + RAG.** El Coach delega, no genera |
+
+`catalogoParaPrompt({ planificador })` oculta las acciones del planificador mientras
+`server/routes/planning.js` no exista, para que el modelo no ofrezca lo que no se puede
+cumplir. Se activa solo cuando esa ruta aparece.
+
 ## 4. Reglas duras — no romper sin permiso explícito
 
 1. **No toques el motor determinista sin que se te pida explícitamente.**

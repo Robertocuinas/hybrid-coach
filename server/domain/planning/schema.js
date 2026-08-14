@@ -110,6 +110,8 @@ export function validarPlanSemanal(valor, opciones = {}) {
     for (const key of ["master_plan_id", "master_week_id"]) if (valor.week[key] !== null && !esCadena(valor.week[key], 1, 100)) error(errores, `$.week.${key}`, "TYPE", "debe ser null o identificador");
     if (opciones.weekStart && valor.week.start_date !== opciones.weekStart) error(errores, "$.week.start_date", "CONTEXT_MISMATCH", "no coincide con la semana solicitada");
     if (opciones.weekEnd && valor.week.end_date !== opciones.weekEnd) error(errores, "$.week.end_date", "CONTEXT_MISMATCH", "no coincide con la semana solicitada");
+    if (opciones.masterPlanId && String(valor.week.master_plan_id) !== String(opciones.masterPlanId)) error(errores, "$.week.master_plan_id", "CONTEXT_MISMATCH", "no coincide con el plan maestro solicitado");
+    if (opciones.masterWeekId && String(valor.week.master_week_id) !== String(opciones.masterWeekId)) error(errores, "$.week.master_week_id", "CONTEXT_MISMATCH", "no coincide con la semana maestra solicitada");
   }
 
   if (clavesExactas(valor.summary, ["public_reason", "confidence", "evidence_state"], "$.summary", errores)) {
@@ -142,6 +144,10 @@ export function validarPlanSemanal(valor, opciones = {}) {
     validarPrescripcion(s.prescription, `${path}.prescription`, errores);
     validarRefs(s.evidence_ids, `${path}.evidence_ids`, errores, entregados);
     validarCambioSesion(s.change_from_master, `${path}.change_from_master`, errores);
+    if (s.change_from_master?.master_session_id !== null && opciones.masterSessionIds?.length
+      && !new Set(opciones.masterSessionIds.map(String)).has(String(s.change_from_master.master_session_id))) {
+      error(errores, `${path}.change_from_master.master_session_id`, "CONTEXT_MISMATCH", "la sesión maestra no pertenece a esta semana");
+    }
   });
 
   if (!Array.isArray(valor.changes_from_master_plan)) error(errores, "$.changes_from_master_plan", "TYPE", "debe ser un array");
@@ -181,4 +187,3 @@ export function validarPlanSemanal(valor, opciones = {}) {
 
 export const parseWeeklyPlan = parsearPlanSemanal;
 export const validateWeeklyPlan = validarPlanSemanal;
-

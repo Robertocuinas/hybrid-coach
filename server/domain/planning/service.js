@@ -118,6 +118,11 @@ function validarSalida(bruto, contexto, analytics, evidence, guardrailConfig) {
     availabilityDays: idsDisponibilidad(contexto),
     weekStart: semana.start,
     weekEnd: semana.end,
+    masterPlanId: contexto.plan?.id || null,
+    masterWeekId: contexto.week?.id || null,
+    masterSessionIds: (contexto.week?.sessions || contexto.week?.sesiones || [])
+      .map((session) => session.id || session.planned_session_id)
+      .filter(Boolean),
   });
   if (!schema.ok) return { ok: false, output: null, schema, guardrails: null, errors: schema.errors };
   const guardrails = evaluarGuardrailsPlan(schema.value, contexto, analytics, guardrailConfig);

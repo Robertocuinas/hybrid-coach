@@ -105,6 +105,13 @@ export function evaluarGuardrailsPlan(propuesta, contexto = {}, analitica = {}, 
     if ((dias.size || fechas.size) && !dias.has(s.day_of_week) && !fechas.has(s.date)) registrar(hard, "UNAVAILABLE_DAY", "Sesión colocada en un día no disponible.", `$.sessions[${i}].date`);
     if (cfg.requireEvidencePerSession && !(s.evidence_ids || []).length) registrar(hard, "SESSION_WITHOUT_EVIDENCE", "Cada sesión propuesta debe indicar la evidencia usada.", `$.sessions[${i}].evidence_ids`);
   });
+  const constraints = contexto.constraints || contexto.restricciones || {};
+  if (constraints.allowRunning === false && sesiones.some(esCarrera)) {
+    registrar(hard, "RUNNING_NOT_SELECTED", "El atleta desactivó la carrera para esta semana.", "$.sessions");
+  }
+  if (constraints.allowStrength === false && sesiones.some(esFuerza)) {
+    registrar(hard, "STRENGTH_NOT_SELECTED", "El atleta desactivó la fuerza para esta semana.", "$.sessions");
+  }
   for (const [i, cambio] of (propuesta?.changes_from_master_plan || []).entries()) {
     if (!(cambio.evidence_ids || []).length) registrar(hard, "CHANGE_WITHOUT_EVIDENCE", "Todo cambio respecto al plan maestro debe indicar la evidencia usada.", `$.changes_from_master_plan[${i}].evidence_ids`);
   }
