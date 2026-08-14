@@ -51,5 +51,3 @@ export class AnthropicProvider extends LLMProvider {
     };
   }
 }
-
-export const anthropicEndpoint = ENDPOINT;

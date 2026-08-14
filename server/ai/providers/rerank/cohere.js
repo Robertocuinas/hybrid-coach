@@ -49,5 +49,3 @@ export function normalizarResultados(results, totalDocumentos, provider) {
     .filter((row) => Number.isInteger(row.index) && row.index >= 0 && row.index < totalDocumentos && Number.isFinite(row.score))
     .sort((a, b) => b.score - a.score);
 }
-
-export const cohereRerankURL = COHERE_URL;

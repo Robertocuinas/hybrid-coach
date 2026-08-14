@@ -92,6 +92,13 @@ server/
 └── integrations/         strava, storage (R2)
 ```
 
+> Este árbol es el destino, no el estado actual. Ojo con crear carpetas vacías «para ir
+> preparando»: `domain/guardrails/` y `domain/nutrition/` existieron como esbozos sin usar y
+> el primero llegó a contener una lista de campos bloqueados **desactualizada y más
+> permisiva** que la real. Hoy los guardarraíles viven en `server/domain/coach/prompt.js`
+> (`CAMPOS_BLOQUEADOS`, `AJUSTES_PERMITIDOS`, que consume `coach/validacion.js`) y su reflejo
+> en `src/HybridCoach.jsx`. Una segunda copia de una regla de seguridad es peor que ninguna.
+
 **Regla de dependencias:** `domain/` no importa nada de `ai/` ni de `db/`. El motor
 determinista debe poder ejecutarse y testearse sin base de datos ni proveedor de IA.
 

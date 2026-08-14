@@ -26,5 +26,3 @@ export class VoyageEmbeddingProvider extends EmbeddingProvider {
     });
   }
 }
-
-export const voyageEmbeddingURL = VOYAGE_URL;

@@ -7,5 +7,3 @@ export class OpenAIProvider extends OpenAICompatibleProvider {
     super({ apiKey, model, baseURL, fetchImpl, provider: "openai", nativeJsonMode: true, reliableStructuredOutput: true });
   }
 }
-
-export const openAIBaseURL = DEFAULT_BASE_URL;
