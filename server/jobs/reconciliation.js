@@ -6,6 +6,24 @@ const TOLERANCE = 0.001;
 
 const numeric = (value) => Number(value || 0);
 
+const ERROR_HINTS = Object.freeze({
+  "28P01": "PostgreSQL rechazó DATABASE_URL: usuario o contraseña no válidos.",
+  "3D000": "La base indicada en DATABASE_URL no existe.",
+  ENOTFOUND: "No se pudo resolver el host de PostgreSQL.",
+  ECONNREFUSED: "PostgreSQL rechazó la conexión de red.",
+  ETIMEDOUT: "La conexión con PostgreSQL agotó el tiempo de espera.",
+});
+
+export function describeReconciliationError(error, env = process.env) {
+  if (ERROR_HINTS[error?.code]) return `${ERROR_HINTS[error.code]} (${error.code})`;
+  let message = String(error?.message || error?.name || "Error desconocido");
+  if (env.DATABASE_URL) message = message.split(env.DATABASE_URL).join("[DATABASE_URL]");
+  /* Defensa adicional por si una librería incluye una URL distinta en el
+     mensaje: se conserva host/ruta para diagnosticar, nunca la contraseña. */
+  message = message.replace(/(postgres(?:ql)?:\/\/[^:\s/]+:)[^@\s/]+@/gi, "$1***@");
+  return message.replace(/[\r\n]+/g, " ").slice(0, 300);
+}
+
 export function compareTotals(local, database) {
   const differences = {};
   for (const key of ["runningCount", "strengthSets", "checkins"]) {
@@ -59,7 +77,7 @@ export async function runReconciliation(queryable = pool, clock = () => new Date
 }
 
 export function startReconciliationJob({ intervalMs = DAY_MS, runImmediately = true } = {}) {
-  const execute = () => runReconciliation().catch((error) => console.error("Reconciliation job failed:", error.name, error.code || ""));
+  const execute = () => runReconciliation().catch((error) => console.error("Reconciliation job failed:", describeReconciliationError(error)));
   if (runImmediately) void execute();
   const timer = setInterval(execute, intervalMs);
   timer.unref?.();
@@ -72,7 +90,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     const unhealthy = results.filter((result) => result.status !== "green");
     if (unhealthy.length) process.exitCode = 2;
   } catch (error) {
-    console.error("Reconciliation job failed:", error.name, error.code || "");
+    console.error("Reconciliation job failed:", describeReconciliationError(error));
     process.exitCode = 1;
   } finally {
     await pool.end();

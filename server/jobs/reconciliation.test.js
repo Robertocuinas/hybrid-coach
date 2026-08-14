@@ -1,6 +1,19 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { compareTotals, runReconciliation } from "./reconciliation.js";
+import { compareTotals, describeReconciliationError, runReconciliation } from "./reconciliation.js";
+
+test("explica errores de conexión sin filtrar DATABASE_URL ni contraseñas", () => {
+  assert.equal(
+    describeReconciliationError({ code: "28P01" }, { DATABASE_URL: "postgresql://user:secret@db/railway" }),
+    "PostgreSQL rechazó DATABASE_URL: usuario o contraseña no válidos. (28P01)",
+  );
+  const unknown = describeReconciliationError(
+    new Error("falló postgresql://user:supersecret@db.internal/railway"),
+    {},
+  );
+  assert.equal(unknown, "falló postgresql://user:***@db.internal/railway");
+  assert.doesNotMatch(unknown, /supersecret/);
+});
 
 test("detecta diferencias reales con tolerancia numérica", () => {
   const diff = compareTotals(

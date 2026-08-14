@@ -1,6 +1,11 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { createSyncController } from "./sync.js";
+import {
+  DAYS, DSHORT, MESES, addDays, clamp, colorOf, contextoDelDia, daysBetween, eligeEstable,
+  esGym, estadoDia, iso, lunesDe, parse, semanaPlan, sesionDeFecha, tituloConversacion,
+  ultimaVezEjercicio, weekOf,
+} from "./agenda.js";
 import { BIBLIO_SEED } from "./data/biblioSeed.js";
 import { documentoDesdeAPI, documentoParaAPI } from "./data/documentAdapter.js";
 
@@ -96,10 +101,110 @@ const CSS = `
 .hc details summary{cursor:pointer;list-style:none}
 .hc details summary::-webkit-details-marker{display:none}
 @media (prefers-reduced-motion:reduce){.hc *{transition:none!important}}
+
+/* ===== Áreas seguras del móvil =====
+   El notch y la barra de gestos de iOS se comen la nav fija. Sin esto el
+   último botón queda debajo del indicador y no se puede pulsar. */
+.hc{padding-bottom:calc(76px + env(safe-area-inset-bottom))}
+.hc .nav{padding-bottom:env(safe-area-inset-bottom)}
+.hc .wrap{padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right))}
+
+/* Nada debe provocar scroll horizontal: es el defecto más común en móvil y
+   rompe la sensación de app nativa. */
+.hc{overflow-x:hidden}
+.hc img,.hc table{max-width:100%}
+.hc .card,.hc .chatbox{overflow-wrap:anywhere}
+.hc .scrollx{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.hc .scrollx::-webkit-scrollbar{display:none}
+
+/* Objetivo táctil mínimo. 44px es el umbral por debajo del cual el pulgar
+   falla de forma medible; los botones pequeños se quedaban en 34. */
+.hc .btn.sm{min-height:40px}
+.hc .icobtn{min-width:40px;min-height:40px}
+.hc .chip{min-height:44px;display:flex;align-items:center;justify-content:center}
+.hc .nav button{min-height:56px}
+
+/* Formularios cómodos: 16px evita que iOS haga zoom al enfocar un input. */
+.hc input,.hc select,.hc textarea{font-size:16px;min-height:44px}
+.hc textarea{min-height:80px}
+
+/* Rejillas que colapsan en pantallas estrechas en vez de comprimirse. */
+@media (max-width:380px){
+ .hc .grid2,.hc .grid3{grid-template-columns:1fr}
+ .hc h1{font-size:26px}
+ .hc .wrap{padding-left:12px;padding-right:12px}
+}
+
+/* ===== Navegador de fechas reutilizable (§17) ===== */
+.hc .datenav{display:flex;align-items:center;gap:8px;margin:10px 0}
+.hc .datenav .fecha{flex:1;text-align:center;font-family:'Barlow Condensed',sans-serif;font-size:19px;
+ font-weight:600;text-transform:uppercase;letter-spacing:.02em;background:none;border:0;color:var(--paper);cursor:pointer}
+.hc .datenav .fecha small{display:block;font-family:'IBM Plex Mono',monospace;font-size:10.5px;
+ letter-spacing:.12em;color:var(--mut);text-transform:uppercase;font-weight:400}
+.hc .daystrip{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:12px}
+.hc .daystrip button{background:var(--surf2);border:1px solid var(--line);border-radius:9px;padding:7px 2px;
+ cursor:pointer;color:var(--mut);font-family:'IBM Plex Mono',monospace;font-size:11px;min-height:52px;
+ display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px}
+.hc .daystrip button .n{font-size:15px;color:var(--paper);font-weight:500}
+.hc .daystrip button.on{background:var(--gym);border-color:var(--gym)}
+.hc .daystrip button.on .n,.hc .daystrip button.on{color:#12202C}
+.hc .daystrip button.hoy{border-color:var(--gym)}
+.hc .daystrip .dot{width:5px;height:5px;border-radius:50%;background:var(--rest)}
+.hc .daystrip .dot.run{background:var(--run)} .hc .daystrip .dot.gym{background:var(--gym)}
+.hc .daystrip .dot.done{background:var(--ok)}
+.hc .daystrip button.on .dot{background:#12202C}
+
+/* ===== Calendario mensual (§3) ===== */
+.hc .calhead{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
+.hc .calhead span{text-align:center;font-family:'IBM Plex Mono',monospace;font-size:10px;
+ letter-spacing:.1em;color:var(--mut);text-transform:uppercase}
+.hc .cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.hc .calcell{background:var(--surf);border:1px solid var(--line);border-radius:8px;padding:5px 3px;
+ min-height:62px;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;
+ color:var(--paper);font-family:'IBM Plex Mono',monospace;font-size:11px;text-align:center}
+.hc .calcell.vacia{background:transparent;border-color:transparent;cursor:default}
+.hc .calcell.hoy{border-color:var(--gym);border-width:2px}
+.hc .calcell.sel{background:var(--surf2);border-color:var(--paper)}
+.hc .calcell .ic{font-size:14px;line-height:1}
+.hc .calcell .et{font-size:9px;color:var(--mut);line-height:1.15;overflow:hidden;
+ display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.hc .calcell.hecha{background:#16281E;border-color:#3E6B3A}
+.hc .calcell.omitida{opacity:.55}
+.hc .calcell.descanso .ic{opacity:.5}
+@media (max-width:380px){.hc .calcell{min-height:54px}.hc .calcell .et{display:none}}
+
+/* ===== Coach: tres columnas solo en escritorio (§9) ===== */
+.hc .coachgrid{display:block}
+.hc .coachcol{display:none}
+@media (min-width:1024px){
+ .hc .wrap.wide{max-width:1180px}
+ .hc .coachgrid{display:grid;grid-template-columns:230px minmax(0,1fr) 210px;gap:14px;align-items:start}
+ .hc .coachcol{display:block;position:sticky;top:52px}
+ .hc .coachtoggle{display:none}
+}
+
+/* Drawer lateral: en móvil sustituye a las columnas del Coach. */
+.hc .drawer{position:fixed;inset:0;z-index:70;background:rgba(4,9,14,.72);display:flex}
+.hc .drawer .panel{background:var(--surf);border-right:1px solid var(--line);width:min(300px,84vw);
+ height:100%;overflow:auto;padding:14px}
+.hc .drawer.der{justify-content:flex-end}
+.hc .drawer.der .panel{border-right:0;border-left:1px solid var(--line)}
+.hc .convitem{display:block;width:100%;text-align:left;background:var(--surf2);border:1px solid var(--line);
+ border-radius:9px;padding:9px 10px;margin-bottom:7px;cursor:pointer;color:var(--paper);font-size:13px}
+.hc .convitem.on{border-color:var(--gym)}
+.hc .convitem small{display:block;color:var(--mut);font-size:10.5px;font-family:'IBM Plex Mono',monospace;margin-top:2px}
+
+/* ===== Estados vacíos (§18) ===== */
+.hc .vacio{text-align:center;padding:26px 14px}
+.hc .vacio .ic{font-size:30px;opacity:.5;display:block;margin-bottom:8px}
+
+/* ===== Tabla de series de fuerza (§23) ===== */
+.hc .series{display:grid;grid-template-columns:26px 1fr 1fr 62px;gap:6px;align-items:center;margin-bottom:7px}
+.hc .series .cab{font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:.08em;
+ text-transform:uppercase;color:var(--mut);text-align:center}
+.hc .series input{text-align:center;padding:10px 4px}
 `;
 
-const DAYS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
-const DSHORT = ["L", "M", "X", "J", "V", "S", "D"];
 
 /* ---------- DISTANCIAS DE CARRERA ---------- */
 const DIST = {
@@ -336,12 +441,7 @@ function completeness(perfil) {
 /* ============================================================
    MOTOR — RIESGO Y GENERACIÓN DEL PLAN
    ============================================================ */
-const iso = (d) => d.toISOString().slice(0, 10);
-const parse = (s) => new Date(s + "T12:00:00");
-const addDays = (s, n) => { const d = parse(s); d.setDate(d.getDate() + n); return iso(d); };
-const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 86400000);
 const fmtDate = (s) => parse(s).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const uid = () => Math.random().toString(36).slice(2, 9);
 
 function riskScore(p) {
@@ -482,17 +582,54 @@ function adaptaciones(p, riesgo) {
 /* ============================================================
    MOTOR — SESIONES, PLANIFICADOR SEMANAL Y FUERZA
    ============================================================ */
-function weekOf(plan, dateStr) {
-  if (!plan) return { w: 1, dayIdx: 0, fuera: true };
-  const first = plan.semanas[0].inicio;
-  const diff = daysBetween(first, dateStr);
-  if (diff < 0) return { w: 1, dayIdx: 0, fuera: true };
-  const w = Math.floor(diff / 7) + 1;
-  return { w: clamp(w, 1, plan.totalSemanas), dayIdx: ((diff % 7) + 7) % 7, fuera: w > plan.totalSemanas };
+
+/* ============================================================
+   AGENDA — una fecha, una sesión
+
+   El plan se guarda por número de semana y día 0-6, no por fecha. Toda la
+   interfaz nueva (Entrenar por día, calendario, nutrición) necesita el paso
+   contrario: dada una fecha, qué toca. Se resuelve aquí una sola vez para no
+   repetir el cálculo en cada pantalla (§17).
+   ============================================================ */
+
+/* Estado visible de un día. "Omitida" solo existe en el pasado: una sesión sin
+   registrar de mañana está pendiente, no perdida. */
+
+/* Lunes de la semana natural que contiene esa fecha. El plan empieza en lunes
+   y el calendario mensual también, así que la conversión es la misma siempre. */
+
+
+/* Navegador de fechas reutilizable (§17): flechas, etiqueta legible y tira de
+   los siete días de la semana. Lo usan Entrenar y Nutrición; el calendario
+   mensual tiene su propia cabecera porque navega por meses, no por días. */
+function NavFecha({ fecha, onCambio, hoy, P, conTira = true }) {
+  const lunes = lunesDe(fecha);
+  const dias = Array.from({ length: 7 }, (_, i) => addDays(lunes, i));
+  const etiqueta = parse(fecha).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
+  return (<div>
+    <div className="datenav">
+      <button className="icobtn" aria-label="Día anterior" onClick={() => onCambio(addDays(fecha, -1))}>‹</button>
+      <button className="fecha" onClick={() => onCambio(hoy)} title="Volver a hoy">
+        {etiqueta}
+        <small>{fecha === hoy ? "Hoy" : "Tocar para volver a hoy"}</small>
+      </button>
+      <button className="icobtn" aria-label="Día siguiente" onClick={() => onCambio(addDays(fecha, 1))}>›</button>
+    </div>
+    {conTira && (<div className="daystrip">
+      {dias.map((d, i) => {
+        const est = P ? estadoDia(P, d, hoy) : "sinplan";
+        const info = P ? sesionDeFecha(P, d) : {};
+        const clase = est === "hecha" ? "done" : info.code ? colorOf(info.code) : "";
+        return (<button key={d} className={(d === fecha ? "on " : "") + (d === hoy ? "hoy" : "")}
+          onClick={() => onCambio(d)} aria-label={DAYS[i] + " " + parse(d).getDate()} aria-current={d === fecha ? "date" : undefined}>
+          <span>{DSHORT[i]}</span>
+          <span className="n">{parse(d).getDate()}</span>
+          <span className={"dot " + clase} />
+        </button>);
+      })}
+    </div>)}
+  </div>);
 }
-const semanaPlan = (plan, w) => plan.semanas.find((s) => s.w === w) || plan.semanas[plan.semanas.length - 1];
-const esGym = (c) => c.startsWith("GYM");
-const colorOf = (c) => (esGym(c) ? "gym" : c === "RECOVERY" ? "rest" : "run");
 
 function sessionDetail(plan, perfil, w, code, P) {
   const sp = semanaPlan(plan, w);
@@ -1160,7 +1297,11 @@ async function pushToSheets(url, sheet, rows, perfil) {
    en vez de acumular. Se dispara al editar; si no hay hoja configurada, no hace
    nada y la app sigue funcionando igual.                                      */
 async function respaldarRutinas(st, P) {
-  const url = (st.config && st.config.sheetsUrl) || "/api/sheets";
+  /* Sin URL configurada no se respalda nada. Antes caía a "/api/sheets" por
+     defecto, así que editar una rutina enviaba datos a la hoja aunque nadie
+     hubiera pedido la integración y ya no exista forma de configurarla desde
+     Ajustes. Google Sheets es opcional y heredado: solo actúa si se pide. */
+  const url = st.config && st.config.sheetsUrl;
   if (!url || !P || !P.plan) return;
   const cat = catalogoEj(P);
   const equip = P.perfil.equipamiento === "Gimnasio completo" ? "full" : P.perfil.equipamiento === "En casa (peso corporal y gomas)" ? "casa" : "basico";
@@ -1187,6 +1328,10 @@ export default function HybridCoach({ user, activeProfile, onLogout }) {
   const [tab, setTab] = useState("hoy");
   const [pantalla, setPantalla] = useState(null); // wizard | perfiles | biblio | ajustes
   const [today] = useState(() => iso(new Date()));
+  /* Fecha que miran Entrenar, el calendario y la nutrición. Vive aquí y no en
+     cada pantalla para que abrir un día en el calendario y saltar a Entrenar
+     conserve la fecha en vez de volver a hoy (§16). */
+  const [fechaSel, setFechaSel] = useState(() => iso(new Date()));
   const [toast, setToast] = useState(null);
   const stateKey = `${KEY_PREFIX}:${user.id}`;
   const syncRef = useRef(null);
@@ -1235,7 +1380,11 @@ export default function HybridCoach({ user, activeProfile, onLogout }) {
   if (!st) return (<div className="hc"><style>{CSS}</style><div className="wrap" style={{ paddingTop: 60 }}><p className="eyebrow">Cargando…</p></div></div>);
 
   const P = st.perfiles[st.activo];
-  const ctx = { st, P, update, notify, today, setTab, setPantalla, tab, onLogout, user };
+  /* Ir a un día concreto es la transición más frecuente de la app: la usan el
+     calendario, la semana y el resumen de hoy. Una sola función evita que cada
+     pantalla recuerde poner las dos cosas (§20). */
+  const abrirDia = (fecha) => { setFechaSel(fecha); setPantalla(null); setTab("entrenar"); };
+  const ctx = { st, P, update, notify, today, setTab, setPantalla, tab, onLogout, user, fechaSel, setFechaSel, abrirDia };
 
   if (!P) return (<div className="hc"><style>{CSS}</style><div className="wrap"><Bienvenida {...ctx} /></div></div>);
   if (pantalla === "wizard" || !P.plan) return (<div className="hc"><style>{CSS}</style><div className="wrap"><Wizard {...ctx} onClose={() => setPantalla(null)} /></div>{toast && <Toast m={toast} />}</div>);
@@ -1246,7 +1395,9 @@ export default function HybridCoach({ user, activeProfile, onLogout }) {
   return (
     <div className="hc">
       <style>{CSS}</style>
-      <div className="wrap">
+      {/* Solo el Coach aprovecha el ancho grande: el resto sigue siendo la
+          columna móvil, que es la prioridad declarada (§21, §25). */}
+      <div className={"wrap" + (tab === "coach" && !pantalla ? " wide" : "")}>
         <div className="topbar">
           <button className="pill" onClick={() => setPantalla("perfiles")}>
             <span className="av">{(P.nombre || "?").slice(0, 1).toUpperCase()}</span>
@@ -1598,30 +1749,55 @@ function Today({ st, P, curW, today, wk, setTab, setPantalla }) {
 /* ============================================================
    MI SEMANA
    ============================================================ */
-function Semana({ st, P, curW, wk, update, notify, setTab, today }) {
+function Semana(ctx) {
+  const [vista, setVista] = useState("semana");
+  return (<div>
+    <p className="eyebrow" style={{ marginTop: 8 }}>Planificador</p>
+    <div className="between"><h1>{vista === "semana" ? "Mi semana" : "Calendario"}</h1></div>
+    <div className="grid2" style={{ margin: "10px 0 4px" }}>
+      {[["semana", "Semana"], ["calendario", "Mes"]].map(([k, l]) =>
+        <button key={k} className={"chip" + (vista === k ? " on" : "")} onClick={() => setVista(k)}>{l}</button>)}
+    </div>
+    {vista === "semana" ? <PlanSemana {...ctx} /> : <CalendarioMes {...ctx} />}
+  </div>);
+}
+
+function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia }) {
   const plan = P.plan, perfil = P.perfil;
   const [w, setW] = useState(curW);
   const saved = P.weeks[w];
+  const yaProgramada = !!saved?.assign?.length;
   const [sel, setSel] = useState(saved ? saved.assign.map((a) => a.day) : (perfil.dias || [0, 1, 3, 4, 6]));
   const [gym, setGym] = useState(true), [correr, setCorrer] = useState(true);
   const [dolor, setDolor] = useState(0), [fatiga, setFatiga] = useState(3);
   const [draft, setDraft] = useState(null);
-  useEffect(() => { setSel(P.weeks[w] ? P.weeks[w].assign.map((a) => a.day) : (perfil.dias || [0, 1, 3, 4, 6])); setDraft(null); }, [w]);
+  /* Con una semana ya activa el panel de disponibilidad arranca cerrado: lo que
+     importa al entrar es ver qué toca, no volver a configurarla (§2). */
+  const [reconfig, setReconfig] = useState(!yaProgramada);
+  useEffect(() => {
+    const s = P.weeks[w];
+    setSel(s ? s.assign.map((a) => a.day) : (perfil.dias || [0, 1, 3, 4, 6]));
+    setDraft(null); setReconfig(!s?.assign?.length);
+  }, [w]);
 
   const gen = () => { if (!sel.length) return notify("Marca al menos un día disponible.");
     setDraft(generateWeek(plan, perfil, w, [...sel].sort((a, b) => a - b), { gym, correr, dolor, fatiga })); };
   const accept = () => {
+    /* Sustituir una programación ya aceptada se confirma: puede haber sesiones
+       registradas contra ella y el reparto cambia (§2). */
+    if (yaProgramada && !window.confirm(`La semana ${w} ya tiene una programación activa. ¿Sustituirla por esta nueva?`)) return;
     update((s) => { const p = s.perfiles[P.id];
       p.weeks[w] = { assign: draft.assign, done: p.weeks[w]?.done || [], notes: draft.notes, generated: today };
       p.changes.push({ fecha: today, semana: w, plan_original: "—", cambio: "Semana generada: " + draft.assign.map((a) => DSHORT[a.day] + "=" + a.code).join(" "), motivo: "Días disponibles " + sel.map((d) => DSHORT[d]).join(""), datos: "dolor " + dolor + "/10, fatiga " + fatiga + "/10" });
       return s; });
-    notify("Semana " + w + " guardada."); setDraft(null); if (w === curW) setTab("hoy");
+    notify(yaProgramada ? "✓ Semana " + w + " reorganizada." : "✓ Semana " + w + " guardada.");
+    setDraft(null); setReconfig(false); if (w === curW) setTab("hoy");
   };
   const shown = draft ? draft.assign : (saved?.assign || []);
   const sp = semanaPlan(plan, w);
+  const hechas = shown.filter((a) => (saved?.done || []).includes(a.code)).length;
 
   return (<div>
-    <p className="eyebrow" style={{ marginTop: 8 }}>Planificador</p><h1>Mi semana</h1>
     <div className="row" style={{ margin: "10px 0 4px" }}>
       <button className="btn sm ghost" disabled={w <= 1} onClick={() => setW(w - 1)}>◀</button>
       <div style={{ flex: 1, textAlign: "center" }}>
@@ -1630,8 +1806,24 @@ function Semana({ st, P, curW, wk, update, notify, setTab, today }) {
       <button className="btn sm ghost" disabled={w >= plan.totalSemanas} onClick={() => setW(w + 1)}>▶</button>
     </div>
 
-    <div className="card">
-      <h3>Días que puedo entrenar</h3>
+    {/* Estado de la programación. Con semana activa el acento va al progreso,
+        y regenerar pasa a ser una acción secundaria (§2). */}
+    {yaProgramada && !reconfig && (<div className="card">
+      <div className="between">
+        <span className="tag ok">Programación activa</span>
+        <span className="xs muted mono">{hechas}/{shown.length} completados</span>
+      </div>
+      <div className="prog" style={{ marginTop: 9 }}><span style={{ width: (shown.length ? (hechas / shown.length) * 100 : 0) + "%" }} /></div>
+      <p className="xs muted" style={{ margin: "9px 0 0" }}>Generada el {saved.generated || "—"}. Si te cambia la disponibilidad, puedes reorganizarla.</p>
+      <div style={{ height: 10 }} />
+      <button className="btn ghost sm" style={{ width: "100%" }} onClick={() => setReconfig(true)}>Volver a generar semana</button>
+    </div>)}
+
+    {(reconfig || !yaProgramada) && (<div className="card">
+      <div className="between">
+        <h3>Días que puedo entrenar</h3>
+        {yaProgramada && <button className="btn ghost sm" onClick={() => { setReconfig(false); setDraft(null); }}>Cancelar</button>}
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 7, marginTop: 9 }}>
         {DSHORT.map((d, i) => <button key={i} className={"chip" + (sel.includes(i) ? " on" : "")} onClick={() => setSel(sel.includes(i) ? sel.filter((x) => x !== i) : [...sel, i])}>{d}</button>)}
       </div>
@@ -1646,17 +1838,34 @@ function Semana({ st, P, curW, wk, update, notify, setTab, today }) {
       <label style={{ marginTop: 6 }}>Fatiga general: <span className="mono">{fatiga}/10</span></label>
       <input type="range" min="1" max="10" value={fatiga} onChange={(e) => setFatiga(+e.target.value)} />
       <div style={{ height: 12 }} />
-      <button className="btn primary" onClick={gen}>Generar mi semana</button>
-    </div>
+      <button className="btn primary" onClick={gen}>{yaProgramada ? "Reorganizar semana" : "Generar mi semana"}</button>
+    </div>)}
+
+    {shown.length === 0 && !reconfig && (<div className="card vacio">
+      <span className="ic">▤</span>
+      <p className="sm muted" style={{ margin: "0 0 12px" }}>Esta semana todavía no está programada.</p>
+      <button className="btn primary" onClick={() => setReconfig(true)}>Generar mi semana</button>
+    </div>)}
 
     {shown.length > 0 && (<div className="card">
       <div className="between"><h3>{draft ? "Propuesta" : "Semana guardada"}</h3>{draft && <span className="tag gym">Sin guardar</span>}</div>
       <Strip assign={shown.map((a) => ({ ...a, dur: sessionDetail(plan, perfil, w, a.code, P).dur }))} todayIdx={w === curW && !wk.fuera ? wk.dayIdx : -1} />
       {DAYS.map((d, i) => { const s = shown.find((a) => a.day === i);
+        const fecha = addDays(sp.inicio, i);
+        const est = draft ? "pendiente" : estadoDia(P, fecha, today);
         return (<div className="day" key={i}><div className="dcol eyebrow" style={{ paddingTop: 3 }}>{d.slice(0, 3)}</div>
           <div style={{ flex: 1 }}>
-            {s ? <SessionCard P={P} plan={plan} perfil={perfil} code={s.code} w={w} /> : <span className="muted sm">Descanso</span>}
+            <div className="between" style={{ alignItems: "flex-start" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {s ? <SessionCard P={P} plan={plan} perfil={perfil} code={s.code} w={w} /> : <span className="muted sm">Descanso</span>}
+              </div>
+              {/* El estado va aquí y no en un icono suelto: leer la semana de un
+                  vistazo es lo que §2 pide como acción principal. */}
+              {!draft && s && <span className={"tag " + (est === "hecha" ? "ok" : est === "omitida" ? "alert" : "")}>
+                {est === "hecha" ? "Hecho" : est === "omitida" ? "Sin registrar" : "Pendiente"}</span>}
+            </div>
             <NutriLinea P={P} w={w} codes={shown.filter((a) => a.day === i).map((a) => a.code)} />
+            {!draft && s && <button className="btn ghost sm" style={{ marginTop: 7 }} onClick={() => abrirDia(fecha)}>Abrir este día</button>}
           </div></div>); })}
       {draft && (<>
         <hr /><h3>Por qué así</h3>
@@ -1676,27 +1885,159 @@ function Semana({ st, P, curW, wk, update, notify, setTab, today }) {
 }
 
 /* ============================================================
-   ENTRENAR
+   CALENDARIO MENSUAL (§3)
+
+   Rejilla de lunes a domingo con una celda compacta por día. La celda dice lo
+   justo —icono de tipo y estado— porque en 44 px de ancho cualquier texto
+   adicional deja de leerse; el detalle está a un toque, en Entrenar.
    ============================================================ */
-function Entrenar(ctx) {
-  const { P, curW, wk } = ctx;
-  const assign = P.weeks[curW]?.assign || [];
-  const todaySes = assign.find((a) => a.day === wk.dayIdx);
-  const [mode, setMode] = useState(todaySes ? (esGym(todaySes.code) ? "fuerza" : "carrera") : "carrera");
-  const gymCodes = (PLANTILLAS[clamp(P.plan.gymDias, 1, 4)] || PLANTILLAS[2]).map((g) => g.code);
+function CalendarioMes({ P, today, abrirDia, fechaSel }) {
+  const [ancla, setAncla] = useState(() => (fechaSel || today).slice(0, 8) + "01");
+  const d = parse(ancla);
+  const anio = d.getFullYear(), mes = d.getMonth();
+  const primero = iso(new Date(anio, mes, 1, 12));
+  const diasMes = new Date(anio, mes + 1, 0).getDate();
+  const huecoInicial = (parse(primero).getDay() + 6) % 7;   // 0 = lunes
+
+  const mover = (n) => setAncla(iso(new Date(anio, mes + n, 1, 12)));
+  const celdas = [
+    ...Array.from({ length: huecoInicial }, () => null),
+    ...Array.from({ length: diasMes }, (_, i) => addDays(primero, i)),
+  ];
+
   return (<div>
-    <p className="eyebrow" style={{ marginTop: 8 }}>Registro</p><h1>Entrenar</h1>
-    <div className="grid3" style={{ margin: "12px 0" }}>
-      {[["carrera", "Carrera"], ["fuerza", "Fuerza"], ["check", "Sensaciones"]].map(([k, l]) =>
-        <button key={k} className={"chip" + (mode === k ? " on" : "")} onClick={() => setMode(k)}>{l}</button>)}
+    <div className="row" style={{ margin: "10px 0" }}>
+      <button className="btn sm ghost" aria-label="Mes anterior" onClick={() => mover(-1)}>◀</button>
+      <div style={{ flex: 1, textAlign: "center" }}>
+        <div className="disp" style={{ fontSize: 20, textTransform: "uppercase" }}>{MESES[mes]} {anio}</div>
+      </div>
+      <button className="btn sm ghost" aria-label="Mes siguiente" onClick={() => mover(1)}>▶</button>
     </div>
-    {mode === "carrera" && <RunForm {...ctx} sug={todaySes && !esGym(todaySes.code) ? todaySes.code : "RUN A"} />}
-    {mode === "fuerza" && <StrengthForm {...ctx} codes={gymCodes} sug={todaySes && esGym(todaySes.code) ? todaySes.code : gymCodes[0]} />}
-    {mode === "check" && <CheckIn {...ctx} />}
+
+    <div className="calhead">{DSHORT.map((s, i) => <span key={i}>{s}</span>)}</div>
+    <div className="cal">
+      {celdas.map((fecha, i) => {
+        if (!fecha) return <div className="calcell vacia" key={"v" + i} />;
+        const est = estadoDia(P, fecha, today);
+        const { code } = sesionDeFecha(P, fecha);
+        const num = parse(fecha).getDate();
+        const clases = ["calcell", est === "hecha" ? "hecha" : "", est === "omitida" ? "omitida" : "",
+          est === "descanso" ? "descanso" : "", fecha === today ? "hoy" : "", fecha === fechaSel ? "sel" : ""].filter(Boolean).join(" ");
+        return (<button className={clases} key={fecha} onClick={() => abrirDia(fecha)}
+          aria-label={`${num} de ${MESES[mes]}: ${code ? etiquetaSesion(P, fecha) : est === "descanso" ? "descanso" : "sin plan"}`}>
+          <span style={{ color: fecha === today ? "var(--gym)" : "var(--mut)" }}>{num}</span>
+          <span className="ic">{code ? (esGym(code) ? "💪" : code === "RECOVERY" ? "🚶" : "🏃") : est === "descanso" ? "🛌" : "·"}</span>
+          {est === "hecha" && <span className="et" style={{ color: "var(--ok)" }}>✓</span>}
+          {est !== "hecha" && code && <span className="et">{code}</span>}
+        </button>);
+      })}
+    </div>
+
+    <div className="row" style={{ gap: 12, flexWrap: "wrap", marginTop: 12 }}>
+      {[["🏃", "Carrera"], ["💪", "Fuerza"], ["🛌", "Descanso"], ["✓", "Completado"]].map(([ic, l]) =>
+        <span key={l} className="xs muted"><span style={{ marginRight: 4 }}>{ic}</span>{l}</span>)}
+    </div>
+    <p className="xs muted" style={{ marginTop: 8 }}>Toca cualquier día para abrir su entrenamiento.</p>
   </div>);
 }
 
-function RunForm({ st, P, update, notify, curW, today, sug }) {
+/* Etiqueta corta de la sesión de una fecha, para lectores de pantalla y para
+   las celdas que sí tienen sitio. */
+function etiquetaSesion(P, fecha) {
+  const { code, w } = sesionDeFecha(P, fecha);
+  if (!code) return "Descanso";
+  try { return sessionDetail(P.plan, P.perfil, w, code, P).titulo || code; } catch { return code; }
+}
+
+/* ============================================================
+   ENTRENAR
+   ============================================================ */
+function Entrenar(ctx) {
+  const { P, today, fechaSel, setFechaSel, notify } = ctx;
+  const fecha = fechaSel || today;
+  const dia = sesionDeFecha(P, fecha);
+  const est = estadoDia(P, fecha, today);
+  const gymCodes = (PLANTILLAS[clamp(P.plan.gymDias, 1, 4)] || PLANTILLAS[2]).map((g) => g.code);
+
+  /* Tres etapas: ver el entrenamiento → registrarlo → contar cómo fue. El
+     estado vive aquí para que "Finalizar" encadene con sensaciones sin que el
+     usuario tenga que buscar otra pestaña (§6). */
+  const [etapa, setEtapa] = useState("ficha");
+  const [resumen, setResumen] = useState(null);
+  useEffect(() => { setEtapa("ficha"); setResumen(null); }, [fecha]);
+
+  /* La semana del día que se está mirando, no la de hoy: registrar el sábado
+     desde el lunes tiene que guardar en la semana correcta. */
+  const wDia = dia.w;
+  const propio = { ...ctx, curW: wDia, today: fecha };
+
+  const alTerminar = (r) => { setResumen(r); setEtapa("sensaciones"); };
+  const alGuardarSensaciones = () => {
+    setEtapa("hecho");
+    notify("✓ Entrenamiento y sensaciones guardados.");
+  };
+
+  return (<div>
+    <p className="eyebrow" style={{ marginTop: 8 }}>Entrenar</p>
+    <NavFecha fecha={fecha} onCambio={setFechaSel} hoy={today} P={P} />
+
+    {etapa === "sensaciones" ? (<>
+      <div className="card">
+        <h3>¿Cómo ha ido?</h3>
+        {resumen && <p className="xs muted" style={{ margin: "6px 0 0" }}>{resumen}</p>}
+      </div>
+      <CheckIn {...propio} onGuardado={alGuardarSensaciones} />
+      <button className="btn ghost sm" style={{ width: "100%" }} onClick={() => setEtapa("ficha")}>Volver al entrenamiento</button>
+    </>) : etapa === "hecho" ? (<div className="card vacio">
+      <span className="ic">✓</span>
+      <h3 style={{ color: "var(--ok)" }}>Sesión completada</h3>
+      <p className="sm muted" style={{ margin: "8px 0 14px" }}>{resumen || "Registrada correctamente."}</p>
+      <button className="btn ghost" onClick={() => setEtapa("ficha")}>Ver el día</button>
+    </div>) : est === "fuera" ? (<div className="card vacio">
+      <span className="ic">◷</span>
+      <p className="sm muted" style={{ margin: 0 }}>Esa fecha queda fuera de tu plan.</p>
+    </div>) : !dia.planificada ? (<div className="card vacio">
+      <span className="ic">▤</span>
+      <p className="sm muted" style={{ margin: "0 0 12px" }}>La semana {wDia} todavía no está programada.</p>
+      <button className="btn primary" onClick={() => ctx.setTab("semana")}>Generar mi semana</button>
+    </div>) : !dia.code ? (<div className="card vacio">
+      <span className="ic">🛌</span>
+      <h3>Hoy tienes descanso</h3>
+      <p className="sm muted" style={{ margin: "8px 0 0" }}>Descansar también entrena: es cuando el tejido se adapta a la carga de los días anteriores.</p>
+    </div>) : (<>
+      <FichaDelDia P={P} fecha={fecha} dia={dia} estado={est} />
+      {esGym(dia.code)
+        ? <StrengthForm {...propio} codes={gymCodes} sug={dia.code} onTerminado={alTerminar} />
+        : <RunForm {...propio} sug={dia.code} onTerminado={alTerminar} />}
+      <details style={{ marginTop: 6 }}>
+        <summary className="btn ghost sm" style={{ width: "100%", textAlign: "center" }}>Registrar otra cosa</summary>
+        <p className="xs muted" style={{ margin: "9px 0" }}>Si hoy has hecho algo distinto a lo planificado, cambia el tipo de sesión dentro del formulario de arriba.</p>
+        <button className="btn ghost sm" style={{ width: "100%" }} onClick={() => setEtapa("sensaciones")}>Solo registrar sensaciones</button>
+      </details>
+    </>)}
+  </div>);
+}
+
+/* Cabecera del día: qué toca, cuánto y para qué. Es lo primero que se ve y lo
+   único que hace falta para empezar a entrenar (§4, §24). */
+function FichaDelDia({ P, fecha, dia, estado }) {
+  let det = null;
+  try { det = sessionDetail(P.plan, P.perfil, dia.w, dia.code, P); } catch { /* sesión no resoluble */ }
+  if (!det) return null;
+  const tipo = colorOf(dia.code);
+  return (<div className="card" style={{ borderColor: estado === "hecha" ? "#3E6B3A" : tipo === "gym" ? "#7A5730" : "#2F6A66" }}>
+    <div className="between">
+      <span className={"tag " + tipo}>{esGym(dia.code) ? "Fuerza" : "Carrera"} · {dia.code}</span>
+      {estado === "hecha" && <span className="tag ok">Completado</span>}
+      {estado === "omitida" && <span className="tag alert">Sin registrar</span>}
+    </div>
+    <h2 style={{ margin: "9px 0 2px" }}>{det.titulo}</h2>
+    <div className="mono" style={{ fontSize: 22, color: tipo === "gym" ? "var(--gym)" : "var(--run)" }}>{det.dur}′</div>
+    <p className="sm muted" style={{ margin: "7px 0 0" }}>{det.desc}</p>
+  </div>);
+}
+
+function RunForm({ st, P, update, notify, curW, today, sug, onTerminado }) {
   const plan = P.plan, perfil = P.perfil;
   const codes = Object.keys(semanaPlan(plan, curW).runs).concat(["RECOVERY"]);
   const [f, setF] = useState({ code: codes.includes(sug) ? sug : codes[0], km: "", min: "", fcm: "", fcx: "", desnivel: "", cadencia: "", rpe: 4, dolor: 0, notas: "" });
@@ -1708,10 +2049,13 @@ function RunForm({ st, P, update, notify, curW, today, sug }) {
     update((s) => { const p = s.perfiles[P.id]; p.running.push(row); if (!p.weeks[curW]) p.weeks[curW] = { assign: [], done: [] };
       p.weeks[curW].done = [...new Set([...(p.weeks[curW].done || []), f.code])]; return s; });
     if (st.config.sheetsUrl) pushToSheets(st.config.sheetsUrl, "Running", [{ ...row, perfil: P.nombre }]);
-    notify("Carrera registrada."); setF({ ...f, km: "", min: "", notas: "" });
+    setF({ ...f, km: "", min: "", notas: "" });
+    /* Encadena con sensaciones en vez de dejar al usuario buscando pestaña (§6).
+       Sin callback (uso suelto del formulario) se comporta como antes. */
+    const resumen = `${f.code} · ${f.min}′${f.km ? " · " + f.km + " km · " + pace + "/km" : ""}`;
+    if (onTerminado) onTerminado(resumen); else notify("✓ Carrera registrada.");
   };
   return (<>
-    <div className="card"><SessionCard P={P} plan={plan} perfil={perfil} code={f.code} w={curW} /></div>
     <div className="card">
       <label>Sesión</label>
       <select value={f.code} onChange={(e) => set("code", e.target.value)}>{codes.map((c) => <option key={c}>{c}</option>)}</select>
@@ -1734,28 +2078,73 @@ function RunForm({ st, P, update, notify, curW, today, sug }) {
       <label style={{ marginTop: 8 }}>Notas</label>
       <textarea rows="2" value={f.notas} onChange={(e) => set("notas", e.target.value)} style={{ fontFamily: "'IBM Plex Sans',sans-serif" }} placeholder="Gemelos cargados pero cardiovascularmente cómodo" />
       <div style={{ height: 12 }} />
-      <button className="btn run" onClick={save}>Guardar carrera</button>
+      <button className="btn run" onClick={save}>{onTerminado ? "Finalizar entrenamiento" : "Guardar carrera"}</button>
     </div>
   </>);
 }
 
-function StrengthForm({ st, P, update, notify, curW, today, sug, codes, setPantalla }) {
+/* Última vez que se hizo un ejercicio: peso de la serie más pesada y las reps
+   de cada serie de aquella sesión. Es lo que precarga el formulario (§8) y lo
+   que se enseña como referencia. Se busca dentro de la misma rutina, porque el
+   mismo ejercicio puede ir a cargas distintas según la sesión. */
+
+function StrengthForm({ st, P, update, notify, curW, today, sug, codes, setPantalla, onTerminado }) {
   const plan = P.plan, perfil = P.perfil;
   const [code, setCode] = useState(codes.includes(sug) ? sug : codes[0]);
   const ses = useMemo(() => gymSession(plan, perfil, curW, code, P), [code, curW, P.id, P.rutinas, P.ejercicios]);
   const painFlag = P.checkins.slice(-4).some((c) => c.dolor >= 3) || P.running.slice(-3).some((r) => r.dolor >= 3);
   const [logs, setLogs] = useState({});
   const [open, setOpen] = useState(0);
-  const setSet = (ej, i, k, v) => setLogs((p) => ({ ...p, [ej + "|" + i]: { ...(p[ej + "|" + i] || {}), [k]: v } }));
+  /* Series que el usuario ha tocado a mano: dejan de recibir el arrastre del
+     peso de la primera serie. La automatización ayuda, no bloquea (§7). */
+  const [tocadas, setTocadas] = useState({});
+
+  const setSet = (ej, i, k, v) => {
+    if (k === "weight") setTocadas((p) => ({ ...p, [ej + "|" + i]: true }));
+    setLogs((p) => {
+      const next = { ...p, [ej + "|" + i]: { ...(p[ej + "|" + i] || {}), [k]: v } };
+      /* Al escribir el peso de la serie 1 se propaga al resto de series que
+         nadie haya editado todavía: en la práctica se repite el mismo peso y
+         teclearlo cuatro veces es el mayor punto de fricción del registro. */
+      if (k === "weight" && i === 0) {
+        const ejercicio = ses.ej.find((e) => e.n === ej);
+        for (let j = 1; j < (ejercicio?.s || 0); j++) {
+          const clave = ej + "|" + j;
+          if (tocadas[clave]) continue;
+          next[clave] = { ...(next[clave] || {}), weight: v };
+        }
+      }
+      return next;
+    });
+  };
+
+  /* Precarga: el peso de la última vez entra como valor por defecto en todas
+     las series, sin marcarlas como tocadas para que la serie 1 lo pueda seguir
+     arrastrando si se cambia (§8). */
+  useEffect(() => {
+    const inicial = {};
+    ses.ej.forEach((e) => {
+      const ult = ultimaVezEjercicio(P.strength, e.n, code);
+      if (!ult?.peso) return;
+      for (let i = 0; i < e.s; i++) inicial[e.n + "|" + i] = { weight: String(ult.peso) };
+    });
+    setLogs(inicial); setTocadas({});
+  }, [code, curW, P.id]);
+
   const save = () => {
     const rows = [];
-    ses.ej.forEach((e) => { for (let i = 0; i < e.s; i++) { const d = logs[e.n + "|" + i]; if (d && (d.weight || d.reps))
+    /* Con la precarga, el peso ya viene puesto en todas las series: la prueba
+       de que una serie se ha hecho de verdad son las repeticiones. Guardar por
+       "hay peso" llenaría el historial de series fantasma con reps 0. */
+    ses.ej.forEach((e) => { for (let i = 0; i < e.s; i++) { const d = logs[e.n + "|" + i]; if (d && d.reps)
       rows.push({ id: Date.now() + Math.random(), date: today, semana: curW, session: code, exercise: e.n, set: i + 1, weight: +d.weight || 0, reps: +d.reps || 0, rir: d.rir === undefined || d.rir === "" ? null : +d.rir, notes: "" }); } });
-    if (!rows.length) return notify("No hay ninguna serie anotada todavía.");
+    if (!rows.length) return notify("Anota al menos las repeticiones de una serie.");
     update((s) => { const p = s.perfiles[P.id]; p.strength.push(...rows); if (!p.weeks[curW]) p.weeks[curW] = { assign: [], done: [] };
       p.weeks[curW].done = [...new Set([...(p.weeks[curW].done || []), code])]; return s; });
     if (st.config.sheetsUrl) pushToSheets(st.config.sheetsUrl, "Fuerza", rows.map((r) => ({ ...r, perfil: P.nombre })), P.nombre);
-    notify(rows.length + " series guardadas."); setLogs({});
+    setLogs({}); setTocadas({});
+    const resumen = `${code} · ${rows.length} series · ${new Set(rows.map((r) => r.exercise)).size} ejercicios`;
+    if (onTerminado) onTerminado(resumen); else notify("✓ " + rows.length + " series guardadas.");
   };
   return (<>
     <div style={{ display: "grid", gridTemplateColumns: "repeat(" + codes.length + ",1fr)", gap: 8, marginBottom: 12 }}>
@@ -1773,13 +2162,23 @@ function StrengthForm({ st, P, update, notify, curW, today, sug, codes, setPanta
     </div>
     {ses.ej.map((e, idx) => {
       const sg = suggestLoad(e, P.strength, perfil, painFlag);
+      const ult = ultimaVezEjercicio(P.strength, e.n, code);
       const isOpen = open === idx;
+      const hechas = Array.from({ length: e.s }).filter((_, i) => logs[e.n + "|" + i]?.reps).length;
       return (<div className="card" key={e.n + idx} style={{ borderColor: e.key ? "#7A5730" : "var(--line)" }}>
         <button onClick={() => setOpen(isOpen ? -1 : idx)} style={{ background: "none", border: 0, padding: 0, width: "100%", textAlign: "left", color: "inherit", cursor: "pointer" }}>
-          <div className="between"><div>
+          <div className="between"><div style={{ minWidth: 0 }}>
             <div className="disp" style={{ fontSize: 17 }}>{e.n}{e.key ? " ⭐" : ""}</div>
             <div className="xs muted">{e.g} · {e.s} × {e.r} · RIR {e.rir}</div>
-          </div><span className="mono muted">{isOpen ? "−" : "+"}</span></div>
+            {/* Referencia de la última vez: es lo que de verdad se consulta
+                antes de decidir el peso de hoy (§8). */}
+            {ult && <div className="xs mono" style={{ color: "var(--mut)", marginTop: 2 }}>
+              Última: {ult.peso} kg{ult.reps.length ? " × " + ult.reps.join(" / ") : ""}</div>}
+          </div>
+          <span className="row" style={{ gap: 6 }}>
+            {hechas > 0 && <span className="tag ok">{hechas}/{e.s}</span>}
+            <span className="mono muted">{isOpen ? "−" : "+"}</span>
+          </span></div>
         </button>
         {isOpen && (<>
           <div style={{ background: "var(--ink)", border: "1px solid var(--line)", borderRadius: 9, padding: 10, margin: "10px 0" }}>
@@ -1788,23 +2187,27 @@ function StrengthForm({ st, P, update, notify, curW, today, sug, codes, setPanta
             <p className="xs muted" style={{ margin: "4px 0 0" }}>{sg.msg}</p>
           </div>
           {e.nota && <p className="xs" style={{ color: "var(--gym)", marginTop: -4 }}>{e.nota}</p>}
+          <div className="series">
+            <span className="cab" /><span className="cab">Kg</span><span className="cab">Reps</span><span className="cab">RIR</span>
+          </div>
           {Array.from({ length: e.s }).map((_, i) => (
-            <div className="row" key={i} style={{ marginBottom: 7 }}>
-              <span className="mono muted xs" style={{ width: 22 }}>S{i + 1}</span>
-              <input placeholder="kg" inputMode="decimal" style={{ flex: 1 }} value={logs[e.n + "|" + i]?.weight || ""} onChange={(ev) => setSet(e.n, i, "weight", ev.target.value)} />
-              <input placeholder="reps" inputMode="numeric" style={{ flex: 1 }} value={logs[e.n + "|" + i]?.reps || ""} onChange={(ev) => setSet(e.n, i, "reps", ev.target.value)} />
-              <input placeholder="RIR" inputMode="numeric" style={{ width: 66 }} value={logs[e.n + "|" + i]?.rir ?? ""} onChange={(ev) => setSet(e.n, i, "rir", ev.target.value)} />
+            <div className="series" key={i}>
+              <span className="mono muted xs" style={{ textAlign: "center" }}>{i + 1}</span>
+              <input aria-label={`Serie ${i + 1}, kilos`} inputMode="decimal" value={logs[e.n + "|" + i]?.weight || ""} onChange={(ev) => setSet(e.n, i, "weight", ev.target.value)} />
+              <input aria-label={`Serie ${i + 1}, repeticiones`} inputMode="numeric" value={logs[e.n + "|" + i]?.reps || ""} onChange={(ev) => setSet(e.n, i, "reps", ev.target.value)} />
+              <input aria-label={`Serie ${i + 1}, RIR`} inputMode="numeric" value={logs[e.n + "|" + i]?.rir ?? ""} onChange={(ev) => setSet(e.n, i, "rir", ev.target.value)} />
             </div>))}
+          <p className="xs muted" style={{ margin: "2px 0 0" }}>El peso de la primera serie se copia al resto. Cambia cualquiera y se respeta.</p>
         </>)}
       </div>);
     })}
-    <button className="btn primary" onClick={save}>Guardar sesión</button>
+    <button className="btn primary" onClick={save}>{onTerminado ? "Finalizar entrenamiento" : "Guardar sesión"}</button>
     <div style={{ height: 10 }} />
     <p className="xs muted">Sesión ajustada a tus {perfil.minGym || 70} minutos y a tu equipamiento. Los ejercicios marcados con ⭐ vienen de tu historial de lesiones: no los elimines.</p>
   </>);
 }
 
-function CheckIn({ st, P, update, notify, today, curW }) {
+function CheckIn({ st, P, update, notify, today, curW, onGuardado }) {
   const [c, setC] = useState({ rpe: 5, feel: 2, dolor: 0, loc: "", tipo: "", cuando: "", energia: 3, comentario: "" });
   const [rec, setRec] = useState({ sueno: "", calidad: 3, fatiga: 4, agujetas: 3, estres: 3, motivacion: 4 });
   const s = (k, v) => setC((p) => ({ ...p, [k]: v }));
@@ -1814,8 +2217,10 @@ function CheckIn({ st, P, update, notify, today, curW }) {
     const rrow = { ...rec, date: today, sueno: +rec.sueno || null, dolor: c.dolor };
     update((st2) => { const p = st2.perfiles[P.id]; p.checkins.push(row); p.recovery.push(rrow); return st2; });
     if (st.config.sheetsUrl) { pushToSheets(st.config.sheetsUrl, "Feedback", [{ ...row, perfil: P.nombre }]); pushToSheets(st.config.sheetsUrl, "Recovery", [{ ...rrow, perfil: P.nombre }]); }
-    notify("Registrado. El coach ya lo tiene en cuenta.");
     setC({ rpe: 5, feel: 2, dolor: 0, loc: "", tipo: "", cuando: "", energia: 3, comentario: "" });
+    /* Cuando viene encadenado desde un entrenamiento, quien avisa y cierra el
+       flujo es Entrenar; suelto, se comporta como antes (§6). */
+    if (onGuardado) onGuardado(); else notify("✓ Registrado. El coach ya lo tiene en cuenta.");
   };
   return (<>
     <div className="card">
@@ -1936,17 +2341,55 @@ CÓMO RESPONDES
 Solo uno por mensaje y solo si es concreto y accionable.`;
 }
 
-function Coach({ st, P, update, curW, today, notify }) {
-  const [msgs, setMsgs] = useState(P.chat || []);
+/* Título corto de una conversación: la primera cosa que preguntó el usuario.
+   Sirve para reconocerla en el historial sin tener que abrirla (§10). */
+
+function Coach({ st, P, update, curW, today, notify, setPantalla, setTab }) {
+  /* Al entrar al Coach la conversación anterior se archiva y se empieza una
+     vacía (§10): un chat que sigue abierto indefinidamente acumula contexto
+     viejo y confunde tanto al usuario como al modelo. El ref garantiza que el
+     archivado ocurre una vez por montaje, no en cada render. */
+  const archivado = useRef(false);
+  useEffect(() => {
+    if (archivado.current) return;
+    archivado.current = true;
+    if ((P.chat || []).length) {
+      update((s) => {
+        const p = s.perfiles[P.id];
+        p.conversaciones = [{ id: uid(), fecha: today, titulo: tituloConversacion(p.chat), msgs: p.chat }, ...(p.conversaciones || [])].slice(0, 30);
+        p.chat = [];
+        return s;
+      });
+    }
+  }, []);
+
+  const [msgs, setMsgs] = useState([]);
+  const [verId, setVerId] = useState(null);        // conversación del historial abierta
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
+  const [drawer, setDrawer] = useState(null);      // "hist" | "acc" en móvil
   const endRef = useRef(null);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
   const sugerencias = ["Tengo los gemelos cargados desde ayer", "¿A qué ritmo debería correr hoy?", "¿Por qué tengo esta sesión?", "¿Cuánto peso pongo hoy?", "Esta semana solo puedo entrenar tres días", "¿En qué evidencia se basa mi plan?", "¿Qué dice mi bibliografía sobre el sóleo?", "¿Qué como antes del entreno de hoy?"];
 
+  const historial = P.conversaciones || [];
+  const abierta = verId ? historial.find((c) => c.id === verId) : null;
+  const visibles = abierta ? abierta.msgs : msgs;
+
+  const nueva = () => { setVerId(null); setMsgs([]); setQ(""); setDrawer(null); };
+  const abrir = (id) => { setVerId(id); setDrawer(null); };
+  const borrar = (id) => {
+    if (!window.confirm("¿Eliminar esta conversación del historial?")) return;
+    update((s) => { const p = s.perfiles[P.id]; p.conversaciones = (p.conversaciones || []).filter((c) => c.id !== id); return s; });
+    if (verId === id) setVerId(null);
+    notify("✓ Conversación eliminada.");
+  };
+
   const send = async (text) => {
     const content = (text ?? q).trim(); if (!content || busy) return;
-    const next = [...msgs, { role: "user", content }];
+    if (abierta) setVerId(null);   // escribir sobre una vieja continúa en la nueva
+    const base = abierta ? [] : msgs;
+    const next = [...base, { role: "user", content }];
     setMsgs(next); setQ(""); setBusy(true);
     try {
       const txt = await llamarIA({ system: buildContext(st, P, curW, today, content), max_tokens: 1000,
@@ -1969,33 +2412,97 @@ function Coach({ st, P, update, curW, today, notify }) {
     notify(accept ? "Cambio aceptado y registrado." : "Cambio rechazado.");
   };
 
-  return (<div style={{ display: "flex", flexDirection: "column", minHeight: "calc(100vh - 140px)" }}>
-    <p className="eyebrow" style={{ marginTop: 8 }}>Semana {curW} · {daysBetween(today, P.perfil.fechaCarrera)} días para la carrera</p>
-    <h1>Coach</h1>
-    <div style={{ flex: 1, marginTop: 12 }}>
-      {!msgs.length && (<div className="card flat">
-        <p className="sm muted">Conozco tu perfil, tu plan, tus reglas y todo lo que has registrado. También tu bibliografía: en cada respuesta selecciono las referencias relevantes para lo que preguntas.</p>
-        {sugerencias.map((s) => <button key={s} className="btn ghost sm" style={{ width: "100%", textAlign: "left", marginBottom: 7, textTransform: "none", fontFamily: "'IBM Plex Sans',sans-serif", letterSpacing: 0 }} onClick={() => send(s)}>{s}</button>)}
+  /* Historial y accesos: el mismo contenido sirve para la columna de escritorio
+     y para el drawer de móvil, así que se declara una vez (§9, §11). */
+  const panelHistorial = (<>
+    <div className="between" style={{ marginBottom: 9 }}>
+      <span className="eyebrow">Conversaciones</span>
+      <button className="btn ghost sm" onClick={nueva}>+ Nueva</button>
+    </div>
+    <button className={"convitem" + (!verId ? " on" : "")} onClick={nueva}>
+      Conversación actual<small>{msgs.length ? msgs.length + " mensajes" : "vacía"}</small>
+    </button>
+    {historial.map((c) => (<div key={c.id} style={{ position: "relative" }}>
+      <button className={"convitem" + (verId === c.id ? " on" : "")} onClick={() => abrir(c.id)}>
+        {c.titulo}<small>{c.fecha}</small>
+      </button>
+      <button className="icobtn" style={{ position: "absolute", right: 6, top: 6, width: 28, height: 28, minWidth: 28, minHeight: 28 }}
+        title="Eliminar conversación" onClick={() => borrar(c.id)}>×</button>
+    </div>))}
+    {!historial.length && <p className="xs muted">Cuando salgas del Coach, esta conversación quedará guardada aquí.</p>}
+  </>);
+
+  const panelAccesos = (<>
+    <span className="eyebrow">Accesos</span>
+    <div style={{ height: 8 }} />
+    {[["Rutinas", "≡", () => setPantalla("rutinas")], ["Nutrición", "◐", () => setPantalla("nutricion")],
+      ["Recuperación", "◍", () => { setTab("entrenar"); setPantalla(null); }], ["Bibliografía", "◈", () => setPantalla("biblio")],
+      ["Progreso", "◢", () => { setTab("progreso"); setPantalla(null); }]].map(([l, ic, fn]) =>
+      <button key={l} className="btn ghost sm" style={{ width: "100%", textAlign: "left", marginBottom: 7, textTransform: "none", fontFamily: "'IBM Plex Sans',sans-serif", letterSpacing: 0 }}
+        onClick={() => { fn(); setDrawer(null); }}><span style={{ marginRight: 8 }}>{ic}</span>{l}</button>)}
+  </>);
+
+  const hilo = (<>
+    {!visibles.length && (<div className="card flat">
+      <h3>¿En qué puedo ayudarte hoy?</h3>
+      <p className="sm muted" style={{ marginTop: 6 }}>Conozco tu perfil, tu plan, tus reglas y todo lo que has registrado. También tu bibliografía: en cada respuesta selecciono las referencias relevantes para lo que preguntas.</p>
+      {sugerencias.map((s) => <button key={s} className="btn ghost sm" style={{ width: "100%", textAlign: "left", marginBottom: 7, textTransform: "none", fontFamily: "'IBM Plex Sans',sans-serif", letterSpacing: 0 }} onClick={() => send(s)}>{s}</button>)}
+    </div>)}
+    {visibles.map((m, i) => (<div key={i}>
+      <div className={"chatbox" + (m.role === "user" ? " me" : "")}>
+        <span className="eyebrow">{m.role === "user" ? "Tú" : "Coach"}</span>
+        <p style={{ margin: "5px 0 0", whiteSpace: "pre-wrap" }} className="sm">{m.content}</p>
+      </div>
+      {m.cambio && (<div className="card" style={{ borderColor: "#7A5730" }}>
+        <span className="tag gym">Cambio propuesto</span>
+        <p className="sm" style={{ margin: "8px 0" }}><strong>{String(m.cambio.tipo || "").replace("_", " ")}</strong>{m.cambio.dia ? " · " + m.cambio.dia : ""}<br />{m.cambio.de} → {m.cambio.a || "—"}<br /><span className="muted">{m.cambio.motivo}</span></p>
+        {m.pendiente && !abierta ? (<div className="row"><button className="btn primary sm" style={{ flex: 1 }} onClick={() => resolve(i, true)}>Aceptar cambio</button><button className="btn ghost sm" style={{ flex: 1 }} onClick={() => resolve(i, false)}>Rechazar</button></div>)
+          : <span className={"tag " + (m.aceptado ? "ok" : "")}>{m.aceptado ? "Aceptado y registrado" : m.pendiente ? "Sin resolver" : "Rechazado"}</span>}
       </div>)}
-      {msgs.map((m, i) => (<div key={i}>
-        <div className={"chatbox" + (m.role === "user" ? " me" : "")}>
-          <span className="eyebrow">{m.role === "user" ? "Tú" : "Coach"}</span>
-          <p style={{ margin: "5px 0 0", whiteSpace: "pre-wrap" }} className="sm">{m.content}</p>
+    </div>))}
+    {busy && <p className="eyebrow">Consultando tu historial…</p>}
+    <div ref={endRef} />
+  </>);
+
+  return (<div>
+    <div className="between" style={{ marginTop: 8 }}>
+      <div>
+        <p className="eyebrow" style={{ margin: 0 }}>Semana {curW} · {daysBetween(today, P.perfil.fechaCarrera)} días para la carrera</p>
+        <h1>Coach</h1>
+      </div>
+      {/* En escritorio las columnas están siempre visibles y estos botones
+          sobran; el CSS los oculta a partir de 1024px. */}
+      <div className="row coachtoggle" style={{ gap: 6 }}>
+        <button className="icobtn" title="Conversaciones" onClick={() => setDrawer("hist")}>☰</button>
+        <button className="icobtn" title="Accesos" onClick={() => setDrawer("acc")}>⋮</button>
+      </div>
+    </div>
+
+    {abierta && (<div className="card" style={{ borderColor: "#4E4483" }}>
+      <div className="between">
+        <span className="tag evid">Conversación del {abierta.fecha}</span>
+        <button className="btn ghost sm" onClick={nueva}>Volver a la actual</button>
+      </div>
+      <p className="xs muted" style={{ margin: "8px 0 0" }}>Estás leyendo el historial. Si escribes, empezará una conversación nueva.</p>
+    </div>)}
+
+    <div className="coachgrid" style={{ marginTop: 12 }}>
+      <aside className="coachcol">{panelHistorial}</aside>
+      <div style={{ display: "flex", flexDirection: "column", minHeight: "calc(100vh - 220px)" }}>
+        <div style={{ flex: 1 }}>{hilo}</div>
+        <div className="row" style={{ position: "sticky", bottom: 0, background: "var(--ink)", paddingTop: 8 }}>
+          <textarea rows="1" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} placeholder="Escribe a tu entrenador…" style={{ fontFamily: "'IBM Plex Sans',sans-serif", resize: "none" }} />
+          <button className="btn primary" style={{ width: 72 }} onClick={() => send()} disabled={busy}>Enviar</button>
         </div>
-        {m.cambio && (<div className="card" style={{ borderColor: "#7A5730" }}>
-          <span className="tag gym">Cambio propuesto</span>
-          <p className="sm" style={{ margin: "8px 0" }}><strong>{String(m.cambio.tipo || "").replace("_", " ")}</strong>{m.cambio.dia ? " · " + m.cambio.dia : ""}<br />{m.cambio.de} → {m.cambio.a || "—"}<br /><span className="muted">{m.cambio.motivo}</span></p>
-          {m.pendiente ? (<div className="row"><button className="btn primary sm" style={{ flex: 1 }} onClick={() => resolve(i, true)}>Aceptar cambio</button><button className="btn ghost sm" style={{ flex: 1 }} onClick={() => resolve(i, false)}>Rechazar</button></div>)
-            : <span className={"tag " + (m.aceptado ? "ok" : "")}>{m.aceptado ? "Aceptado y registrado" : "Rechazado"}</span>}
-        </div>)}
-      </div>))}
-      {busy && <p className="eyebrow">Consultando tu historial…</p>}
-      <div ref={endRef} />
+      </div>
+      <aside className="coachcol">{panelAccesos}</aside>
     </div>
-    <div className="row" style={{ position: "sticky", bottom: 0, background: "var(--ink)", paddingTop: 8 }}>
-      <textarea rows="1" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }} placeholder="Escribe a tu entrenador…" style={{ fontFamily: "'IBM Plex Sans',sans-serif", resize: "none" }} />
-      <button className="btn primary" style={{ width: 72 }} onClick={() => send()} disabled={busy}>Enviar</button>
-    </div>
+
+    {drawer && (<div className={"drawer" + (drawer === "acc" ? " der" : "")} onClick={() => setDrawer(null)}>
+      <div className="panel" onClick={(e) => e.stopPropagation()}>
+        {drawer === "hist" ? panelHistorial : panelAccesos}
+      </div>
+    </div>)}
   </div>);
 }
 
@@ -2317,6 +2824,82 @@ function NutriLinea({ P, w, codes }) {
   </div>);
 }
 
+/* ============================================================
+   RECETAS DEL DÍA (§12, §13)
+
+   No inventa nada nutricional: reparte el catálogo de comidas del perfil y
+   ajusta el mensaje según lo que toque entrenar ese día, que es lo que ya
+   calcula objetivosDia(). La ciencia sigue donde estaba; cambia la forma de
+   presentarla, de cronograma por horas a tres recetas concretas.
+   ============================================================ */
+const CONTEXTO_DIA = {
+  larga: { etiqueta: "Tirada larga", nota: "Carga el carbohidrato antes y no descuides la toma de después: es la sesión que más glucógeno vacía." },
+  calidad: { etiqueta: "Sesión de calidad", nota: "Come algo de carbohidrato fácil 1-2 h antes; la intensidad se resiente si llegas con el depósito bajo." },
+  fuerza: { etiqueta: "Día de fuerza", nota: "Reparte la proteína en cuatro tomas y no bajes el carbohidrato: sostiene la calidad de las series." },
+  suave: { etiqueta: "Día suave", nota: "Un día tranquilo: carbohidrato en la parte baja del rango y proteína igual que siempre." },
+  descanso: { etiqueta: "Descanso", nota: "Sin sesión no hay demanda extra de glucógeno. Es el mejor día para la fibra y las legumbres." },
+};
+
+/* Qué tipo de día es, a partir de las sesiones que ya vienen calculadas. */
+
+/* Elige de forma estable: el mismo día siempre propone lo mismo, si no cambiar
+   de pestaña barajaría las recetas y daría sensación de aleatoriedad. */
+
+function RecetasDelDia({ P, n, dia, curW, setVista }) {
+  const comidas = P.comidas || {};
+  const tieneCatalogo = ["desayuno", "comida", "cena"].some((k) => (comidas[k] || []).length);
+  const tipo = contextoDelDia(n.sesiones);
+  const ctx = CONTEXTO_DIA[tipo];
+  const semilla = curW * 7 + dia;
+
+  if (!tieneCatalogo) return (<div className="card vacio">
+    <span className="ic">◐</span>
+    <p className="sm muted" style={{ margin: "0 0 12px" }}>Todavía no tienes recetas guardadas. Carga el catálogo de ejemplo y edítalo a tu gusto.</p>
+    <button className="btn primary" onClick={() => setVista("plan")}>Ver mi plan de comidas</button>
+  </div>);
+
+  const bloques = [
+    ["Desayuno", eligeEstable(comidas.desayuno, semilla)],
+    ["Comida", eligeEstable(comidas.comida, semilla + 3)],
+    ["Cena", eligeEstable(comidas.cena, semilla + 5)],
+  ].filter(([, r]) => r);
+
+  return (<>
+    <div className="card">
+      <div className="between">
+        <span className={"tag " + (tipo === "descanso" ? "" : tipo === "fuerza" ? "gym" : "run")}>{ctx.etiqueta}</span>
+        <span className="mono sm">{n.obj.kcal} kcal</span>
+      </div>
+      <p className="sm" style={{ margin: "9px 0 0" }}>{ctx.nota}</p>
+    </div>
+
+    <span className="eyebrow" style={{ display: "block", margin: "16px 0 8px" }}>Recomendación de recetas</span>
+    {bloques.map(([titulo, receta]) => (<div className="card" key={titulo}>
+      <h3>{titulo}</h3>
+      <p className="sm" style={{ margin: "6px 0 0" }}>{receta}</p>
+    </div>))}
+
+    {/* En tirada larga las tomas de alrededor del entreno sí importan y se
+        muestran aparte; el resto de días no hacen falta (§13). */}
+    {(tipo === "larga" || tipo === "calidad") && (comidas.pre || []).length > 0 && (<div className="card">
+      <h3>Antes de entrenar</h3>
+      <p className="sm" style={{ margin: "6px 0 0" }}>{(comidas.pre || []).slice(0, 3).join(" · ")}</p>
+      <p className="xs muted" style={{ margin: "6px 0 0" }}>1-2 h antes, algo digerible y con carbohidrato disponible.</p>
+    </div>)}
+  </>);
+}
+
+/* Recomendaciones generales, siempre DESPUÉS de las recetas (§14). Son fijas y
+   deterministas: no dependen del día, por eso no van en el bloque de arriba. */
+const GENERALES = [
+  ["Proteína", "1,6-2,2 g por kg de peso al día, repartidos en 4 tomas. Es el nutriente que no se recorta nunca, ni en días de descanso."],
+  ["Carbohidratos", "Sube en días de tirada larga o calidad y baja en descanso. Son el combustible de la intensidad, no un extra."],
+  ["Hidratación", "Bebe a lo largo del día, no solo al entrenar. En sesiones de más de 60 min o con calor, añade sodio."],
+  ["Creatina", "3-5 g al día, a cualquier hora y también en días de descanso. Lo que importa es la constancia, no el momento."],
+  ["Cafeína", "3-6 mg por kg, unos 45-60 min antes de una sesión exigente. Evítala a menos de 8 h de dormir."],
+  ["Sueño", "7-9 h. Es la variable de recuperación con más impacto y la primera que se nota cuando falla."],
+];
+
 function Nutricion({ st, P, update, notify, curW, today, wk, onClose }) {
   const [vista, setVista] = useState("hoy");
   const [dia, setDia] = useState(wk.fuera ? 0 : wk.dayIdx);
@@ -2369,21 +2952,30 @@ function Nutricion({ st, P, update, notify, curW, today, wk, onClose }) {
         <p className="sm" style={{ margin: "7px 0 0" }}>{a.d}</p>
       </div>))}
 
-      <span className="eyebrow" style={{ display: "block", margin: "16px 0 8px" }}>Cronograma</span>
-      {n.crono.map((t) => (<div className="card" key={t.id}>
-        <div className="row" style={{ gap: 7 }}>
-          <span className={"tag " + (TIPO_TOMA[t.tipo] || {}).c}>{(TIPO_TOMA[t.tipo] || {}).l}</span>
-          <span className="mono xs muted">{t.hora}</span>
-        </div>
-        <div className="disp" style={{ fontSize: 16, marginTop: 7 }}>{t.titulo}</div>
-        <p className="sm" style={{ margin: "5px 0 0" }}>{t.que}</p>
-        <p className="xs muted" style={{ margin: "7px 0 0" }}>{t.porque}</p>
-        <RefChips ids={t.refs} biblio={st.biblio} onOpen={() => { }} />
-        {t.tipo === "pre" && (comidas.pre || []).length > 0 && (
-          <p className="xs" style={{ margin: "8px 0 0", color: "var(--evid)" }}>De tu plan: {(comidas.pre || []).join(" · ")}</p>)}
-        {(t.tipo === "post" || t.tipo === "base") && (comidas[t.hora.toLowerCase().includes("desayuno") ? "desayuno" : "comida"] || []).length > 0 && (
-          <p className="xs" style={{ margin: "8px 0 0", color: "var(--evid)" }}>Ejemplo de tu plan: {(comidas[t.hora.toLowerCase().includes("desayuno") ? "desayuno" : "comida"] || [])[0]}</p>)}
+      {/* Recetas primero: es lo accionable. El cronograma por horas pasa a ser
+          detalle opcional (§12, §24). */}
+      <RecetasDelDia P={P} n={n} dia={dia} curW={curW} setVista={setVista} />
+
+      <span className="eyebrow" style={{ display: "block", margin: "18px 0 8px" }}>Recomendaciones generales</span>
+      {GENERALES.map(([titulo, texto]) => (<div className="card" key={titulo}>
+        <h3>{titulo}</h3>
+        <p className="sm" style={{ margin: "6px 0 0" }}>{texto}</p>
       </div>))}
+
+      <details style={{ marginTop: 6 }}>
+        <summary className="btn ghost sm" style={{ width: "100%", textAlign: "center" }}>Ver el detalle por momentos del día</summary>
+        <p className="xs muted" style={{ margin: "10px 0" }}>Reparto por tomas con la evidencia detrás de cada una. Útil en días de tirada larga; el resto de días basta con las recetas de arriba.</p>
+        {n.crono.map((t) => (<div className="card" key={t.id}>
+          <div className="row" style={{ gap: 7 }}>
+            <span className={"tag " + (TIPO_TOMA[t.tipo] || {}).c}>{(TIPO_TOMA[t.tipo] || {}).l}</span>
+            <span className="mono xs muted">{t.hora}</span>
+          </div>
+          <div className="disp" style={{ fontSize: 16, marginTop: 7 }}>{t.titulo}</div>
+          <p className="sm" style={{ margin: "5px 0 0" }}>{t.que}</p>
+          <p className="xs muted" style={{ margin: "7px 0 0" }}>{t.porque}</p>
+          <RefChips ids={t.refs} biblio={st.biblio} onOpen={() => { }} />
+        </div>))}
+      </details>
     </>)}
 
     {/* ---------- SEMANA ---------- */}
@@ -3289,25 +3881,12 @@ function AjustesIA({ notify }) {
 }
 
 function Ajustes({ st, P, update, notify, onClose, setPantalla, today, onLogout, user }) {
-  const [url, setUrl] = useState(st.config.sheetsUrl || "");
-  const [test, setTest] = useState(null); const [busy, setBusy] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [accountBusy, setAccountBusy] = useState(false);
   const comp = completeness(P.perfil);
-  const guardar = () => { update((s) => { s.config.sheetsUrl = url.trim(); return s; }); notify("URL guardada."); };
-  const probar = async () => { setBusy(true); setTest(null); setTest(await pushToSheets(url.trim(), "Config", [{ fecha: today, clave: "prueba", valor: "conexión desde Hybrid Coach" }])); setBusy(false); };
-  const sincronizar = async () => {
-    if (!st.config.sheetsUrl) return notify("Configura primero la URL del Apps Script.");
-    setBusy(true); const u = st.config.sheetsUrl; const tag = (rows) => rows.map((r) => ({ ...r, perfil: P.nombre }));
-    const res = [await pushToSheets(u, "Running", tag(P.running)), await pushToSheets(u, "Fuerza", tag(P.strength)),
-      await pushToSheets(u, "Feedback", tag(P.checkins)), await pushToSheets(u, "Recovery", tag(P.recovery)),
-      await pushToSheets(u, "Cambios_Plan", tag(P.changes)), await pushToSheets(u, "Bibliografia", st.biblio)];
-    setBusy(false); update((s) => { s.config.lastSync = new Date().toISOString(); return s; });
-    notify(res.every((x) => x.ok) ? "Todo sincronizado con Google Sheets." : "Sincronización parcial: " + (res.find((x) => !x.ok) || {}).msg);
-  };
   const exportar = () => { const blob = new Blob([JSON.stringify(st, null, 2)], { type: "application/json" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "hybridcoach-" + today + ".json"; a.click(); };
   const exportarCuenta = async () => {
@@ -3365,19 +3944,22 @@ function Ajustes({ st, P, update, notify, onClose, setPantalla, today, onLogout,
       <button className="btn sm ghost" style={{ width: "100%" }} onClick={regenerar}>{confReg ? "Confirmar: se borran las semanas planificadas" : "Regenerar plan con el perfil actual"}</button>
     </div>
     <AjustesIA notify={notify} />
-    <div className="card"><h3>Google Sheets</h3>
-      <p className="sm muted">Pega la URL del Apps Script desplegado (termina en <span className="mono">/exec</span>). Sin ella, todo se guarda dentro de la aplicación.</p>
-      <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://script.google.com/macros/s/…/exec" style={{ fontSize: 13 }} />
-      <div style={{ height: 9 }} />
-      <div className="row"><button className="btn sm" style={{ flex: 1 }} onClick={guardar}>Guardar</button>
-        <button className="btn sm" style={{ flex: 1 }} onClick={probar} disabled={busy || !url}>Probar conexión</button></div>
-      {test && <p className="sm" style={{ color: test.ok ? "var(--ok)" : "var(--alert)", marginBottom: 0 }}>{test.ok ? "Conectado." : "No conecta: " + test.msg}</p>}
-      <div style={{ height: 9 }} />
-      <button className="btn ghost sm" style={{ width: "100%" }} onClick={sincronizar} disabled={busy}>Sincronizar este perfil</button>
-      {st.config.lastSync && <p className="xs muted" style={{ marginBottom: 0 }}>Última sincronización: {new Date(st.config.lastSync).toLocaleString("es-ES")}</p>}
-    </div>
+    {/* Google Sheets ya no se ofrece: los datos viven en PostgreSQL y la hoja
+        era una integración heredada. El código de pushToSheets() sigue en el
+        cliente porque `sheetsUrl` puede venir de un perfil antiguo, pero sin
+        interfaz nadie configura una nueva y respaldarRutinas() ya no envía
+        nada por defecto. Ver el informe de esta fase. */}
+    {st.config.sheetsUrl && (<div className="card">
+      <h3>Google Sheets</h3>
+      <p className="sm muted">Este perfil arrastra una hoja configurada de una versión anterior. La integración ya no se mantiene.</p>
+      <p className="xs mono muted" style={{ overflowWrap: "anywhere" }}>{st.config.sheetsUrl}</p>
+      <button className="btn ghost sm" style={{ width: "100%", marginTop: 8 }}
+        onClick={() => { update((s) => { s.config.sheetsUrl = ""; return s; }); notify("✓ Enlace con Google Sheets eliminado."); }}>
+        Dejar de usar Google Sheets
+      </button>
+    </div>)}
     <div className="card"><h3>Strava</h3>
-      <p className="sm muted" style={{ marginBottom: 8 }}>La importación automática necesita el Apps Script desplegado: la clave secreta no puede vivir dentro de esta aplicación.</p>
+      <p className="sm muted" style={{ marginBottom: 8 }}>La importación automática necesita configuración en el servidor: la clave secreta no puede vivir dentro de esta aplicación.</p>
       <span className="tag">Requiere configuración externa</span>
     </div>
     <div className="card"><h3>Tus datos</h3>
