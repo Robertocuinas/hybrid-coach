@@ -45,14 +45,17 @@ export function describirLesiones(lesiones = []) {
 export function contextoParaRetrieval(datos) {
   const { perfil, lesiones, plan, planificadas } = datos;
   const siguiente = (planificadas || []).find((session) => new Date(session.fecha) >= new Date());
+  const molestiasActuales = Array.isArray(perfil?.current_complaints)
+    ? perfil.current_complaints.filter((item) => item?.activa !== false).slice(0, 5)
+    : [];
   return {
     distanciaObjetivo: perfil?.distancia_objetivo || plan?.distancia_objetivo || null,
     fase: siguiente?.session_type || (plan ? `plan de ${plan.total_semanas} semanas` : null),
     lesiones: (lesiones || []).map((l) => ({ zona: l.zona, recurrente: l.recurrente })),
-    molestias: (datos.checkins || [])
+    molestias: [...molestiasActuales, ...(datos.checkins || [])
       .filter((c) => c.dolor >= 3 && c.zona_dolor)
       .slice(0, 3)
-      .map((c) => ({ zona: c.zona_dolor, intensidad: c.dolor })),
+      .map((c) => ({ zona: c.zona_dolor, intensidad: c.dolor }))],
     prioridad: (perfil?.prioridades || [])[0] || null,
   };
 }
@@ -89,10 +92,17 @@ function bloqueDatos(datos, hoy) {
     ? `Disponibilidad vigente: días ${(disponibilidad.dias || []).join(", ")}; gimnasio ${disponibilidad.min_gym ?? "?"}min; carrera ${disponibilidad.min_run ?? "?"}min; fin de semana ${disponibilidad.min_finde ?? "?"}min.`
     : "Disponibilidad: sin registro canónico.";
 
+  const lineaMolestias = Array.isArray(p.current_complaints) && p.current_complaints.length
+    ? p.current_complaints.filter((item) => item?.activa !== false)
+      .map((item) => `${item.zona || "zona no indicada"}: dolor ${item.intensidad ?? item.dolor ?? "?"}/10${item.cuando ? ` (${item.cuando})` : ""}`)
+      .join("; ")
+    : "ninguna declarada";
+
   return [
     "DATOS DEL ATLETA",
     `Calendario de ayer a +7 días: ${lineaPlanificadas}`,
     lineaDisponibilidad,
+    `Molestias actuales: ${lineaMolestias}.`,
     `${p.nombre || "Atleta"}, ${guion(p.edad, " años") || "edad no declarada"}, ${p.sexo || "sexo no declarado"}, ${guion(p.altura_cm, " cm") || "altura no declarada"}, ${guion(p.peso_kg, " kg") || "peso no declarado"}${p.grasa_pct ? `, ${p.grasa_pct}% de grasa` : ""}.`,
     `Objetivo: ${p.distancia_objetivo || "sin definir"} el ${fecha(p.fecha_carrera) || "sin fecha"} — ${p.meta_tipo || "sin meta declarada"}${p.meta_tiempo ? ` (${p.meta_tiempo})` : ""}.`,
     `Prioridades: ${(p.prioridades || []).join(" > ") || "sin declarar"}.`,

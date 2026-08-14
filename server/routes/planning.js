@@ -5,6 +5,7 @@ import express from "express";
 import { resolveRAGRuntime } from "../ai/runtime.js";
 import {
   acceptWeeklyPlanRevision,
+  getAcceptedWeeklyPlanRevision,
   getWeeklyPlanRevision,
   rejectWeeklyPlanRevision,
 } from "../db/repositories/weeklyPlanning.js";
@@ -51,6 +52,17 @@ router.post("/weeks/:week/proposals", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+router.get("/weeks/:week/accepted", async (req, res, next) => {
+  try {
+    const week = Number(req.params.week);
+    if (!Number.isInteger(week) || week < 1) {
+      throw new PlanningRequestError("La semana solicitada no es valida.", { code: "INVALID_WEEK_NUMBER" });
+    }
+    const accepted = await getAcceptedWeeklyPlanRevision(profileId(req), week);
+    res.json(accepted ? publicWeeklyProposal(accepted) : { ok: true, proposal: null });
+  } catch (error) { next(error); }
+});
+
 router.get("/proposals/:id", async (req, res, next) => {
   try {
     res.json(publicWeeklyProposal(await getWeeklyPlanRevision(proposalId(req), profileId(req))));
@@ -75,4 +87,3 @@ router.post("/proposals/:id/accept", (req, res, next) => decide(req, res, next, 
 router.post("/proposals/:id/reject", (req, res, next) => decide(req, res, next, "reject"));
 
 export default router;
-

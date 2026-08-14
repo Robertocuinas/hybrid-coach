@@ -19,7 +19,8 @@ export async function cargarContexto(profileId, { db = pool, dias = VENTANA_DIAS
     unaFila(db, `SELECT nombre, edad, sexo, altura_cm, peso_kg, grasa_pct, distancia_objetivo, fecha_carrera,
                         meta_tipo, meta_tiempo, prioridades, exp_carrera, km_semana, sesiones_carrera,
                         tirada_larga_min, paron, exp_fuerza, tecnica, equipamiento, cargas, estructural,
-                        cirugias, horas_sueno, calidad_sueno, estres, nutricion_objetivo, suplementos, reloj
+                        cirugias, banderas, current_complaints, horas_sueno, calidad_sueno,
+                        estres, nutricion_objetivo, suplementos, reloj
                    FROM athlete_profiles WHERE id = $1;`, [profileId]),
 
     filas(db, `SELECT zona, recurrente, contexto FROM injuries

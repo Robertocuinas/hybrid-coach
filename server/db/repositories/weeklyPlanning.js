@@ -564,6 +564,32 @@ export async function getWeeklyPlanRevision(revisionId, profileId, db = pool) {
   return { revision, sessions: sessions.rows, evidence: evidence.rows, guardrails: guardrails.rows };
 }
 
+/** Devuelve la revision tactica aceptada para una semana del plan maestro
+ * activo. El plan y el perfil se resuelven siempre en PostgreSQL: el cliente
+ * no puede seleccionar un plan de otro atleta ni reactivar uno historico. */
+export async function getAcceptedWeeklyPlanRevision(profileId, weekNumber, db = pool) {
+  if (!profileId) throw new TypeError("profileId es obligatorio");
+  const week = Number(weekNumber);
+  if (!Number.isInteger(week) || week < 1) throw new TypeError("weekNumber debe ser un entero positivo");
+
+  const { rows } = await db.query(
+    `SELECT r.id
+       FROM weekly_plan_revisions r
+       JOIN training_weeks tw ON tw.id = r.training_week_id
+       JOIN training_plans p ON p.id = tw.training_plan_id
+      WHERE r.athlete_profile_id = $1
+        AND p.athlete_profile_id = $1
+        AND p.activo = true
+        AND tw.numero_semana = $2
+        AND r.status = 'accepted'
+      ORDER BY r.accepted_at DESC NULLS LAST, r.revision DESC
+      LIMIT 1;`,
+    [profileId, week],
+  );
+  if (!rows[0]) return null;
+  return getWeeklyPlanRevision(rows[0].id, profileId, db);
+}
+
 export async function listWeeklyPlanRevisions(profileId, { planId = null, weekNumber = null, status = null } = {}, db = pool) {
   const params = [profileId];
   const filters = ["r.athlete_profile_id = $1"];

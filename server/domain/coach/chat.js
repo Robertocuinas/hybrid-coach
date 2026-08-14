@@ -28,10 +28,18 @@ function bloqueoClinico(datos, consulta) {
   if (banderas.length) {
     return "Hay una bandera de salud declarada. No voy a proponerte cambios de entrenamiento hasta que un profesional sanitario confirme que puedes entrenar con seguridad.";
   }
-  const registros = [...(datos.checkins || []), ...(datos.recuperacion || [])]
+  const molestias = (datos.perfil?.current_complaints || [])
+    .filter((item) => item?.activa !== false)
+    .map((item) => ({
+      fecha: item.fecha || new Date().toISOString().slice(0, 10),
+      dolor: item.intensidad ?? item.dolor ?? item.pain,
+      tipo_dolor: item.tipo,
+      cuando_aparece: item.cuando,
+    }));
+  const registros = [...molestias, ...(datos.checkins || []), ...(datos.recuperacion || [])]
     .sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)));
   const dolorAlto = registros.find((row) => Number(row.dolor) >= 5);
-  const dolorReposo = (datos.checkins || []).find((row) => /reposo/i.test(`${row.tipo_dolor || ""} ${row.cuando_aparece || ""}`));
+  const dolorReposo = registros.find((row) => /reposo/i.test(`${row.tipo_dolor || ""} ${row.cuando_aparece || ""}`));
   if (dolorReposo) {
     return "Has registrado dolor en reposo. Para el impacto y consulta con un profesional sanitario; no voy a reorganizar el plan como si fuera solo fatiga de entrenamiento.";
   }

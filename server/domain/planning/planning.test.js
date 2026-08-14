@@ -153,9 +153,9 @@ test("las modalidades desactivadas por el atleta son un guardrail duro", () => {
   assert.ok(noStrength.hard.some((item) => item.code === "STRENGTH_NOT_SELECTED"));
 });
 
-test("dolor en reposo activa fallback clínico antes de retrieval o LLM", async () => {
+test("dolor en reposo con la forma real de feedback activa fallback antes de retrieval o LLM", async () => {
   let retrievals = 0, calls = 0;
-  const result = await planificarSemana(context({ checkins: [{ fecha: "2026-08-16", dolor: 4, dolorEnReposo: true }] }), {
+  const result = await planificarSemana(context({ checkins: [{ fecha: "2026-08-16", dolor: 4, cuando_aparece: "También en reposo" }] }), {
     retrieve: async () => { retrievals++; return []; },
     llmProvider: async () => { calls++; return "{}"; },
   });

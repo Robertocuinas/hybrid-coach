@@ -219,7 +219,11 @@ export function calcularAnaliticaEntrenamiento(contexto = {}, { hoy = new Date()
   const hace14 = completadas.filter((s) => s.fecha && enVentana(s.fecha, sumarDias(hoyISO, -7), 7));
   const comparativa7d = resumirVentana(hace14, [], [], sumarDias(hoyISO, -7), 7);
   const adherencia = calcularAdherencia(planificadas, completadas, hoyISO);
-  const dolorEnReposo = [...recuperacion, ...checkins].some((r) => !!(r.dolor_reposo ?? r.dolorEnReposo ?? r.painAtRest));
+  const dolorEnReposo = [...recuperacion, ...checkins].some((r) => {
+    const flag = r.dolor_reposo ?? r.dolorEnReposo ?? r.painAtRest;
+    const descripcion = [r.cuando_aparece, r.cuando, r.tipo_dolor, r.tipo].filter(Boolean).join(" ");
+    return flag === true || /reposo/i.test(descripcion);
+  });
   const redFlags = [...(contexto.redFlags || contexto.banderas || []), ...checkins.flatMap((r) => r.red_flags || r.redFlags || [])]
     .map(String).filter(Boolean);
 

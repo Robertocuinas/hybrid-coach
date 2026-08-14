@@ -32,6 +32,7 @@ const ESQUEMA = `
     altura_cm int, peso_kg numeric, grasa_pct numeric, distancia_objetivo text, fecha_carrera date, meta_tipo text,
     meta_tiempo text, prioridades text[], exp_carrera text, km_semana int, sesiones_carrera int, tirada_larga_min int,
     paron text, exp_fuerza text, tecnica text, equipamiento text, cargas jsonb, estructural text[], cirugias text,
+    banderas text[], current_complaints jsonb DEFAULT '[]'::jsonb,
     horas_sueno numeric, calidad_sueno text, estres numeric, nutricion_objetivo text, suplementos text[], reloj text);
   CREATE TABLE injuries (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), athlete_profile_id uuid, zona text,
     recurrente boolean, contexto text, activa boolean DEFAULT true, created_at timestamptz DEFAULT now());
@@ -240,6 +241,37 @@ test("sin evidencia y con pregunta que la pide, no se llama al modelo", async ()
   assert.equal(salida.hayEvidencia, false);
   assert.match(salida.texto, /No existe evidencia suficiente/);
   assert.equal(llamado, false, "el umbral se comprueba ANTES de gastar una llamada");
+  await db.close();
+});
+
+test("el Coach bloquea cambios ante una molestia real declarada en reposo", async () => {
+  const { db, profileId } = await escenario();
+  await db.query(
+    `UPDATE athlete_profiles
+        SET current_complaints='[{"zona":"rodilla","intensidad":4,"cuando":"También en reposo"}]'::jsonb
+      WHERE id=$1;`,
+    [profileId],
+  );
+  let llamado = false;
+  const llm = { call: async () => { llamado = true; return { text: "no debería llegar aquí" }; } };
+  const salida = await responder(profileId, "¿puedes mover mi carrera de mañana?", deps(db, llm));
+
+  assert.match(salida.texto, /dolor en reposo/i);
+  assert.equal(salida.cambio, null);
+  assert.equal(llamado, false);
+  await db.close();
+});
+
+test("el Coach lee las banderas clínicas del perfil y no llama al modelo", async () => {
+  const { db, profileId } = await escenario();
+  await db.query(`UPDATE athlete_profiles SET banderas=ARRAY['Mareos o desmayos'] WHERE id=$1;`, [profileId]);
+  let llamado = false;
+  const llm = { call: async () => { llamado = true; return { text: "no debería llegar aquí" }; } };
+  const salida = await responder(profileId, "¿me añades intervalos esta semana?", deps(db, llm));
+
+  assert.match(salida.texto, /bandera de salud/i);
+  assert.equal(salida.cambio, null);
+  assert.equal(llamado, false);
   await db.close();
 });
 
