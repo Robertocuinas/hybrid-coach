@@ -40,7 +40,7 @@ NODE_ENV=production
 PGVECTOR_ENABLED=true
 PASSWORD_MIN_LENGTH=12
 SESSION_TTL_DAYS=30
-REGISTRATION_ENABLED=false
+REGISTRATION_ENABLED=true
 ```
 
 **El nombre importa: tiene que ser `DATABASE_URL`.** Al añadir una referencia, Railway nombra
@@ -56,6 +56,8 @@ son innecesarias: el proyecto se conecta solo por `DATABASE_URL`.
 
 El primer administrador se asigna explícitamente en PostgreSQL después de registrar la
 cuenta. El registro público siempre crea usuarios con rol `athlete`.
+Para cerrar nuevas altas sin afectar al acceso de las cuentas existentes, cambia
+`REGISTRATION_ENABLED` a `false`; si la variable no existe, la aplicación permite el alta.
 Variables de IA, embeddings, R2, Sheets y Strava son opcionales.
 
 ## Subida de bibliografía en PDF

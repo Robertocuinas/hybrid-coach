@@ -11,9 +11,15 @@ import { packSessionCookie, requireAuth, readSessionToken, sessionCookieName, se
 const router = express.Router();
 const minPasswordLength = Number(process.env.PASSWORD_MIN_LENGTH || 12);
 const ttlDays = Number(process.env.SESSION_TTL_DAYS || 30);
-/* El alta pública debe habilitarse de forma explícita. Un despliegue nuevo o
-   una variable borrada accidentalmente no puede reabrir el registro. */
-const registrationEnabled = process.env.REGISTRATION_ENABLED === "true";
+/* La aplicación es multiusuario: si Railway no define la variable, una persona
+   nueva debe poder crear su cuenta. El operador puede cerrar las altas de
+   forma explícita; un valor desconocido se trata como cerrado para que un typo
+   de configuración no abra el registro accidentalmente. */
+export function isPublicRegistrationEnabled(value) {
+  if (value == null || String(value).trim() === "") return true;
+  return String(value).trim().toLowerCase() === "true";
+}
+const registrationEnabled = isPublicRegistrationEnabled(process.env.REGISTRATION_ENABLED);
 const cookieSecurityOptions = () => ({ httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/" });
 const cookieOptions = () => ({ ...cookieSecurityOptions(), maxAge: ttlDays * 86400_000 });
 const argon2Options = { algorithm: Algorithm.Argon2id, memoryCost: 19_456, timeCost: 2, parallelism: 1 };

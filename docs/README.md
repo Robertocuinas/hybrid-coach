@@ -38,6 +38,7 @@ Plan completo para llevar el proyecto de `localStorage` + Google Sheets a
 | [`04-capa-ia.md`](04-capa-ia.md) | **Abstracción de proveedores.** Interfaces LLM / embeddings / reranking, adaptadores para Anthropic, OpenAI y modelos locales (Ollama), selección por variables de entorno, degradación por capacidades. |
 | [`05-rag.md`](05-rag.md) | Pipeline completo: ingesta de PDF, chunking, embeddings, retrieval híbrido, reranking, grounding, citas. |
 | [`09-evaluacion-observabilidad.md`](09-evaluacion-observabilidad.md) | Cómo comprobar que el RAG funciona de verdad. Métricas, dataset de evaluación, logging. |
+| [`11-planificador-semanal-ia-rag.md`](11-planificador-semanal-ia-rag.md) | Flujo semanal IA+RAG, contrato HTTP, aceptación humana, trazabilidad, fallback, despliegue y rollback. |
 
 ### Operación
 

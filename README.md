@@ -9,7 +9,7 @@ conciliación y una capa opcional de IA/RAG.
 - staging desplegado en Railway;
 - autenticación real con Argon2id y cookie HttpOnly;
 - PostgreSQL y pgvector operativos;
-- registro público cerrado mediante `REGISTRATION_ENABLED=false`;
+- registro público disponible, con cierre opcional mediante `REGISTRATION_ENABLED=false`;
 - dual write `localStorage` → API activo hasta completar la conciliación;
 - IA, embeddings, R2 y Strava opcionales y desactivados si no tienen variables.
 
