@@ -34,6 +34,15 @@ un archivo nuevo.
    atrás durante el rollback de aplicación.
 4. Repetir las comprobaciones anteriores.
 
+### Planificador semanal (`0010_weekly_planning.js`)
+
+Tras el primer despliegue del planificador, comprobar además que las tablas de ejecución y
+revisión existen, que una propuesta nueva nace `draft` y que una semana nunca tiene más de
+una revisión `accepted`. Ante un problema, hacer primero rollback de aplicación y conservar
+el esquema aditivo: `migrate:down` eliminaría el historial de propuestas. El procedimiento,
+consultas de verificación y alcance destructivo del rollback de esquema están en
+[`11-planificador-semanal-ia-rag.md`](11-planificador-semanal-ia-rag.md#6-despliegue-de-la-migración).
+
 ## Conciliación diaria
 
 El servicio cron usa el mismo repositorio, `/railway.cron.json`, el comando

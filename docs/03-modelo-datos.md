@@ -17,6 +17,14 @@ erDiagram
     athlete_profiles ||--o{ training_plans : genera
     training_plans ||--o{ training_weeks : contiene
     training_weeks ||--o{ planned_sessions : contiene
+    athlete_profiles ||--o{ planning_runs : ejecuta
+    training_weeks ||--o{ weekly_plan_revisions : versiona
+    planning_runs ||--o| weekly_plan_revisions : produce
+    weekly_plan_revisions ||--o{ weekly_plan_sessions : contiene
+    planning_runs ||--o{ planning_run_evidence : recupera
+    planning_runs ||--o{ guardrail_results : valida
+    athlete_profiles ||--o{ plan_change_proposals : propone
+    planning_runs ||--o{ plan_change_proposals : origina
     training_plans ||--o{ plan_decisions : justifica
     athlete_profiles ||--o{ completed_sessions : registra
     completed_sessions ||--o| running_sessions : detalla
@@ -32,6 +40,7 @@ erDiagram
     conversations ||--o{ messages : contiene
     documents ||--o{ document_chunks : se_trocea_en
     document_chunks ||--o| chunk_embeddings : vectoriza
+    document_chunks ||--o{ planning_run_evidence : fundamenta
     plan_decisions ||--o{ plan_decision_citations : cita
     document_chunks ||--o{ plan_decision_citations : citado_por
     athlete_profiles ||--o{ nutrition_targets : calcula
@@ -122,6 +131,41 @@ Disponibilidad con historia (hoy vive sin versión temporal dentro del perfil).
 
 `id`, `athlete_profile_id` FK, `vigente_desde` date, `dias` (int[]), `min_gym`, `min_run`,
 `min_finde`.
+
+### Revisiones semanales IA + RAG
+
+El plan maestro continúa en `training_plans` / `training_weeks` / `planned_sessions`. Una
+adaptación semanal no lo sobrescribe: queda en un conjunto separado y auditable creado por
+la migración `0010_weekly_planning.js`.
+
+- `planning_runs`: una ejecución del planificador. Guarda perfil y plan, semana, tipo y
+  estado, versiones de prompt/esquema/reglas, proveedor/modelo, snapshot e `input_hash`,
+  analítica, consultas/diagnóstico de retrieval, salida validada, resultados, fallo y
+  latencia.
+- `planning_run_evidence`: chunks considerados por cada consulta, sus scores/rank y dos
+  marcas distintas: enviado al modelo y usado por el modelo.
+- `guardrail_results`: resultado reproducible de cada regla, con versión, severidad,
+  mensaje y detalle.
+- `weekly_plan_revisions`: revisión inmutable de una semana (`draft`, `accepted`,
+  `rejected`, `superseded`). Tiene número de revisión y referencia opcional a su base.
+- `weekly_plan_sessions`: sesiones pertenecientes a una revisión, con fecha, orden,
+  modalidad, intensidad/prescripción estructuradas y razón pública.
+- `plan_change_proposals`: cambios puntuales originados desde Coach, enlazables con
+  conversación, mensaje, ejecución y revisión semanal.
+
+Restricciones críticas:
+
+- `UNIQUE (training_week_id, revision)` versiona sin sobrescrituras;
+- el índice parcial `idx_weekly_plan_one_accepted` permite una sola revisión `accepted` por
+  semana;
+- las decisiones registran su timestamp y no pueden saltar directamente entre estados;
+- las sesiones hijas y la evidencia se eliminan con su ejecución/revisión, mientras los
+  chunks científicos compartidos usan `ON DELETE RESTRICT`;
+- las raíces personales llevan `athlete_profile_id`; los hijos se autorizan recorriendo
+  únicamente padres ya filtrados por ese perfil.
+
+El contrato completo de ejecución y rollback está en
+[`11-planificador-semanal-ia-rag.md`](11-planificador-semanal-ia-rag.md).
 
 ---
 

@@ -204,6 +204,53 @@ const assertSessionInsideWeek = (session, start, end) => {
   }
 };
 
+/** Registra una ejecución que no produjo propuesta (sin evidencia, fallo del
+ * proveedor o rechazo por seguridad). La ausencia de borrador también debe
+ * quedar trazada para poder auditar el comportamiento del sistema. */
+export async function createPlanningRun({
+  profileId,
+  planId = null,
+  weekNumber = null,
+  kind = "weekly_plan",
+  run = {},
+}, db = pool) {
+  if (!profileId) throw new TypeError("profileId es obligatorio");
+  if (weekNumber !== null && (!Number.isInteger(weekNumber) || weekNumber < 1)) {
+    throw new TypeError("weekNumber debe ser null o un entero positivo");
+  }
+  return transaction(db, async (client) => {
+    if (planId) await ownedPlan(client, profileId, planId);
+    const inputSnapshot = run.inputSnapshot ?? run.input_snapshot ?? {};
+    const status = run.status || "completed";
+    const completedAt = run.completedAt ?? run.completed_at ?? (status === "running" ? null : new Date());
+    const validatedOutput = run.validatedOutput ?? run.validated_output ?? null;
+    const failure = run.failure ?? null;
+    const { rows } = await client.query(
+      `INSERT INTO planning_runs
+        (athlete_profile_id, training_plan_id, week_number, kind, status,
+         prompt_version, schema_version, rules_version, provider, model,
+         input_snapshot, input_hash, analytics, query_plan, retrieval_diagnostics,
+         validated_output, validation_results, failure, latency_ms, started_at, completed_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,COALESCE($20,now()),$21)
+       RETURNING *;`,
+      [profileId, planId, weekNumber, kind, status,
+        run.promptVersion ?? run.prompt_version ?? null,
+        run.schemaVersion ?? run.schema_version ?? null,
+        run.rulesVersion ?? run.rules_version ?? null,
+        run.provider ?? null, run.model ?? null,
+        json(inputSnapshot, {}), run.inputHash ?? run.input_hash ?? hashPlanningInput(inputSnapshot),
+        json(run.analytics, {}), json(run.queryPlan ?? run.query_plan, []),
+        json(run.retrievalDiagnostics ?? run.retrieval_diagnostics, {}),
+        validatedOutput === null ? null : json(validatedOutput, null),
+        json(run.validationResults ?? run.validation_results, []),
+        failure === null ? null : json(failure, null),
+        run.latencyMs ?? run.latency_ms ?? null,
+        run.startedAt ?? run.started_at ?? null, completedAt],
+    );
+    return rows[0];
+  });
+}
+
 /** Crea ejecución, borrador, sesiones, evidencia y guardrails en una transacción. */
 export async function createPlanningDraft({
   profileId,
@@ -446,10 +493,12 @@ export async function rejectWeeklyPlanRevision({ revisionId, profileId, expected
 
 export async function getWeeklyPlanRevision(revisionId, profileId, db = pool) {
   const { rows } = await db.query(
-    `SELECT r.*, pr.kind AS run_kind, pr.status AS run_status, pr.provider, pr.model,
+    `SELECT r.*, tw.numero_semana AS week_number, tw.training_plan_id,
+            pr.kind AS run_kind, pr.status AS run_status, pr.provider, pr.model,
             pr.prompt_version, pr.schema_version, pr.rules_version, pr.input_hash,
             pr.retrieval_diagnostics, pr.validation_results, pr.latency_ms
        FROM weekly_plan_revisions r
+       JOIN training_weeks tw ON tw.id = r.training_week_id
        JOIN planning_runs pr ON pr.id = r.planning_run_id
       WHERE r.id = $1 AND r.athlete_profile_id = $2;`, [revisionId, profileId],
   );

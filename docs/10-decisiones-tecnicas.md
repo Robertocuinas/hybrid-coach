@@ -249,6 +249,36 @@ diseñarlo bien ahora. El coste de incluirlo desde el principio es prácticament
 
 ---
 
+## D12 · Revisiones tácticas semanales con aceptación humana
+
+**Problema.** El reparto semanal determinista no aprovecha todo el historial ejecutado,
+recuperación, disponibilidad y evidencia recuperada. A la vez, permitir que un LLM
+reescriba el plan maestro o active cambios crea un riesgo físico y operativo.
+
+**Alternativas.** Mantener una agenda totalmente heurística; dejar al modelo reescribir el
+plan; o separar plan maestro y revisión semanal versionada.
+
+**Decisión: separar plan maestro y adaptación táctica.** El motor conserva objetivo, fecha,
+fases, número/tipos de sesiones y límites. El planificador IA+RAG puede proponer la
+distribución y prescripción de una semana dentro de esos límites, con JSON cerrado,
+evidencia verificable y guardarraíles deterministas. Toda salida nace `draft`; solo una
+aceptación explícita la convierte en agenda vigente.
+
+**Por qué.** Permite personalizar con datos reales sin convertir el modelo en fuente de
+verdad ni perder reproducibilidad. Las revisiones inmutables conservan qué información,
+evidencia, modelo y reglas produjeron cada propuesta. El plan maestro ofrece además un
+fallback seguro si fallan retrieval, proveedor o validación.
+
+**Reconsiderar si.** Evaluaciones controladas demuestran que una parte estructural puede
+delegarse sin empeorar `citation_correctness`, `refusal_accuracy` ni las reglas clínicas;
+aun así requeriría una nueva decisión de producto y migración, no solo un cambio de prompt.
+
+**Fecha.** 2026-08-14.
+
+Contrato operativo: [`11-planificador-semanal-ia-rag.md`](11-planificador-semanal-ia-rag.md).
+
+---
+
 ## Plantilla para decisiones futuras
 
 ```markdown

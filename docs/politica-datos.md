@@ -33,6 +33,12 @@ contraseña y confirmación explícita. El borrado revoca las sesiones y elimina
 los perfiles y datos privados. Antes de abrir a terceros debe comunicarse la fecha en que
 las copias de seguridad dejarán de contener los datos eliminados.
 
+La exportación incluye las ejecuciones del planificador, revisiones y sesiones semanales,
+evidencia referenciada, resultados de guardarraíles y propuestas de cambio. Las tablas raíz
+se filtran por los perfiles de la cuenta; las tablas sin `athlete_profile_id` se recorren
+solo desde IDs de ejecución o revisión ya autorizados. No incluye hashes de contraseña,
+sesiones de acceso, tokens ni claves de proveedores.
+
 No se borra directamente una fila aislada desde la consola como procedimiento habitual.
 
 ## Proveedores externos

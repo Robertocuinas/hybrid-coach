@@ -71,7 +71,18 @@ test("la exportación de planning recorre solo padres pertenecientes a la cuenta
   assert.deepEqual(exported.guardrail_results.map((row) => row.id), ["guardrail-owned"]);
   assert.deepEqual(exported.plan_change_proposals.map((row) => row.id), ["change-owned"]);
 
+  for (const table of ["planning_runs", "weekly_plan_revisions", "plan_change_proposals"]) {
+    const rootQuery = calls.find(({ sql }) => sql.includes(`FROM ${table}`));
+    assert.match(rootQuery.sql, /WHERE athlete_profile_id=ANY\(\$1::uuid\[\]\)/);
+    assert.deepEqual(rootQuery.params, [profileIds]);
+  }
   const childQueries = calls.filter(({ sql }) => /weekly_plan_sessions|planning_run_evidence|guardrail_results/.test(sql));
   assert.equal(childQueries.length, 3);
+  assert.match(childQueries.find(({ sql }) => sql.includes("weekly_plan_sessions")).sql,
+    /WHERE weekly_plan_revision_id=ANY\(\$1::uuid\[\]\)/);
+  for (const table of ["planning_run_evidence", "guardrail_results"]) {
+    assert.match(childQueries.find(({ sql }) => sql.includes(table)).sql,
+      /WHERE planning_run_id=ANY\(\$1::uuid\[\]\)/);
+  }
   assert.doesNotMatch(JSON.stringify(childQueries), /foreign|other-profile/);
 });
