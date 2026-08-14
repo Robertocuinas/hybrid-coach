@@ -12,8 +12,20 @@ export function securityHeaders(req, res, next) {
 export function requireTrustedOrigin(req, res, next) {
   if (!["POST", "PATCH", "PUT", "DELETE"].includes(req.method)) return next();
   const origin = req.get("origin");
-  const allowed = process.env.APP_ORIGIN;
-  if (origin && allowed && origin !== allowed) return res.status(403).json({ ok: false, message: "Origen no permitido" });
-  if (!origin && allowed && req.headers.cookie) return res.status(403).json({ ok: false, message: "Falta el origen de la petición" });
+  const configuredOrigin = String(process.env.APP_ORIGIN || "").trim().replace(/\/$/, "");
+  if (origin) {
+    let trusted = false;
+    if (configuredOrigin) trusted = origin.replace(/\/$/, "") === configuredOrigin;
+    else {
+      try { trusted = new URL(origin).host === req.get("host"); }
+      catch { trusted = false; }
+    }
+    if (!trusted) return res.status(403).json({ ok: false, message: "Origen no permitido" });
+  }
+  /* Las mutaciones autenticadas por cookie deben venir de un navegador que
+     declare Origin. Esto sigue protegiendo aunque APP_ORIGIN se omita. */
+  if (!origin && req.headers.cookie) {
+    return res.status(403).json({ ok: false, message: "Falta el origen de la petición" });
+  }
   next();
 }

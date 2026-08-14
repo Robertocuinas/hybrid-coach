@@ -3,6 +3,12 @@ node_modules/
 .venv-needle/
 public/app.js
 .env
+.env.*
+!.env.example
+*.log
+*.tmp
+*.bak
+*.orig
 .DS_Store
 
 # Datos de salud reales — nunca al repositorio (ver migration/, Fase 0 de docs/roadmap/)
@@ -11,5 +17,3 @@ migration/parsed/
 migration/transformed/
 migration/backups/
 .tmp-pgtest/
-migration/parsed/
-migration/transformed/

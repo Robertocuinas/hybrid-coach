@@ -51,7 +51,7 @@ docs/                   Documentación de la evolución a BD + RAG (leer antes d
 | ~L400-700 | Motor determinista: `buildPlan()`, `generateWeek()`, `sessionDetail()` |
 | ~L680-700 | `progresionSugerida()` — progresión de carga por RIR/reps |
 | ~L800-960 | Módulo de nutrición (determinista, no IA) |
-| ~L963-1130 | **Capa de IA**: `llamarIA()`, `extraerJSON()`, `hechosPlan()`, `SYS_DECISIONES`, `decisionesIA()`, `validarPropuesta()` |
+| ~L940-990 | **Capa de IA en cliente**: `llamarIA()`, `extraerJSON()`. El razonamiento del plan y sus guardarraíles ya NO viven aquí: ver §4.2 |
 | ~L1129-1200 | Importación de PDF en cliente con pdf.js + `SYS_PDF` |
 | ~L1203-1300 | Almacenamiento multiperfil (`store`, `loadState`, `saveState`, `pushToSheets`) |
 | ~L1892-1990 | **Coach**: `buildContext()` (construye el system prompt) y componente `Coach` |
@@ -64,14 +64,18 @@ docs/                   Documentación de la evolución a BD + RAG (leer antes d
    protegen la integridad física del atleta. No son "lógica de negocio" normal.
 
 2. **No amplíes lo que la IA puede modificar.**
-   `CAMPOS_BLOQUEADOS` y `AJUSTES_PERMITIDOS` (≈L1018) son la frontera entre lo que decide
-   el código y lo que puede sugerir el modelo. Añadir un campo a `AJUSTES_PERMITIDOS` es
-   una decisión de producto, no de implementación.
+   `CAMPOS_BLOQUEADOS` y `AJUSTES_PERMITIDOS` viven en `server/domain/coach/prompt.js` y son
+   la frontera entre lo que decide el código y lo que puede sugerir el modelo. Añadir un
+   campo a `AJUSTES_PERMITIDOS` es una decisión de producto, no de implementación.
+
+   **Una sola copia.** Estas listas han llegado a estar duplicadas en tres sitios, y la
+   copia sobrante estaba desactualizada y era *más permisiva* que la real. Si necesitas las
+   listas en otra capa, impórtalas; no las reescribas.
 
 3. **Toda salida de un LLM pasa por validación antes de mostrarse.**
-   El patrón es `extraerJSON()` → `validarPropuesta()`. Nunca renderices texto de un modelo
-   como si fuera dato validado, y nunca apliques un cambio de plan automáticamente: el
-   usuario acepta o rechaza.
+   El patrón es `extraerJSON()` → validación, hoy en `server/domain/coach/validacion.js`.
+   Nunca renderices texto de un modelo como si fuera dato validado, y nunca apliques un
+   cambio de plan automáticamente: el usuario acepta o rechaza.
 
 4. **Nunca se cita evidencia que no exista.**
    Cualquier ID de referencia devuelto por el modelo se comprueba contra la biblioteca real
