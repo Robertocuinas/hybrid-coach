@@ -36,6 +36,8 @@ export async function updateInstanceEmbeddingTest(ok, db = pool) {
 }
 
 export async function deleteInstanceEmbeddingSettings(db = pool) {
-  const result = await db.query(`DELETE FROM instance_embedding_settings WHERE solo_una_fila;`);
-  return result.rowCount > 0;
+  /* RETURNING en vez de rowCount, por la misma razón que en aiConversations:
+     no todos los clientes exponen el recuento de filas afectadas. */
+  const { rows } = await db.query(`DELETE FROM instance_embedding_settings WHERE solo_una_fila RETURNING solo_una_fila;`);
+  return rows.length > 0;
 }

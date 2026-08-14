@@ -37,6 +37,20 @@ export async function listConversationsByProfile(profileId) {
   return rows;
 }
 
+/* El perfil va en el WHERE, no se comprueba antes: así una conversación de
+   otro atleta no se puede borrar ni conociendo su id. Los mensajes caen solos
+   por el ON DELETE CASCADE de la tabla. */
+export async function deleteConversation(conversationId, profileId, db = pool) {
+  /* RETURNING y no rowCount: el recuento de filas afectadas no viaja igual en
+     todos los clientes (PGlite, que usan las pruebas, no lo expone), mientras
+     que las filas devueltas sí son parte del resultado en cualquiera. */
+  const { rows } = await db.query(
+    `DELETE FROM conversations WHERE id = $1 AND athlete_profile_id = $2 RETURNING id;`,
+    [conversationId, profileId]
+  );
+  return rows.length > 0;
+}
+
 export async function addMessage(conversationId, { role, contenido, cambioPropuesto = null, citas = null }) {
   const client = await pool.connect();
   try {

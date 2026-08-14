@@ -3,7 +3,7 @@ import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContai
 import { createSyncController } from "./sync.js";
 import {
   DAYS, DSHORT, MESES, addDays, clamp, colorOf, contextoDelDia, daysBetween, eligeEstable,
-  esGym, estadoDia, iso, lunesDe, parse, semanaPlan, sesionDeFecha, tituloConversacion,
+  esGym, estadoDia, iso, lunesDe, parse, semanaPlan, sesionDeFecha,
   ultimaVezEjercicio, weekOf,
 } from "./agenda.js";
 import { BIBLIO_SEED } from "./data/biblioSeed.js";
@@ -357,14 +357,6 @@ function refsRelevantes(biblio, consulta, opts = {}) {
     .sort((a, b) => (PESO_GRADO[b.grado] || 1) - (PESO_GRADO[a.grado] || 1));
   return [...sel, ...resto.slice(0, min - sel.length).map((r) => ({ ...r, _relleno: true }))];
 }
-
-/* Formato compacto para meter en un prompt */
-const refLinea = (r) => (r._relleno ? "(sin relación directa con la consulta) " : "") + "[" + (r.autores.split(",")[0] || "Anón") + " " + r.anio + " · id:" + r.id + "] " + r.titulo
-  + " (" + r.fuente + ") · tema " + r.tema + " · evidencia " + r.grado
-  + (r.poblacion ? " · población: " + r.poblacion : "")
-  + " · aplicación: " + r.aplicacion
-  + (r.limites ? " · límites: " + r.limites : "");
-const refsPrompt = (refs) => refs.map(refLinea).join("\n") || "(sin referencias relevantes en la biblioteca)";
 
 /* ============================================================
    CUESTIONARIO DE PERFIL
@@ -2268,148 +2260,104 @@ function CheckIn({ st, P, update, notify, today, curW, onGuardado }) {
 /* ============================================================
    COACH
    ============================================================ */
-function buildContext(st, P, curW, today, consulta = "") {
-  const p = P.perfil, plan = P.plan, sp = semanaPlan(plan, curW);
-  const wdata = P.weeks[curW];
-  const semana = wdata ? wdata.assign.map((a) => DAYS[a.day] + ": " + a.code + " (" + sessionDetail(plan, p, curW, a.code, P).desc + ")").join("; ") : "sin generar";
-  const runs = P.running.slice(-8).map((r) => r.date + " " + r.session_code + " " + (r.distancia_km || "?") + "km/" + r.duracion_min + "min RPE" + r.rpe + " dolor" + r.dolor + (r.notas ? " «" + r.notas + "»" : "")).join(" | ") || "sin registros";
-  const lifts = {}; P.strength.slice(-80).forEach((s) => { if (!lifts[s.exercise] || lifts[s.exercise].date < s.date) lifts[s.exercise] = s; });
-  const fuerza = Object.values(lifts).map((s) => s.exercise + " " + s.weight + "kg×" + s.reps + " (RIR " + s.rir + ", " + s.date + ")").join(" | ") || "sin registros";
-  const ck = P.checkins.slice(-6).map((c) => c.date + " RPE" + c.rpe + " dolor" + c.dolor + (c.loc ? "(" + c.loc + ")" : "") + " energía" + c.energia + (c.comentario ? " «" + c.comentario + "»" : "")).join(" | ") || "sin registros";
-  const rec = P.recovery.slice(-6).map((r) => r.date + " sueño" + (r.sueno || "?") + "h fatiga" + r.fatiga).join(" | ") || "sin registros";
-  const les = (p.lesiones || []).map((l) => l.zona + (l.recurrente ? " (recurrente)" : "") + (l.cuando ? " — " + l.cuando : "")).join("; ") || "ninguna declarada";
-  const mol = (p.molestias || []).map((m) => m.zona + " " + m.intensidad + "/10, " + m.cuando).join("; ") || "ninguna";
-  const min7 = P.running.filter((r) => daysBetween(r.date, today) <= 7).reduce((a, r) => a + (r.duracion_min || 0), 0);
-  // Con una biblioteca grande no se manda entera: se seleccionan las referencias
-  // relevantes para lo que se está preguntando ahora mismo.
-  const consultaAmpliada = [consulta, p.distancia, sp.fase, les, mol, (p.prioridad || [])[0]].filter(Boolean).join(" ");
-  const refsSel = refsRelevantes(st.biblio, consultaAmpliada, { max: 10, min: 4 });
-  const bib = refsPrompt(refsSel);
-  let nut = null; try { nut = nutricionDia(st, P, curW, (weekOf(plan, today) || {}).dayIdx || 0); } catch { }
-  const decs = decisionesActivas(plan);
-  const adaps = adaptacionesActivas(plan);
 
-  return `Eres el entrenador personal de ${p.nombre}. Hablas SIEMPRE en español, tuteas, y respondes breve (2-6 frases salvo que pidan detalle).
+const api = async (url, opciones = {}) => {
+  const r = await fetch(url, { credentials: "same-origin", ...opciones });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.message || `HTTP ${r.status}`);
+  return data;
+};
 
-PERFIL
-${p.nombre}, ${p.edad} años, ${p.sexo}, ${p.altura} cm, ${p.peso} kg${p.grasa ? ", " + p.grasa + "% de grasa" : ""}.
-Objetivo: ${p.distancia} el ${p.fechaCarrera} — ${p.metaTipo}${p.metaTiempo ? " (" + p.metaTiempo + ")" : ""}.
-Prioridades en orden: ${(p.prioridad || []).join(" > ")}.
-Corriendo: experiencia ${p.expCarrera}, ${p.kmSemana} km/semana actuales, ${p.sesionesCarrera} sesiones, tirada más larga reciente ${p.tiradaLarga} min, parón: ${p.paron}.
-Gimnasio: experiencia ${p.expFuerza}, técnica ${p.tecnica}, equipamiento ${p.equipamiento}, cargas declaradas ${JSON.stringify(p.cargas || {})}.
-Lesiones previas: ${les}. Molestias actuales: ${mol}. Particularidades: ${(p.estructural || []).join(", ") || "—"}. ${p.cirugias || ""}
-Disponibilidad: ${(p.dias || []).map((d) => DAYS[d]).join(", ")} · ${p.minGym} min de gimnasio, ${p.minRun} min entre semana, ${p.finde} min el fin de semana. Cross-training: ${p.crossTraining}.
-Recuperación: ${p.sueno} h de sueño (${p.calidadSueno}), estrés ${p.estres}/10, nutrición ${p.nutricion}, suplementos ${(p.suplementos || []).join(", ") || "ninguno"}, medición ${p.reloj}.
-
-PLAN GENERADO
-${plan.totalSemanas} semanas · ${plan.runDias} carreras y ${plan.gymDias} sesiones de gimnasio por semana · tirada larga máxima ${plan.techo} min · taper de ${plan.taper} semana(s).
-Riesgo estructural estimado: ${plan.riesgo.score}/10${plan.riesgo.causas.length ? " (" + plan.riesgo.causas.join("; ") + ")" : ""}.
-Decisiones del plan y su justificación:
-${decs.map((d) => "- " + d.t + ": " + d.p + (d.fuente === "ia" ? " [justificación revisada por " + p.nombre + "]" : "")).join("\n")}
-Adaptaciones por lesión: ${adaps.map((a) => a.z + " → " + a.a).join(" | ") || "ninguna"}
-
-ESTADO ACTUAL (${today})
-Semana ${curW} de ${plan.totalSemanas} · fase ${sp.fase}. Faltan ${daysBetween(today, p.fechaCarrera)} días. ${sp.cp || ""}
-Semana planificada: ${semana}
-Últimas carreras: ${runs}
-Últimas cargas: ${fuerza}
-Check-ins: ${ck}
-Recuperación: ${rec}
-Últimos 7 días: ${min7} min de carrera.
-
-NUTRICIÓN DE HOY (calculada por el motor, no la recalcules)
-${nut ? `Objetivo: ${nut.obj.kcal} kcal · ${nut.obj.prot} g de proteína · ${nut.obj.ch} g de carbohidrato · ${nut.obj.gras} g de grasa · ${nut.obj.fibra} g de fibra · ${nut.obj.agua} L de líquido.
-Metabolismo basal ${nut.obj.bm.kcal} kcal (${nut.obj.bm.metodo}), gasto base ${nut.obj.base} kcal, gasto de la sesión ${nut.obj.entreno} kcal. Entrena ${MOMENTOS.find((m) => m.k === nut.momento).l.toLowerCase()}.
-Tomas de hoy: ${nut.crono.map((t) => t.hora + " → " + t.titulo + ": " + t.que).join(" | ")}
-Avisos activos: ${nut.avisos.map((a) => a.t).join("; ") || "ninguno"}${nut.obj.fijado ? "\nATENCIÓN: usa una cifra calórica fijada por él, no la calculada." : ""}${nut.obj.recortado ? "\nATENCIÓN: su objetivo se ha elevado hasta el suelo de seguridad energética." : ""}` : "Sin datos suficientes de peso o perfil."}
-${(P.comidas && Object.keys(P.comidas).length) ? "Tiene un catálogo de comidas propio cargado: cita SUS opciones concretas cuando propongas qué comer, en vez de hablar en abstracto. Desayunos: " + (P.comidas.desayuno || []).slice(0, 3).join(" / ") + ". Pre-entreno: " + (P.comidas.pre || []).join(" / ") + "." : "No tiene catálogo de comidas cargado: da cantidades y momentos, no menús cerrados."}
-
-REGLAS DE DISTRIBUCIÓN QUE APLICA EL PLANIFICADOR
-R1 ≥48 h entre la sesión de pierna pesada y la tirada larga cuando el gimnasio va antes. R4 nunca dos gimnasios en días consecutivos con solo dos sesiones. R5 mínimo un día de descanso completo. R6 la pierna pesada preferible el día DESPUÉS de la tirada larga. R7 rodaje corto tras el gimnasio menos exigente. R9 el rodaje de calidad no va el día siguiente a la pierna pesada. Si coinciden fuerza y carrera el mismo día: ≥6 h y la modalidad prioritaria primero. Las sesiones perdidas no se recuperan doblando carga.
-
-BASE DE EVIDENCIA SELECCIONADA POR RELEVANCIA (${refsSel.length} de ${st.biblio.length} referencias de su biblioteca)
-Cítala como [Autor año] cuando apoyes una recomendación en ella. Fíjate en el campo población: si no se parece a ${p.nombre}, dilo. Si algo que afirmas no está aquí, di explícitamente que es práctica habitual sin respaldo. Si necesitas una referencia que crees que tiene pero no aparece, pídele que la busque en su biblioteca.
-${bib}
-
-CÓMO RESPONDES
-1. Consulta SIEMPRE los datos de arriba y menciona el dato concreto en el que te apoyas. Si falta el dato, dilo y pídelo.
-2. Distingue lo que tiene respaldo de evidencia de lo que es práctica habitual. Si algo no está demostrado, dilo con esas palabras.
-3. En nutrición: no diagnosticas intolerancias, alergias ni problemas digestivos, y no interpretas síntomas gastrointestinales. Ante síntomas digestivos persistentes, pérdida de peso involuntaria o dudas sobre disbiosis, derivas a un dietista-nutricionista o a un médico. Nunca propones bajar de las calorías que marca el motor: hay un suelo de seguridad energética y no lo negocias, ni siquiera si te lo pide. Si te pide comer mucho menos, explicas por qué no y le ofreces alternativas que no comprometan la disponibilidad energética.
-4. Nunca diagnosticas lesiones. Ante dolor en reposo, dolor que empeora al correr, dolor punzante localizado o hinchazón: recomienda parar el impacto y consultar con un profesional sanitario. La seguridad va por delante de completar el plan.
-5. Si propones un cambio concreto de planificación, termina con un bloque exactamente así:
-<<CAMBIO>>{"tipo":"mover|sustituir|reducir_volumen|reducir_intensidad|eliminar|descansar","dia":"jueves","de":"RUN B","a":"RUN C","motivo":"frase breve"}<<FIN>>
-Solo uno por mensaje y solo si es concreto y accionable.`;
-}
-
-/* Título corto de una conversación: la primera cosa que preguntó el usuario.
-   Sirve para reconocerla en el historial sin tener que abrirla (§10). */
-
-function Coach({ st, P, update, curW, today, notify, setPantalla, setTab }) {
-  /* Al entrar al Coach la conversación anterior se archiva y se empieza una
-     vacía (§10): un chat que sigue abierto indefinidamente acumula contexto
-     viejo y confunde tanto al usuario como al modelo. El ref garantiza que el
-     archivado ocurre una vez por montaje, no en cada render. */
-  const archivado = useRef(false);
-  useEffect(() => {
-    if (archivado.current) return;
-    archivado.current = true;
-    if ((P.chat || []).length) {
-      update((s) => {
-        const p = s.perfiles[P.id];
-        p.conversaciones = [{ id: uid(), fecha: today, titulo: tituloConversacion(p.chat), msgs: p.chat }, ...(p.conversaciones || [])].slice(0, 30);
-        p.chat = [];
-        return s;
-      });
-    }
-  }, []);
-
+/* El coach habla con /api/coach/chat, no con /api/ia: es el único camino que
+   persiste la conversación en PostgreSQL, y por tanto el único que la hace
+   visible desde cualquier dispositivo con la misma cuenta. De paso trae el
+   retrieval real, con citas comprobables contra la biblioteca. */
+function Coach({ P, curW, today, update, notify, setPantalla, setTab }) {
   const [msgs, setMsgs] = useState([]);
+  const [convId, setConvId] = useState(null);      // conversación viva en el servidor
+  const [historial, setHistorial] = useState([]);
   const [verId, setVerId] = useState(null);        // conversación del historial abierta
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
+  const [cargando, setCargando] = useState(false);
   const [drawer, setDrawer] = useState(null);      // "hist" | "acc" en móvil
   const endRef = useRef(null);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, busy]);
   const sugerencias = ["Tengo los gemelos cargados desde ayer", "¿A qué ritmo debería correr hoy?", "¿Por qué tengo esta sesión?", "¿Cuánto peso pongo hoy?", "Esta semana solo puedo entrenar tres días", "¿En qué evidencia se basa mi plan?", "¿Qué dice mi bibliografía sobre el sóleo?", "¿Qué como antes del entreno de hoy?"];
 
-  const historial = P.conversaciones || [];
-  const abierta = verId ? historial.find((c) => c.id === verId) : null;
-  const visibles = abierta ? abierta.msgs : msgs;
+  /* Entrar al Coach empieza siempre en blanco (§10): no se reanuda la última.
+     Lo anterior está en el historial del servidor, que se carga aquí. */
+  const cargarHistorial = async () => {
+    try { setHistorial((await api("/api/coach/conversations")).conversations || []); }
+    catch { /* sin sesión de perfil o sin BD: el chat sigue pudiendo funcionar */ }
+  };
+  useEffect(() => { void cargarHistorial(); }, []);
 
-  const nueva = () => { setVerId(null); setMsgs([]); setQ(""); setDrawer(null); };
-  const abrir = (id) => { setVerId(id); setDrawer(null); };
-  const borrar = (id) => {
-    if (!window.confirm("¿Eliminar esta conversación del historial?")) return;
-    update((s) => { const p = s.perfiles[P.id]; p.conversaciones = (p.conversaciones || []).filter((c) => c.id !== id); return s; });
-    if (verId === id) setVerId(null);
-    notify("✓ Conversación eliminada.");
+  const abierta = verId ? historial.find((c) => c.id === verId) : null;
+
+  const nueva = () => { setVerId(null); setConvId(null); setMsgs([]); setQ(""); setDrawer(null); };
+
+  const abrir = async (id) => {
+    setDrawer(null); setVerId(id); setCargando(true);
+    try {
+      const data = await api(`/api/coach/conversations/${encodeURIComponent(id)}/messages`);
+      setMsgs((data.messages || []).map((m) => ({
+        role: m.role,
+        content: m.contenido,
+        cambio: m.cambio_propuesto || null,
+        /* Al releer el historial ya no se puede aceptar un cambio: la decisión
+           se tomó (o no) en su momento y reabrirla duplicaría el registro. */
+        pendiente: false,
+      })));
+    } catch (e) { notify("No se pudo abrir la conversación: " + e.message); setVerId(null); }
+    finally { setCargando(false); }
+  };
+
+  const borrar = async (id) => {
+    if (!window.confirm("¿Eliminar esta conversación del historial? Se borra también en tus demás dispositivos.")) return;
+    try {
+      await api(`/api/coach/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
+      setHistorial((h) => h.filter((c) => c.id !== id));
+      if (verId === id) nueva();
+      notify("✓ Conversación eliminada.");
+    } catch (e) { notify("No se pudo eliminar: " + e.message); }
   };
 
   const send = async (text) => {
     const content = (text ?? q).trim(); if (!content || busy) return;
-    if (abierta) setVerId(null);   // escribir sobre una vieja continúa en la nueva
-    const base = abierta ? [] : msgs;
+    /* Escribir mientras se lee una conversación vieja abre una nueva: el
+       historial es de lectura. */
+    const enHistorial = !!abierta;
+    const base = enHistorial ? [] : msgs;
+    if (enHistorial) { setVerId(null); setConvId(null); }
     const next = [...base, { role: "user", content }];
     setMsgs(next); setQ(""); setBusy(true);
     try {
-      const txt = await llamarIA({ system: buildContext(st, P, curW, today, content), max_tokens: 1000,
-        messages: next.slice(-12).map((m) => ({ role: m.role, content: m.content })) });
-      let cambio = null, clean = txt;
-      const m = txt.match(/<<CAMBIO>>([\s\S]*?)<<FIN>>/);
-      if (m) { try { cambio = JSON.parse(m[1].trim()); } catch { } clean = txt.replace(m[0], "").trim(); }
-      const final = [...next, { role: "assistant", content: clean, cambio, pendiente: !!cambio }];
-      setMsgs(final); update((s) => { s.perfiles[P.id].chat = final.slice(-40); return s; });
-    } catch (e) { setMsgs([...next, { role: "assistant", content: "No he podido conectar con el coach: " + e.message + ". Tus datos siguen guardados." }]); }
-    finally { setBusy(false); }
+      const data = await api("/api/coach/chat", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ consulta: content, conversationId: enHistorial ? null : convId }),
+      });
+      if (data.conversationId) setConvId(data.conversationId);
+      setMsgs([...next, {
+        role: "assistant", content: data.texto, cambio: data.cambio || null,
+        pendiente: !!data.cambio, citas: data.citas || [], avisos: data.avisos || [],
+      }]);
+      void cargarHistorial();   // el título y la fecha los pone el servidor
+    } catch (e) {
+      setMsgs([...next, { role: "assistant", content: "No he podido conectar con el coach: " + e.message + ". Tus datos siguen guardados." }]);
+    } finally { setBusy(false); }
   };
   const resolve = (i, accept) => {
     const m = msgs[i];
-    const copy = msgs.map((x, j) => (j === i ? { ...x, pendiente: false, aceptado: accept } : x));
-    setMsgs(copy);
-    update((s) => { const p = s.perfiles[P.id]; p.chat = copy.slice(-40);
-      if (accept) p.changes.push({ fecha: today, semana: curW, plan_original: m.cambio.de, cambio: m.cambio.tipo + " → " + (m.cambio.a || "-") + " (" + (m.cambio.dia || "") + ")", motivo: m.cambio.motivo, datos: "Propuesto por el coach desde el historial reciente" });
-      return s; });
-    notify(accept ? "Cambio aceptado y registrado." : "Cambio rechazado.");
+    setMsgs(msgs.map((x, j) => (j === i ? { ...x, pendiente: false, aceptado: accept } : x)));
+    /* El mensaje ya está en PostgreSQL; lo que se registra aquí es la decisión
+       del atleta sobre el cambio, que sigue viviendo en su plan local. */
+    if (accept) {
+      update((s) => { const p = s.perfiles[P.id];
+        p.changes.push({ fecha: today, semana: curW, plan_original: m.cambio.de, cambio: m.cambio.tipo + " → " + (m.cambio.a || "-") + " (" + (m.cambio.dia || "") + ")", motivo: m.cambio.motivo, datos: "Propuesto por el coach" });
+        return s; });
+    }
+    notify(accept ? "✓ Cambio aceptado y registrado." : "Cambio rechazado.");
   };
 
   /* Historial y accesos: el mismo contenido sirve para la columna de escritorio
@@ -2420,16 +2368,17 @@ function Coach({ st, P, update, curW, today, notify, setPantalla, setTab }) {
       <button className="btn ghost sm" onClick={nueva}>+ Nueva</button>
     </div>
     <button className={"convitem" + (!verId ? " on" : "")} onClick={nueva}>
-      Conversación actual<small>{msgs.length ? msgs.length + " mensajes" : "vacía"}</small>
+      Conversación actual<small>{msgs.length && !verId ? msgs.length + " mensajes" : "vacía"}</small>
     </button>
     {historial.map((c) => (<div key={c.id} style={{ position: "relative" }}>
-      <button className={"convitem" + (verId === c.id ? " on" : "")} onClick={() => abrir(c.id)}>
-        {c.titulo}<small>{c.fecha}</small>
+      <button className={"convitem" + (verId === c.id ? " on" : "")} onClick={() => abrir(c.id)} style={{ paddingRight: 38 }}>
+        {c.titulo || "Conversación"}
+        <small>{c.ultimo_mensaje_en ? new Date(c.ultimo_mensaje_en).toLocaleDateString("es-ES", { day: "numeric", month: "short" }) : ""}</small>
       </button>
       <button className="icobtn" style={{ position: "absolute", right: 6, top: 6, width: 28, height: 28, minWidth: 28, minHeight: 28 }}
         title="Eliminar conversación" onClick={() => borrar(c.id)}>×</button>
     </div>))}
-    {!historial.length && <p className="xs muted">Cuando salgas del Coach, esta conversación quedará guardada aquí.</p>}
+    {!historial.length && <p className="xs muted">Tus conversaciones se guardan en tu cuenta y las verás desde cualquier dispositivo.</p>}
   </>);
 
   const panelAccesos = (<>
@@ -2443,16 +2392,19 @@ function Coach({ st, P, update, curW, today, notify, setPantalla, setTab }) {
   </>);
 
   const hilo = (<>
-    {!visibles.length && (<div className="card flat">
+    {cargando && <p className="eyebrow">Abriendo conversación…</p>}
+    {!msgs.length && !cargando && (<div className="card flat">
       <h3>¿En qué puedo ayudarte hoy?</h3>
       <p className="sm muted" style={{ marginTop: 6 }}>Conozco tu perfil, tu plan, tus reglas y todo lo que has registrado. También tu bibliografía: en cada respuesta selecciono las referencias relevantes para lo que preguntas.</p>
       {sugerencias.map((s) => <button key={s} className="btn ghost sm" style={{ width: "100%", textAlign: "left", marginBottom: 7, textTransform: "none", fontFamily: "'IBM Plex Sans',sans-serif", letterSpacing: 0 }} onClick={() => send(s)}>{s}</button>)}
     </div>)}
-    {visibles.map((m, i) => (<div key={i}>
+    {msgs.map((m, i) => (<div key={i}>
       <div className={"chatbox" + (m.role === "user" ? " me" : "")}>
         <span className="eyebrow">{m.role === "user" ? "Tú" : "Coach"}</span>
         <p style={{ margin: "5px 0 0", whiteSpace: "pre-wrap" }} className="sm">{m.content}</p>
       </div>
+      {!!(m.citas || []).length && (<p className="xs muted" style={{ margin: "-4px 0 9px" }}>
+        Evidencia: {m.citas.map((c) => `${c.autores || "?"} ${c.anio || ""}`.trim()).join(" · ")}</p>)}
       {m.cambio && (<div className="card" style={{ borderColor: "#7A5730" }}>
         <span className="tag gym">Cambio propuesto</span>
         <p className="sm" style={{ margin: "8px 0" }}><strong>{String(m.cambio.tipo || "").replace("_", " ")}</strong>{m.cambio.dia ? " · " + m.cambio.dia : ""}<br />{m.cambio.de} → {m.cambio.a || "—"}<br /><span className="muted">{m.cambio.motivo}</span></p>
@@ -2480,7 +2432,7 @@ function Coach({ st, P, update, curW, today, notify, setPantalla, setTab }) {
 
     {abierta && (<div className="card" style={{ borderColor: "#4E4483" }}>
       <div className="between">
-        <span className="tag evid">Conversación del {abierta.fecha}</span>
+        <span className="tag evid">{abierta.titulo || "Conversación guardada"}</span>
         <button className="btn ghost sm" onClick={nueva}>Volver a la actual</button>
       </div>
       <p className="xs muted" style={{ margin: "8px 0 0" }}>Estás leyendo el historial. Si escribes, empezará una conversación nueva.</p>

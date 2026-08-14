@@ -19,16 +19,27 @@ Devuelves SOLO prosa, en español, máximo 200 palabras. Conserva:
 - lo que quedó pendiente.
 Omite saludos y cortesías. No inventes nada que no esté en la conversación.`;
 
-export async function obtenerOCrearConversacion(profileId, { db = pool, conversationId = null } = {}) {
+/* El título es lo único que distingue una conversación de otra en el historial,
+   así que sale de lo primero que preguntó el usuario. Un literal fijo dejaba
+   una lista de entradas idénticas imposible de usar. */
+export const tituloDesdeConsulta = (consulta) => {
+  const limpio = String(consulta || "").replace(/\s+/g, " ").trim();
+  if (!limpio) return "Conversación con el coach";
+  return limpio.length > 60 ? limpio.slice(0, 60).trimEnd() + "…" : limpio;
+};
+
+export async function obtenerOCrearConversacion(profileId, { db = pool, conversationId = null, titulo = null } = {}) {
   if (conversationId) {
     const { rows } = await db.query(
       `SELECT * FROM conversations WHERE id = $1 AND athlete_profile_id = $2;`, [conversationId, profileId]);
     if (rows[0]) return rows[0];
+    /* Un id que no existe o que es de otro perfil no puede secuestrar la
+       conversación: se ignora y se abre una nueva propia. */
   }
   const { rows } = await db.query(
     `INSERT INTO conversations (athlete_profile_id, titulo, iniciada_en, ultimo_mensaje_en)
      VALUES ($1, $2, now(), now()) RETURNING *;`,
-    [profileId, "Conversación con el coach"]
+    [profileId, tituloDesdeConsulta(titulo)]
   );
   return rows[0];
 }

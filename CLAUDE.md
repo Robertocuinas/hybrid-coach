@@ -46,7 +46,7 @@ docs/                   Documentación de la evolución a BD + RAG (leer antes d
 |---|---|
 | ~L100-160 | Catálogo de ejercicios y plantillas de sesión de gimnasio |
 | ~L157-202 | `BIBLIO_SEED` — 40 referencias científicas semilla |
-| ~L204-282 | Biblioteca v2: `normRef()`, `refsRelevantes()`, `refsPrompt()` |
+| ~L204-282 | Biblioteca v2: `normRef()`, `refsRelevantes()` |
 | ~L284-400 | Cuestionario de perfil (`WIZARD`) |
 | ~L400-700 | Motor determinista: `buildPlan()`, `generateWeek()`, `sessionDetail()` |
 | ~L680-700 | `progresionSugerida()` — progresión de carga por RIR/reps |
@@ -54,8 +54,12 @@ docs/                   Documentación de la evolución a BD + RAG (leer antes d
 | ~L940-990 | **Capa de IA en cliente**: `llamarIA()`, `extraerJSON()`. El razonamiento del plan y sus guardarraíles ya NO viven aquí: ver §4.2 |
 | ~L1129-1200 | Importación de PDF en cliente con pdf.js + `SYS_PDF` |
 | ~L1203-1300 | Almacenamiento multiperfil (`store`, `loadState`, `saveState`, `pushToSheets`) |
-| ~L1892-1990 | **Coach**: `buildContext()` (construye el system prompt) y componente `Coach` |
+| ~L2270-2530 | **Coach**: cliente del coach de servidor. Habla con `POST /api/coach/chat` y con `/api/coach/conversations`; el contexto, el retrieval y el historial son del servidor (`server/domain/coach/`) |
 | resto | Componentes de UI |
+
+`src/agenda.js` es lógica pura de fechas (fecha → semana/día, estado de cada día,
+precarga de pesos). Vive fuera del JSX para poder probarse con `node --test`:
+ver `src/agenda.test.js`.
 
 ## 4. Reglas duras — no romper sin permiso explícito
 
@@ -79,7 +83,8 @@ docs/                   Documentación de la evolución a BD + RAG (leer antes d
 
 4. **Nunca se cita evidencia que no exista.**
    Cualquier ID de referencia devuelto por el modelo se comprueba contra la biblioteca real
-   y se descarta si no existe. Ver `validarPropuesta()`.
+   y se descarta si no existe. Ver `server/domain/coach/validacion.js`; el chat solo devuelve
+   como citas los fragmentos que el modelo mencionó por id y que existen de verdad.
 
 5. **Los avisos de seguridad clínica son `if` de código, no instrucciones de prompt.**
    Dolor ≥5/10, dolor en reposo, suelo calórico de disponibilidad energética: están

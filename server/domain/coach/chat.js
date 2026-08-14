@@ -29,7 +29,7 @@ export async function responder(profileId, consulta, deps) {
   /* Umbral en el chat: solo cuando la pregunta reclama respaldo científico.
      Se comprueba antes de llamar al modelo (docs/05-rag.md §8.2). */
   if (!contexto.hayEvidencia && PIDE_EVIDENCIA.test(consulta)) {
-    const conversacion = persistir ? await obtenerOCrearConversacion(profileId, { db, conversationId }) : null;
+    const conversacion = persistir ? await obtenerOCrearConversacion(profileId, { db, conversationId, titulo: consulta }) : null;
     if (conversacion) {
       await guardarMensaje(conversacion.id, { role: "user", contenido: consulta }, db);
       await guardarMensaje(conversacion.id, { role: "assistant", contenido: SIN_EVIDENCIA_TEXTO }, db);
@@ -44,7 +44,7 @@ export async function responder(profileId, consulta, deps) {
     };
   }
 
-  const conversacion = persistir ? await obtenerOCrearConversacion(profileId, { db, conversationId }) : null;
+  const conversacion = persistir ? await obtenerOCrearConversacion(profileId, { db, conversationId, titulo: consulta }) : null;
   const historial = conversacion ? await historialParaPrompt(conversacion.id, { db }) : [];
 
   const respuesta = await llmProvider.call({

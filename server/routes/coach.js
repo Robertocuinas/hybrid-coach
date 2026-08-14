@@ -11,7 +11,7 @@ import { crearDesdeConfig, resolveEmbeddingConfig } from "../ai/instance-embeddi
 import { responder } from "../domain/coach/chat.js";
 import { decisionesIA } from "../domain/coach/decisiones.js";
 import { listarDecisionesConCitas } from "../db/repositories/trainingPlans.js";
-import { listConversationsByProfile } from "../db/repositories/aiConversations.js";
+import { deleteConversation, listConversationsByProfile } from "../db/repositories/aiConversations.js";
 import { compararSistemas, PREGUNTAS_COMPARACION } from "../domain/coach/comparacion.js";
 import { COACH_LOCAL_TOOLS, NEEDLE_SYSTEM_PROMPT } from "../domain/coach/local-tools.js";
 import { resolveUserLLMProvider } from "../ai/user-provider.js";
@@ -115,6 +115,14 @@ router.get("/conversations/:id/messages", async (req, res, next) => {
       `SELECT resumen FROM conversations WHERE id = $1 AND athlete_profile_id = $2;`, [req.params.id, perfil(req)]);
     if (!conv[0]) return res.status(404).json({ ok: false, message: "Conversación no encontrada" });
     res.json({ ok: true, resumen: conv[0].resumen, messages: rows });
+  } catch (error) { next(error); }
+});
+
+router.delete("/conversations/:id", async (req, res, next) => {
+  try {
+    const borrada = await deleteConversation(req.params.id, perfil(req));
+    if (!borrada) return res.status(404).json({ ok: false, message: "Conversación no encontrada" });
+    res.json({ ok: true });
   } catch (error) { next(error); }
 });
 
