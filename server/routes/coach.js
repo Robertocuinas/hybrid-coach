@@ -55,12 +55,12 @@ router.post("/chat", async (req, res, next) => {
     const salida = await responder(perfil(req), consulta, {
       ...deps,
       conversationId: req.body?.conversationId || null,
-      onValidatedChange: async ({ cambio, conversationId }) => {
+      onValidatedChange: async ({ cambio, conversationId, citedChunkIds }) => {
         const weekNumber = Number(req.body?.weekNumber ?? req.body?.semana);
         const saved = await generateWeeklyPlanningProposal(perfil(req), { weekNumber }, {
           ...deps,
           kind: "coach_change",
-          coachRequest: { consulta: consulta.slice(0, 1000), cambio, conversationId },
+          coachRequest: { consulta: consulta.slice(0, 1000), cambio, conversationId, citedChunkIds },
         });
         const dto = publicWeeklyProposal(saved).proposal;
         return {
@@ -68,6 +68,7 @@ router.post("/chat", async (req, res, next) => {
           proposalRevision: dto.revisionNumber,
           semana: dto.weekNumber,
           proposalEvidenceState: dto.evidenceState,
+          proposal: dto,
         };
       },
       /* Contexto de la pantalla desde la que se abre el coach. Se filtra por
@@ -124,8 +125,13 @@ router.get("/conversations", async (req, res, next) => {
 router.get("/conversations/:id/messages", async (req, res, next) => {
   try {
     const { rows } = await pool.query(
-      `SELECT m.role, m.contenido, m.cambio_propuesto, m.citas, m.created_at
-         FROM messages m JOIN conversations c ON c.id = m.conversation_id
+      `SELECT m.role, m.contenido, m.cambio_propuesto, m.citas, m.created_at,
+              p.status AS proposal_status
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         LEFT JOIN plan_change_proposals p
+           ON p.id::text = COALESCE(m.cambio_propuesto->>'proposalId', m.cambio_propuesto->>'proposal_id')
+          AND p.athlete_profile_id = c.athlete_profile_id
         WHERE m.conversation_id = $1 AND c.athlete_profile_id = $2
         ORDER BY m.created_at;`,
       [req.params.id, perfil(req)]

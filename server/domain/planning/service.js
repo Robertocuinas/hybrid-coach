@@ -123,6 +123,10 @@ function validarSalida(bruto, contexto, analytics, evidence, guardrailConfig) {
     masterSessionIds: (contexto.week?.sessions || contexto.week?.sesiones || [])
       .map((session) => session.id || session.planned_session_id)
       .filter(Boolean),
+    masterSessionCodes: (contexto.week?.sessions || contexto.week?.sesiones || [])
+      .map((session) => session.master_session_code || session.codigo_sesion || session.session_code)
+      .filter(Boolean),
+    today: iso(contexto.now || new Date()),
   });
   if (!schema.ok) return { ok: false, output: null, schema, guardrails: null, errors: schema.errors };
   const guardrails = evaluarGuardrailsPlan(schema.value, contexto, analytics, guardrailConfig);

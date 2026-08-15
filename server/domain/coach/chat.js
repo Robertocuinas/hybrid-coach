@@ -17,7 +17,7 @@ import { createRecommendation } from "../../db/repositories/aiConversations.js";
    Aplicarles el umbral de "sin evidencia" sería absurdo: "¿cuánto corrí esta
    semana?" se responde con el bloque DATOS, no con un paper. */
 const PIDE_EVIDENCIA = /(por qu|evidencia|estudio|papers?|ciencia|cient|demostrado|respald|seg[uú]n la literatura|qu[eé] dice)/i;
-const DECISION_ENTRENAMIENTO = /(entren|correr|fuerza|gimnas|sesi[oó]n|interval|tirada|rodaje|mover|cambiar|sustitu|reduc|elimin|descans|fatiga|dolor|ma[nñ]ana|pasado ma[nñ]ana)/i;
+const DECISION_ENTRENAMIENTO = /(entren|correr|fuerza|gimnas|sesi[oó]n|interval|tirada|rodaje|mover|cambiar|sustitu|reduc|elimin|descans|fatiga|dolor|plan|qu[eé] hago|salgo|convien|puedo|deber[ií]a|ma[nñ]ana|pasado ma[nñ]ana)/i;
 
 /* Los cortes clínicos no dependen del modelo ni del RAG. Solo se activan en
    preguntas de entrenamiento: una consulta factual como “cuántos km hice”

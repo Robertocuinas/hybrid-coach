@@ -11,9 +11,11 @@ const tipo = (o) => String(valor(o, "session_type", "sessionType", "subtipo") ||
 const duracion = (o) => numero(valor(o, "duration_min", "duracion_min", "durationMin")) || 0;
 const distancia = (o) => numero(o?.prescription?.distance_km ?? valor(o, "distance_km", "distancia_km", "distanciaKm")) || 0;
 const diferenciaDias = (a, b) => Math.round((Date.parse(`${b}T12:00:00Z`) - Date.parse(`${a}T12:00:00Z`)) / MS_DIA);
-const esFuerza = (s) => modalidad(s) === "strength" || /gym|fuerza|strength/i.test(codigo(s));
+const TIPOS_CARRERA = new Set(["long_run", "intervals", "tempo", "easy_run", "recovery_run", "race"]);
+const TIPOS_FUERZA = new Set(["heavy_strength", "strength"]);
+const esFuerza = (s) => modalidad(s) === "strength" || TIPOS_FUERZA.has(tipo(s)) || /gym|fuerza|strength/i.test(codigo(s));
 const esFuerzaPesada = (s) => tipo(s) === "heavy_strength" || (esFuerza(s) && /heavy|pesad|pierna|lower/i.test(`${codigo(s)} ${s.title || ""}`));
-const esCarrera = (s) => modalidad(s) === "running" || /run|carrera/i.test(codigo(s));
+const esCarrera = (s) => modalidad(s) === "running" || TIPOS_CARRERA.has(tipo(s)) || /run|carrera/i.test(codigo(s));
 const esCalidad = (s) => ["intervals", "tempo", "race"].includes(tipo(s)) || /interval|tempo|calidad|run b/i.test(`${codigo(s)} ${s.title || ""}`);
 const esTirada = (s) => tipo(s) === "long_run" || /long|tirada|run a/i.test(`${codigo(s)} ${s.title || ""}`);
 
@@ -31,19 +33,45 @@ function maxDolor(contexto, analitica) {
 }
 
 function redFlags(contexto, analitica) {
-  return [...(contexto.redFlags || contexto.banderas || []), ...(analitica?.seguridad?.redFlags || [])].map(String).filter(Boolean);
+  return [...(contexto.redFlags || contexto.banderas || []), ...(analitica?.seguridad?.redFlags || [])]
+    .map(String).filter((flag) => flag && !/^ninguna$/i.test(flag.trim()));
 }
 
+function sesionesBaseActivas(contexto) {
+  if (contexto.acceptedRevision) {
+    return contexto.acceptedRevision.sessions
+      || contexto.acceptedRevision.sesiones
+      || contexto.acceptedSessions
+      || [];
+  }
+  return contexto.week?.sessions
+    || contexto.week?.sesiones
+    || contexto.plannedSessions
+    || [];
+}
+
+const idMaestro = (s) => valor(
+  s,
+  "master_planned_session_id",
+  "masterPlannedSessionId",
+) ?? s?.change_from_master?.master_session_id ?? null;
+
 function sesionBase(contexto, completada) {
-  const base = contexto.acceptedRevision?.sessions || contexto.acceptedRevision?.sesiones || contexto.acceptedSessions || contexto.plannedSessions || [];
+  const base = sesionesBaseActivas(contexto);
   return base.find((s) => {
     const cid = valor(completada, "weekly_plan_session_id", "planned_session_id", "plannedSessionId");
     const sid = valor(s, "id", "weekly_plan_session_id", "planned_session_id");
-    if (cid && sid) return String(cid) === String(sid);
+    const mid = idMaestro(s);
+    if (cid && (String(cid) === String(mid || "") || (!mid && sid && String(cid) === String(sid)))) return true;
     const keyC = valor(completada, "session_key", "sessionKey"), keyS = valor(s, "session_key", "sessionKey");
-    if (keyC && keyS) return keyC === keyS;
+    if (keyC && keyS && keyC === keyS) return true;
     return fecha(completada) === fecha(s) && codigo(completada) && codigo(completada) === codigo(s);
   });
+}
+
+function completadaParaSesion(contexto, sesion) {
+  return (contexto.completedSessions || []).some((item) => sesionBase(contexto, item) === sesion
+    || (fecha(item) === fecha(sesion) && codigo(item) && codigo(item) === codigo(sesion)));
 }
 
 function coincideInmutable(a, b) {
@@ -62,6 +90,106 @@ function volumen(sesiones, selector = () => true) {
   };
 }
 
+const resumenSesion = (s) => ({
+  session_key: valor(s, "session_key", "sessionKey") || codigo(s),
+  date: fecha(s),
+  day_of_week: valor(s, "day_of_week", "dia_semana", "day"),
+  modality: modalidad(s),
+  session_type: tipo(s),
+  master_session_code: codigo(s) || null,
+  duration_min: duracion(s),
+  intensity: s?.intensity ?? s?.intensidad ?? null,
+});
+
+const intensidadCanonica = (s) => JSON.stringify(s?.intensity ?? s?.intensidad ?? null);
+const claveSesion = (s) => String(valor(s, "session_key", "sessionKey") || codigo(s) || "");
+
+function encontrarCorrespondencia(base, propuestas, usadas) {
+  const master = valor(base, "id", "planned_session_id", "plannedSessionId") || idMaestro(base);
+  const key = claveSesion(base);
+  const code = codigo(base);
+  const candidatos = propuestas.map((session, index) => ({ session, index })).filter(({ index }) => !usadas.has(index));
+  return candidatos.find(({ session }) => master && String(idMaestro(session) || "") === String(master))
+    || candidatos.find(({ session }) => key && claveSesion(session) === key)
+    || candidatos.find(({ session }) => code && codigo(session) === code)
+    || null;
+}
+
+/** Diff calculado por código; nunca se confía en la etiqueta que devolvió el
+ * modelo para decidir si una sesión cambió. */
+export function derivarCambiosPlan(contexto, sesiones = []) {
+  const base = sesionesBaseActivas(contexto);
+  const usadas = new Set();
+  const cambios = [];
+  for (const original of base) {
+    const match = encontrarCorrespondencia(original, sesiones, usadas);
+    const key = claveSesion(original);
+    if (!match) {
+      cambios.push({ type: "removed", session_key: key, before: resumenSesion(original), after: null });
+      continue;
+    }
+    usadas.add(match.index);
+    const actual = match.session;
+    let type = "unchanged";
+    const tipoOriginal = tipo(original);
+    if (modalidad(original) !== modalidad(actual)
+      || (tipoOriginal && tipoOriginal !== tipo(actual))
+      || codigo(original) !== codigo(actual)) {
+      type = "substituted";
+    } else if (fecha(original) !== fecha(actual)) {
+      type = "moved";
+    } else if (duracion(original) !== duracion(actual)
+      || ((original?.intensity && typeof original.intensity === "object")
+        && intensidadCanonica(original) !== intensidadCanonica(actual))) {
+      const originalRpe = numero(original?.intensity?.rpe_max ?? original?.intensidad?.rpe_max);
+      const actualRpe = numero(actual?.intensity?.rpe_max ?? actual?.intensidad?.rpe_max);
+      const soloReduce = duracion(actual) <= duracion(original)
+        && (originalRpe === null || actualRpe === null || actualRpe <= originalRpe);
+      type = soloReduce ? "reduced" : "unsupported_increase";
+    }
+    cambios.push({ type, session_key: claveSesion(actual) || key, before: resumenSesion(original), after: resumenSesion(actual), session: actual });
+  }
+  sesiones.forEach((session, index) => {
+    if (!usadas.has(index)) cambios.push({
+      type: "added",
+      session_key: claveSesion(session),
+      before: null,
+      after: resumenSesion(session),
+      session,
+    });
+  });
+  return cambios;
+}
+
+const DIA_NOMBRE = Object.freeze({
+  lunes: 0, martes: 1, miercoles: 2, miércoles: 2, jueves: 3,
+  viernes: 4, sabado: 5, sábado: 5, domingo: 6,
+});
+
+function coachRequestMatches(cambio, cambios) {
+  if (!cambio) return true;
+  const esperado = {
+    mover: "moved",
+    sustituir: "substituted",
+    reducir_volumen: "reduced",
+    reducir_intensidad: "reduced",
+    eliminar: "removed",
+    descansar: "removed",
+  }[cambio.tipo];
+  const source = String(cambio.de || "").trim().toLowerCase();
+  const target = String(cambio.a || "").trim().toLowerCase();
+  const day = DIA_NOMBRE[String(cambio.dia || "").trim().toLowerCase()];
+  return cambios.some((item) => {
+    if (item.type !== esperado) return false;
+    const beforeCode = String(item.before?.master_session_code || item.session_key || "").toLowerCase();
+    const afterCode = String(item.after?.master_session_code || "").toLowerCase();
+    if (source && !beforeCode.includes(source) && !source.includes(beforeCode)) return false;
+    if (target && !afterCode.includes(target) && !target.includes(afterCode)) return false;
+    if (Number.isInteger(day) && item.after?.day_of_week !== day) return false;
+    return true;
+  });
+}
+
 export const DEFAULT_GUARDRAIL_CONFIG = Object.freeze({
   painThreshold: 5,
   maxWeeklyIncreasePct: 10,
@@ -69,6 +197,7 @@ export const DEFAULT_GUARDRAIL_CONFIG = Object.freeze({
   maxConsecutiveTrainingDays: 3,
   minHeavyBeforeLongRunDays: 2,
   taperMaxVolumeRatio: 1,
+  maxRunningSpeedKmH: 24,
   requireEvidencePerSession: true,
 });
 export const GUARDRAILS_VERSION = "weekly-guardrails.1";
@@ -101,8 +230,15 @@ export function evaluarGuardrailsPlan(propuesta, contexto = {}, analitica = {}, 
     else if (typeof d === "string") fechas.add(d);
     else { if (Number.isInteger(d?.day ?? d?.diaSemana)) dias.add(d.day ?? d.diaSemana); if (d?.date || d?.fecha) fechas.add(d.date || d.fecha); }
   }
+  const hoy = String(contexto.now || analitica?.calculadaEn || "").slice(0, 10);
   sesiones.forEach((s, i) => {
-    if ((dias.size || fechas.size) && !dias.has(s.day_of_week) && !fechas.has(s.date)) registrar(hard, "UNAVAILABLE_DAY", "Sesión colocada en un día no disponible.", `$.sessions[${i}].date`);
+    const yaCompletada = completadaParaSesion(contexto, s);
+    if (hoy && fecha(s) < hoy && !yaCompletada) {
+      registrar(hard, "PAST_SESSION_NOT_COMPLETED", "Una replanificación no puede volver a programar una sesión pasada no completada.", `$.sessions[${i}].date`);
+    }
+    if (!yaCompletada && (dias.size || fechas.size) && !dias.has(s.day_of_week) && !fechas.has(s.date)) {
+      registrar(hard, "UNAVAILABLE_DAY", "Sesión colocada en un día no disponible.", `$.sessions[${i}].date`);
+    }
     if (cfg.requireEvidencePerSession && !(s.evidence_ids || []).length) registrar(hard, "SESSION_WITHOUT_EVIDENCE", "Cada sesión propuesta debe indicar la evidencia usada.", `$.sessions[${i}].evidence_ids`);
   });
   const constraints = contexto.constraints || contexto.restricciones || {};
@@ -112,8 +248,42 @@ export function evaluarGuardrailsPlan(propuesta, contexto = {}, analitica = {}, 
   if (constraints.allowStrength === false && sesiones.some(esFuerza)) {
     registrar(hard, "STRENGTH_NOT_SELECTED", "El atleta desactivó la fuerza para esta semana.", "$.sessions");
   }
-  for (const [i, cambio] of (propuesta?.changes_from_master_plan || []).entries()) {
-    if (!(cambio.evidence_ids || []).length) registrar(hard, "CHANGE_WITHOUT_EVIDENCE", "Todo cambio respecto al plan maestro debe indicar la evidencia usada.", `$.changes_from_master_plan[${i}].evidence_ids`);
+  const cambiosDerivados = derivarCambiosPlan(contexto, sesiones);
+  const cambiosDeclarados = propuesta?.changes_from_master_plan || [];
+  const declaradosPorClave = new Map();
+  for (const [i, cambio] of cambiosDeclarados.entries()) {
+    const key = String(cambio.session_key || "");
+    if (declaradosPorClave.has(key)) registrar(hard, "DUPLICATE_DECLARED_CHANGE", "El mismo cambio está declarado más de una vez.", `$.changes_from_master_plan[${i}]`);
+    declaradosPorClave.set(key, cambio);
+    if (!(cambio.evidence_ids || []).length) registrar(hard, "CHANGE_WITHOUT_EVIDENCE", "Todo cambio respecto al plan activo debe indicar la evidencia usada.", `$.changes_from_master_plan[${i}].evidence_ids`);
+  }
+  for (const derivado of cambiosDerivados) {
+    const declaradoEnSesion = derivado.session?.change_from_master?.type;
+    if (derivado.type === "unsupported_increase") {
+      registrar(hard, "UNSUPPORTED_LOAD_INCREASE", "Un aumento de carga no puede ocultarse como sesión sin cambios.", "$.sessions", { session: derivado.session_key });
+      continue;
+    }
+    if (derivado.session && declaradoEnSesion !== derivado.type) {
+      registrar(hard, "SESSION_CHANGE_MISMATCH", "La etiqueta change_from_master no coincide con el cambio real calculado.", "$.sessions", {
+        session: derivado.session_key, declared: declaradoEnSesion, actual: derivado.type,
+      });
+    }
+    const declarado = declaradosPorClave.get(String(derivado.session_key));
+    if (derivado.type === "unchanged") {
+      if (declarado) registrar(hard, "SPURIOUS_DECLARED_CHANGE", "Se declaró un cambio que no existe en la agenda calculada.", "$.changes_from_master_plan", { session: derivado.session_key });
+    } else if (!declarado || declarado.type !== derivado.type) {
+      registrar(hard, "MISSING_OR_INCORRECT_CHANGE", "Todo cambio real debe aparecer con su tipo correcto en changes_from_master_plan.", "$.changes_from_master_plan", {
+        session: derivado.session_key, actual: derivado.type,
+      });
+    }
+  }
+  for (const [key] of declaradosPorClave) {
+    if (!cambiosDerivados.some((item) => String(item.session_key) === key && item.type !== "unchanged")) {
+      registrar(hard, "SPURIOUS_DECLARED_CHANGE", "Se declaró un cambio que no existe en la agenda calculada.", "$.changes_from_master_plan", { session: key });
+    }
+  }
+  if (!coachRequestMatches(contexto.coachRequest?.cambio, cambiosDerivados)) {
+    registrar(hard, "COACH_REQUEST_MISMATCH", "La semana generada no materializa exactamente el cambio que el atleta confirmó en el Coach.", "$.sessions");
   }
   if (sesiones.length && propuesta?.summary?.evidence_state === "none") registrar(hard, "NO_EVIDENCE_FOR_PLAN", "No se puede proponer una semana con estado de evidencia 'none'.", "$.summary.evidence_state");
 
@@ -132,14 +302,32 @@ export function evaluarGuardrailsPlan(propuesta, contexto = {}, analitica = {}, 
     if (duracion(s) > techo) registrar(hard, "LONG_RUN_CEILING", `La tirada larga supera el techo de ${techo} min.`, `$.sessions[${i}].duration_min`);
   });
 
-  const baseSesiones = contexto.week?.sessions || contexto.week?.sesiones || contexto.plannedSessions || [];
+  const baseSesiones = sesionesBaseActivas(contexto);
   const baseVol = volumen(baseSesiones, esCarrera);
   const propuestoVol = volumen(sesiones, esCarrera);
+  const historialMinutos = numero(analitica?.comparativaAnterior7d?.minutosCarrera)
+    || numero(analitica?.ventana7d?.minutosCarrera)
+    || 0;
+  const referenciasPositivas = [baseVol.minutos, historialMinutos].filter((n) => n > 0);
   const referencia = numero(cfg.baselineRunningMinutes)
-    ?? (baseVol.minutos || analitica?.comparativaAnterior7d?.minutosCarrera || 0);
+    ?? (referenciasPositivas.length ? Math.min(...referenciasPositivas) : 0);
   if (referencia > 0 && propuestoVol.minutos > referencia * (1 + cfg.maxWeeklyIncreasePct / 100)) {
     registrar(hard, "WEEKLY_PROGRESSION_LIMIT", `El volumen de carrera supera el incremento máximo del ${cfg.maxWeeklyIncreasePct}%.`, "$.sessions");
   }
+  const historialKm = numero(analitica?.comparativaAnterior7d?.km)
+    || numero(analitica?.ventana7d?.km)
+    || 0;
+  const referenciasKm = [baseVol.km, historialKm].filter((n) => n > 0);
+  const referenciaKm = referenciasKm.length ? Math.min(...referenciasKm) : 0;
+  if (referenciaKm > 0 && propuestoVol.km > referenciaKm * (1 + cfg.maxWeeklyIncreasePct / 100)) {
+    registrar(hard, "WEEKLY_DISTANCE_PROGRESSION_LIMIT", `La distancia de carrera supera el incremento máximo del ${cfg.maxWeeklyIncreasePct}%.`, "$.sessions");
+  }
+  sesiones.filter(esCarrera).forEach((s, i) => {
+    const km = distancia(s), minutos = duracion(s);
+    if (km > 0 && (!minutos || km > (minutos / 60) * cfg.maxRunningSpeedKmH)) {
+      registrar(hard, "IMPLAUSIBLE_RUNNING_DISTANCE", "La distancia no es compatible con la duración de la sesión.", `$.sessions[${i}].prescription.distance_km`);
+    }
+  });
 
   const taper = !!(valor(contexto.week, "es_taper", "isTaper") || /taper|carrera/i.test(String(valor(contexto.week, "fase", "phase") || "")));
   if (taper && baseVol.minutos > 0 && propuestoVol.minutos > baseVol.minutos * cfg.taperMaxVolumeRatio) registrar(hard, "TAPER_VOLUME_INCREASE", "En taper no se puede aumentar el volumen sobre el plan maestro.", "$.sessions");

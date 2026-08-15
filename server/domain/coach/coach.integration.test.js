@@ -267,7 +267,7 @@ test("el Coach lee las banderas clínicas del perfil y no llama al modelo", asyn
   await db.query(`UPDATE athlete_profiles SET banderas=ARRAY['Mareos o desmayos'] WHERE id=$1;`, [profileId]);
   let llamado = false;
   const llm = { call: async () => { llamado = true; return { text: "no debería llegar aquí" }; } };
-  const salida = await responder(profileId, "¿me añades intervalos esta semana?", deps(db, llm));
+  const salida = await responder(profileId, "¿qué hago hoy?", deps(db, llm));
 
   assert.match(salida.texto, /bandera de salud/i);
   assert.equal(salida.cambio, null);

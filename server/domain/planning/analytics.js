@@ -147,17 +147,28 @@ function sesionPlanificadaNormalizada(sesion = {}, weekStart = null) {
   return {
     ...normalizarSesion({ ...sesion, fecha: primero(sesion, "fecha", "date") || fechaDerivada, completada: false }),
     id: primero(sesion, "id", "planned_session_id", "plannedSessionId"),
+    masterPlannedSessionId: primero(
+      sesion,
+      "master_planned_session_id",
+      "masterPlannedSessionId",
+    ) ?? sesion.change_from_master?.master_session_id ?? null,
   };
 }
 
 function coincide(planificada, completada) {
-  if (completada.plannedSessionId && planificada.id) return String(completada.plannedSessionId) === String(planificada.id);
+  if (completada.plannedSessionId) {
+    const masterId = planificada.masterPlannedSessionId;
+    if (masterId && String(completada.plannedSessionId) === String(masterId)) return true;
+    if (!masterId && planificada.id && String(completada.plannedSessionId) === String(planificada.id)) return true;
+  }
   if (planificada.sessionKey && completada.sessionKey) return planificada.sessionKey === completada.sessionKey;
   return planificada.fecha === completada.fecha && !!planificada.codigo && planificada.codigo === completada.codigo;
 }
 
 function calcularAdherencia(planificadas, completadas, hoy) {
-  const vencidas = planificadas.filter((s) => s.fecha && s.fecha <= hoy);
+  // Una sesión de hoy aún no está perdida: sin hora de finalización solo puede
+  // considerarse vencida a partir del día siguiente.
+  const vencidas = planificadas.filter((s) => s.fecha && s.fecha < hoy);
   const realizadas = vencidas.filter((p) => completadas.some((c) => coincide(p, c)));
   const perdidas = vencidas.filter((p) => !completadas.some((c) => coincide(p, c)));
   return {
@@ -225,7 +236,7 @@ export function calcularAnaliticaEntrenamiento(contexto = {}, { hoy = new Date()
     return flag === true || /reposo/i.test(descripcion);
   });
   const redFlags = [...(contexto.redFlags || contexto.banderas || []), ...checkins.flatMap((r) => r.red_flags || r.redFlags || [])]
-    .map(String).filter(Boolean);
+    .map(String).filter((flag) => flag && !/^ninguna$/i.test(flag.trim()));
 
   return {
     calculadaEn: hoyISO,

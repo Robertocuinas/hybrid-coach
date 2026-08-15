@@ -14,6 +14,7 @@
 import { cargarContexto } from "../../db/repositories/coachContext.js";
 import { recuperar } from "../../rag/retrieval.js";
 import { catalogoParaPrompt } from "./acciones.js";
+import { bloquePerfil, estadoPerfil, REGLAS_PERFIL } from "./perfil.js";
 
 /* El planificador IA + RAG está en desarrollo. Mientras sus rutas no existan,
    sus acciones NO se le ofrecen al modelo: prometer "te preparo la semana" y
@@ -176,6 +177,7 @@ export async function buildContext(profileId, consulta, deps) {
   const datos = await cargarContexto(profileId, { db, hoy });
   if (!datos.perfil) throw new Error("El perfil no existe o no tiene datos");
   const planificador = await planificadorDisponible();
+  const perfilEstado = estadoPerfil(datos);
 
   const retrieval = await recuperar(consulta || "", {
     db, repo, embeddingProvider, rerankProvider, indice, config,
@@ -198,6 +200,11 @@ export async function buildContext(profileId, consulta, deps) {
     evidencia,
     "",
     REGLAS_COACH,
+    "",
+    bloquePerfil(datos),
+    /* Las reglas de completado solo cuando falta algo: si el perfil está
+       completo son ruido en el prompt y arriesgan que pregunte de más. */
+    ...(perfilEstado.completo ? [] : ["", REGLAS_PERFIL]),
     "",
     reglasAcciones(catalogoParaPrompt({ planificador }), new Date(hoy).toISOString().slice(0, 10)),
     /* Contexto de la pantalla desde la que se abre el coach: permite que

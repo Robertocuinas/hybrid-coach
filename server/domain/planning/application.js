@@ -429,9 +429,28 @@ export async function generateWeeklyPlanningProposal(profileId, rawInput, deps =
   });
   const context = buildCanonicalPlannerContext(canonical, input, { now, coachRequest: deps.coachRequest || null });
   const retrievalDiagnostics = [];
+  const evidenceRepo = deps.repo || documentsRepo;
+  const citedIds = Array.isArray(deps.coachRequest?.citedChunkIds)
+    ? [...new Set(deps.coachRequest.citedChunkIds.map(String))].slice(0, 8)
+    : [];
+  const citedRows = citedIds.length && typeof evidenceRepo.findReviewedChunkEvidence === "function"
+    ? (await Promise.all(citedIds.map((id) => evidenceRepo.findReviewedChunkEvidence(id, db)))).filter(Boolean)
+      .map((row) => ({
+        ...row,
+        id: String(row.id),
+        documentId: row.document_id,
+        studyType: row.study_type,
+        evidenceGrade: row.evidence_grade,
+        populationType: row.population_type,
+        sampleSize: row.sample_size,
+        paginaInicio: row.pagina_inicio,
+        paginaFin: row.pagina_fin,
+        scores: { coach_citation: 1 },
+      }))
+    : [];
   const baseRetrieve = deps.retrieve || ((query, meta) => recuperar(query, {
     db,
-    repo: deps.repo || documentsRepo,
+    repo: evidenceRepo,
     embeddingProvider: deps.embeddingProvider,
     rerankProvider: deps.rerankProvider,
     indice: deps.indice,
@@ -440,7 +459,14 @@ export async function generateWeeklyPlanningProposal(profileId, rawInput, deps =
     filtros: meta.filters,
   }));
   const trackedRetrieve = async (query, meta = {}) => {
-    const result = await baseRetrieve(query, meta);
+    let result = await baseRetrieve(query, meta);
+    if (meta.queryKey === "coach_requested_change" && citedRows.length) {
+      const chunks = Array.isArray(result) ? result : result?.chunks || [];
+      const merged = [...chunks, ...citedRows.filter((row) => !chunks.some((chunk) => String(chunk.id) === row.id))];
+      result = Array.isArray(result)
+        ? merged
+        : { ...(result || {}), hayEvidencia: true, chunks: merged };
+    }
     retrievalDiagnostics.push({
       queryKey: meta.queryKey || null,
       hayEvidencia: result?.hayEvidencia ?? (Array.isArray(result) && result.length > 0),

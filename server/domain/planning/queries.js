@@ -66,6 +66,35 @@ const prioridadTexto = (contexto) => {
   return Array.isArray(prioridades) ? texto(prioridades[0]) : texto(prioridades);
 };
 
+const codigoSeguro = (valor) => texto(valor)
+  .normalize("NFKD")
+  .replace(/[^a-zA-Z0-9 _-]/g, " ")
+  .replace(/\s+/g, " ")
+  .trim()
+  .slice(0, 40);
+
+function consultaCambioCoach(contexto) {
+  const cambio = contexto.coachRequest?.cambio;
+  if (!cambio) return null;
+  const accion = {
+    mover: "redistribuir una sesión manteniendo recuperación y compatibilidad",
+    sustituir: "sustituir una modalidad o sesión por una alternativa de carga equivalente",
+    reducir_volumen: "reducir volumen de forma conservadora",
+    reducir_intensidad: "reducir intensidad de forma conservadora",
+    eliminar: "eliminar una sesión sin compensar carga",
+    descansar: "introducir descanso sin recuperar después la carga perdida",
+  }[cambio.tipo];
+  if (!accion) return null;
+  const origen = codigoSeguro(cambio.de);
+  const destino = codigoSeguro(cambio.a);
+  return [
+    accion,
+    origen ? `sesión origen ${origen}` : "",
+    destino ? `alternativa ${destino}` : "",
+    "adaptación semanal basada en evidencia, training modification load management",
+  ].filter(Boolean).join("; ");
+}
+
 /** Devuelve entre 1 y 5 consultas, ordenadas por criticidad. */
 export function construirConsultasRAG(contexto = {}, analitica = {}, config = {}) {
   const s = detectarSenalesPlanificacion(contexto, analitica, config);
@@ -73,6 +102,9 @@ export function construirConsultasRAG(contexto = {}, analitica = {}, config = {}
   const prioridad = prioridadTexto(contexto);
   const candidatas = [];
   const agregar = (key, query, { required = true, priority = 0, filters = {} } = {}) => candidatas.push({ key, query, required, priority, filters });
+
+  const coachChange = consultaCambioCoach(contexto);
+  if (coachChange) agregar("coach_requested_change", coachChange, { priority: 95 });
 
   if (s.dolorActivo || s.dolorEnReposo || s.redFlags.length) {
     const zonas = (contexto.injuries || contexto.lesiones || []).map((x) => x.zona).filter(Boolean).join(", ");

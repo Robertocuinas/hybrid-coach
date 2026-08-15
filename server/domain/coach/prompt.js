@@ -116,7 +116,7 @@ REGLAS DE LAS ACCIONES
 - Solo un bloque por mensaje, y solo si tienes TODOS los parámetros. Si te falta uno, pregúntalo en texto y no emitas bloque.
 - Las fechas van siempre en formato AAAA-MM-DD. Resuelve tú "hoy", "ayer" o "el jueves" a partir de la fecha de hoy.
 - No inventes datos que el atleta no haya dicho. Si dice "dormí poco" sin dar un número, pregunta cuántas horas.
-- Las de nivel "lectura" y "escritura" se aplican directamente; las de "confirmacion" se le muestran al atleta para que acepte o rechace. No prometas que algo ya está hecho: di lo que vas a hacer.
+- Solo las de nivel "lectura" se aplican directamente; cualquier escritura o cambio se muestra primero para que el atleta acepte o rechace. No prometas que algo ya está hecho: di lo que vas a hacer.
 - Si lo que te piden no está en la lista, respóndelo en texto y no fuerces una acción que no encaja.`;
 
 /* Reglas de distribución del planificador, conservadas literalmente: son las

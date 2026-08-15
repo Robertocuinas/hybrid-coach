@@ -14,7 +14,7 @@
    Tres niveles, que responden a §15 y §16 del encargo:
 
      lectura       se resuelve y se responde, sin confirmar nada
-     escritura     el usuario lo ha pedido explícitamente: se aplica directo
+     escritura     reservado; las escrituras actuales requieren confirmación
      confirmacion  cambia el plan: se propone y el usuario acepta o rechaza
    ============================================================ */
 
@@ -62,7 +62,7 @@ export const ACCIONES = Object.freeze({
 
   registrar_recuperacion: {
     ejecutor: "cliente",
-    nivel: "escritura",
+    nivel: "confirmacion",
     descripcion: "Anotar sueño, fatiga, estrés o motivación de un día.",
     ejemplo: '{ "fecha": "2026-08-14", "sueno": 7, "fatiga": 4 }',
     parametros: (p) => {
@@ -88,7 +88,7 @@ export const ACCIONES = Object.freeze({
 
   registrar_sensaciones: {
     ejecutor: "cliente",
-    nivel: "escritura",
+    nivel: "confirmacion",
     descripcion: "Anotar cómo fue una sesión: RPE, dolor, energía y comentario.",
     ejemplo: '{ "fecha": "2026-08-14", "rpe": 6, "dolor": 2 }',
     parametros: (p) => {

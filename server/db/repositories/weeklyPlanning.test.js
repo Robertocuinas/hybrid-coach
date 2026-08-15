@@ -67,11 +67,15 @@ async function fixture(db, suffix = "a") {
      VALUES($1,0,'results',4,'Separar las modalidades reduce la interferencia.') RETURNING id;`, [docs[0].id],
   );
   await db.query(`UPDATE documents SET revisado=true WHERE id=$1;`, [docs[0].id]);
+  const { rows: contextRows } = await db.query(
+    `SELECT planning_context_version FROM athlete_profiles WHERE id=$1;`,
+    [profileId],
+  );
   return {
     profileId,
     planId,
     chunkId: chunks[0].id,
-    planningContextVersion: Number(profiles[0].planning_context_version),
+    planningContextVersion: Number(contextRows[0].planning_context_version),
     structureHash: "a".repeat(64),
   };
 }

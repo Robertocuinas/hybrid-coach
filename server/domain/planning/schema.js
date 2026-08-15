@@ -7,6 +7,17 @@ export const TIPOS_SESION = Object.freeze(["long_run", "intervals", "tempo", "ea
 export const PRIORIDADES = Object.freeze(["key", "support", "recovery"]);
 export const TIPOS_CAMBIO = Object.freeze(["unchanged", "moved", "reduced", "substituted", "removed", "added"]);
 export const ESTADOS_EVIDENCIA = Object.freeze(["sufficient", "limited", "mixed", "none"]);
+export const CODIGOS_AGENDA = Object.freeze([
+  "RUN A", "RUN B", "RUN C", "RUN D",
+  "GYM A", "GYM B", "GYM C", "GYM D", "RECOVERY",
+]);
+
+const TIPOS_POR_MODALIDAD = Object.freeze({
+  running: new Set(["long_run", "intervals", "tempo", "easy_run", "recovery_run", "race"]),
+  strength: new Set(["heavy_strength", "strength"]),
+  recovery: new Set(["mobility"]),
+  cross_training: new Set(["cross_training"]),
+});
 
 const esObjeto = (v) => !!v && typeof v === "object" && !Array.isArray(v);
 const esCadena = (v, min = 0, max = Infinity) => typeof v === "string" && v.length >= min && v.length <= max;
@@ -120,9 +131,11 @@ export function validarPlanSemanal(valor, opciones = {}) {
     if (!ESTADOS_EVIDENCIA.includes(valor.summary.evidence_state)) error(errores, "$.summary.evidence_state", "ENUM", "estado de evidencia no permitido");
   }
 
-  if (!Array.isArray(valor.sessions) || valor.sessions.length > 14) error(errores, "$.sessions", "RANGE", "debe ser un array de 0 a 14 sesiones");
+  if (!Array.isArray(valor.sessions) || valor.sessions.length < 1 || valor.sessions.length > 14) error(errores, "$.sessions", "RANGE", "debe ser un array de 1 a 14 sesiones");
   const clavesSesion = ["session_key", "date", "day_of_week", "modality", "session_type", "master_session_code", "title", "priority", "duration_min", "intensity", "prescription", "objective", "public_reason", "evidence_ids", "change_from_master"];
   const keys = new Set();
+  const agendaCodes = new Set();
+  const masterCodes = new Set((opciones.masterSessionCodes || []).map((code) => String(code).toUpperCase()));
   (Array.isArray(valor.sessions) ? valor.sessions : []).forEach((s, i) => {
     const path = `$.sessions[${i}]`;
     if (!clavesExactas(s, clavesSesion, path, errores)) return;
@@ -133,10 +146,25 @@ export function validarPlanSemanal(valor, opciones = {}) {
     if (!Number.isInteger(s.day_of_week) || s.day_of_week < 0 || s.day_of_week > 6) error(errores, `${path}.day_of_week`, "RANGE", "debe estar entre 0 y 6");
     if (fechaISO(s.date) && s.day_of_week !== diaDeFecha(s.date)) error(errores, `${path}.day_of_week`, "DATE_MISMATCH", "no corresponde a la fecha");
     if (fechaISO(s.date) && fechaISO(valor.week?.start_date) && (s.date < valor.week.start_date || s.date > valor.week.end_date)) error(errores, `${path}.date`, "OUTSIDE_WEEK", "la sesión cae fuera de la semana");
-    if ((disponibilidad.dias.size || disponibilidad.fechas.size) && !disponibilidad.dias.has(s.day_of_week) && !disponibilidad.fechas.has(s.date)) error(errores, `${path}.date`, "UNAVAILABLE", "día no disponible");
+    if ((!opciones.today || s.date > opciones.today)
+      && (disponibilidad.dias.size || disponibilidad.fechas.size)
+      && !disponibilidad.dias.has(s.day_of_week) && !disponibilidad.fechas.has(s.date)) {
+      error(errores, `${path}.date`, "UNAVAILABLE", "día no disponible");
+    }
     if (!MODALIDADES.includes(s.modality)) error(errores, `${path}.modality`, "ENUM", "modalidad no permitida");
     if (!TIPOS_SESION.includes(s.session_type)) error(errores, `${path}.session_type`, "ENUM", "tipo de sesión no permitido");
+    if (TIPOS_POR_MODALIDAD[s.modality] && !TIPOS_POR_MODALIDAD[s.modality].has(s.session_type)) {
+      error(errores, `${path}.session_type`, "MODALITY_MISMATCH", "el tipo de sesión no corresponde a la modalidad");
+    }
     if (s.master_session_code !== null && !esCadena(s.master_session_code, 1, 80)) error(errores, `${path}.master_session_code`, "TYPE", "debe ser null o texto");
+    const agendaCode = String(s.master_session_code
+      || (["recovery", "cross_training"].includes(s.modality) ? "RECOVERY" : "")).toUpperCase();
+    if (!agendaCode || !CODIGOS_AGENDA.includes(agendaCode)) {
+      error(errores, `${path}.master_session_code`, "UNSUPPORTED_AGENDA_CODE", "la sesión no se puede representar en la agenda");
+    } else if (agendaCodes.has(agendaCode)) {
+      error(errores, `${path}.master_session_code`, "DUPLICATE_AGENDA_CODE", "el código de agenda ya está usado en esta semana");
+    }
+    agendaCodes.add(agendaCode);
     if (!esCadena(s.title, 1, 120) || !esCadena(s.objective, 1, 300) || !esCadena(s.public_reason, 1, 500)) error(errores, path, "TEXT", "título, objetivo y motivo son obligatorios y acotados");
     if (!PRIORIDADES.includes(s.priority)) error(errores, `${path}.priority`, "ENUM", "prioridad no permitida");
     if (!Number.isInteger(s.duration_min) || s.duration_min < 1 || s.duration_min > 360) error(errores, `${path}.duration_min`, "RANGE", "debe ser entero entre 1 y 360");
@@ -147,6 +175,13 @@ export function validarPlanSemanal(valor, opciones = {}) {
     if (s.change_from_master?.master_session_id !== null && opciones.masterSessionIds?.length
       && !new Set(opciones.masterSessionIds.map(String)).has(String(s.change_from_master.master_session_id))) {
       error(errores, `${path}.change_from_master.master_session_id`, "CONTEXT_MISMATCH", "la sesión maestra no pertenece a esta semana");
+    }
+    if (s.change_from_master?.type !== "substituted"
+      && s.change_from_master?.type !== "added"
+      && s.master_session_code
+      && masterCodes.size
+      && !masterCodes.has(String(s.master_session_code).toUpperCase())) {
+      error(errores, `${path}.master_session_code`, "CONTEXT_MISMATCH", "el código no pertenece a la semana maestra");
     }
   });
 

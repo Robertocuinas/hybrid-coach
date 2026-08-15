@@ -95,7 +95,7 @@ test("el catálogo del prompt oculta las acciones del planificador si no está",
    desconocido, la respuesta segura es pedir confirmación. */
 test("el nivel separa lo que se aplica de lo que se propone", () => {
   assert.equal(nivelDe("consultar_entreno"), "lectura");
-  assert.equal(nivelDe("registrar_recuperacion"), "escritura");
+  assert.equal(nivelDe("registrar_recuperacion"), "confirmacion");
   assert.equal(nivelDe("generar_semana"), "confirmacion");
   assert.equal(nivelDe("mover_sesion"), "confirmacion");
   assert.equal(nivelDe("lo_que_sea"), "confirmacion", "ante la duda, no se aplica solo");
@@ -110,7 +110,7 @@ test("el bloque <<ACCION>> sale del texto y no se muestra al usuario", () => {
   assert.equal(texto, "Te lo anoto.");
   assert.ok(!texto.includes("<<ACCION>>"));
   assert.equal(accion.accion, "registrar_recuperacion");
-  assert.equal(accion.nivel, "escritura");
+  assert.equal(accion.nivel, "confirmacion");
   assert.equal(accion.parametros.sueno, 7);
   assert.deepEqual(avisos, []);
 });

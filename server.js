@@ -313,8 +313,11 @@ app.use((error, _req, res, _next) => {
     : Number.isInteger(requested) && requested >= 400 && requested < 600 ? requested
       : 500;
   if (status === 500) console.error("Error interno de API:", error.name, error.code || "");
-  const safeMessage = error.publicMessage || (status < 500 && error.message ? error.message
-    : status === 409 ? "El registro ya existe" : "Error interno");
+  const postgresError = /^[0-9A-Z]{5}$/.test(String(error.code || ""));
+  const safeMessage = error.publicMessage
+    || (error.code === "23505" ? "El registro ya existe"
+      : status < 500 && error.message && !postgresError ? error.message
+        : status === 409 ? "La operación entra en conflicto con el estado actual" : "Error interno");
   res.status(status).json({ ok: false, message: safeMessage, ...(error.publicCode ? { code: error.publicCode } : {}) });
 });
 
