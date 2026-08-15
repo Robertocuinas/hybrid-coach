@@ -9,7 +9,7 @@ const migrationFiles = [
   "0004_document_legacy_id.js", "0005_embeddings_index.js", "0006_citations_ui.js",
   "0007_integrity_hardening.js", "0008_user_ai_settings.js",
   "0009_instance_embedding_settings.js", "0010_weekly_planning.js",
-  "0011_planning_and_evidence_integrity.js", "0012_exercise_identity.js",
+  "0011_planning_and_evidence_integrity.js", "0012_exercise_identity.js", "0013_consumed_foods.js",
 ];
 
 const baseMigrada = async () => {
@@ -87,6 +87,41 @@ test("la migración normaliza el nombre de los ejercicios que ya existían", asy
   const { rows } = await db.query(`SELECT canonical_name, provider FROM strength_exercises ORDER BY canonical_name;`);
   assert.deepEqual(rows.map((r) => r.canonical_name), ["elevacion de gemelo sentado", "press banca"]);
   assert.ok(rows.every((r) => r.provider === "custom"), "lo que ya existía es del atleta");
+  await db.close();
+});
+
+/* El snapshot nutricional es lo que hace reproducible el historial: si mañana
+   corrigen la ficha de ese producto en Open Food Facts, lo que comiste hace
+   tres meses no debe cambiar. */
+test("el consumo guarda un snapshot, y un macro desconocido queda en NULL", async () => {
+  const db = await baseMigrada();
+  const { rows: u } = await db.query(`INSERT INTO users(email) VALUES('come@test') RETURNING id;`);
+  const { rows: p } = await db.query(`INSERT INTO athlete_profiles(user_id) VALUES($1) RETURNING id;`, [u[0].id]);
+
+  await db.query(
+    `INSERT INTO consumed_foods (athlete_profile_id, fecha, nombre, gramos, kcal, proteina_g, fibra_g)
+     VALUES ($1, '2026-08-15', 'Yogur griego', 150, 154.5, 8.7, NULL);`, [p[0].id]);
+
+  const { rows } = await db.query(`SELECT * FROM consumed_foods;`);
+  assert.equal(Number(rows[0].kcal), 154.5);
+  assert.equal(rows[0].fibra_g, null, "lo que no se sabe se guarda como NULL, no como 0");
+  assert.equal(rows[0].provider, "openfoodfacts");
+  assert.equal(rows[0].tipo, "alimento");
+  await db.close();
+});
+
+test("una cantidad imposible no llega a guardarse", async () => {
+  const db = await baseMigrada();
+  const { rows: u } = await db.query(`INSERT INTO users(email) VALUES('x@test') RETURNING id;`);
+  const { rows: p } = await db.query(`INSERT INTO athlete_profiles(user_id) VALUES($1) RETURNING id;`, [u[0].id]);
+
+  for (const gramos of [0, -10, 9000]) {
+    await assert.rejects(
+      () => db.query(`INSERT INTO consumed_foods (athlete_profile_id, fecha, nombre, gramos)
+                      VALUES ($1, '2026-08-15', 'X', $2);`, [p[0].id, gramos]),
+      /gramos_check/, `${gramos} g debería rechazarse`,
+    );
+  }
   await db.close();
 });
 
