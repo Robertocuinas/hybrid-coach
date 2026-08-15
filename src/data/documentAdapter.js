@@ -59,6 +59,8 @@ export function documentoParaAPI(ref = {}) {
     aplicacionPractica: ref.aplicacion || null,
     // En PATCH no se cambia el origen (una semilla editada sigue siendo semilla).
     origen: ref._dbId ? undefined : ref.origen === "pdf" ? "pdf" : "manual",
-    revisado: true,
+    // Solo un PDF ya persistido tiene chunks que un admin pueda confirmar.
+    // Las altas manuales son catálogo, no evidencia RAG.
+    revisado: ref.origen === "pdf" && !!ref._dbId,
   };
 }

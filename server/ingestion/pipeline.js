@@ -20,19 +20,9 @@ export const esPDF = (buffer) => Buffer.isBuffer(buffer) && buffer.length > 4 &&
    PDF", no en la instalación: vacío, ilegible y protegido con contraseña. */
 const CODIGOS_DE_ARCHIVO = new Set([2, 4, 5]);
 
-/* ¿Puede este documento entrar en el retrieval sin que lo mire una persona?
-   Sí, pero solo si el modelo sacó lo que hace falta para CITARLO bien: quién lo
-   firma, de cuándo es, qué diseño tiene y cuánta confianza merece.
-
-   Los dos últimos son enums cerrados que normalizarFicha() ya validó contra la
-   lista real: si llegan con valor, no son inventados, y si el modelo devolvió
-   algo que no existe llegan a null y el documento se queda esperando revisión.
-   Sin proveedor de IA la ficha viene vacía y esto da false por sí solo, que es
-   justo lo que queremos: nadie cita un estudio del que no se sabe nada.
-
-   No sustituye a la revisión humana, la reserva para los casos dudosos: el
-   documento sigue siendo editable y `revisado` se puede volver a poner a false
-   desde el panel. */
+/* La ficha del LLM solo pre-rellena el formulario. Estos campos permiten
+   explicar al revisor qué falta, pero nunca autoaprueban una fuente: que un
+   enum sea válido no demuestra que el modelo haya clasificado bien el paper. */
 const CAMPOS_PARA_CITAR = [
   ["titulo", "título"],
   ["autores", "autores"],
@@ -137,9 +127,9 @@ export async function ingerirPDF(buffer, { db, storage, provider, embeddingProvi
     avisoAlmacen = "Documento guardado sin el PDF original: no hay almacenamiento configurado. El texto y las citas funcionan igual, pero la ficha no podrá abrir el archivo.";
   }
 
-  /* 8. Persistencia. Un documento solo participa en el retrieval con
-        revisado=true, y eso se decide aquí (ver fichaCompleta). */
-  const revisado = fichaCompleta(ficha);
+  /* 8. Persistencia. Todo PDF requiere confirmación humana después de revisar
+        ficha y fragmentos. Hasta entonces queda fuera del retrieval. */
+  const revisado = false;
   const documento = {
     titulo: ficha.titulo ?? null,
     autores: ficha.autores ?? null,
@@ -192,7 +182,8 @@ export async function ingerirPDF(buffer, { db, storage, provider, embeddingProvi
     revisado,
     /* Por qué se quedó esperando, para poder decirlo en el panel en vez de
        dejar al usuario adivinando por qué su PDF no aparece en las respuestas. */
-    faltaRevision: revisado ? null : camposQueFaltan(ficha),
+    faltaRevision: camposQueFaltan(ficha),
+    requiereRevisionHumana: true,
     embeddings: vectorizados?.items.length || 0,
   };
 }

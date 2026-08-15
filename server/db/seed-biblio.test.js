@@ -8,6 +8,7 @@ test("las 40 referencias están clasificadas y mantienen su id heredado", () => 
   assert.equal(documents.length, 40);
   assert.equal(new Set(documents.map((doc) => doc.legacy_id)).size, 40);
   assert.ok(documents.every((doc) => doc.study_type && doc.evidence_grade));
+  assert.ok(documents.every((doc) => doc.revisado === false), "las fichas sin chunks no son evidencia citable");
   assert.ok(documents.filter((doc) => doc.legacy_id.startsWith("b")).every((doc) => doc.population_type === null));
   assert.ok(documents.filter((doc) => doc.legacy_id.startsWith("n")).every((doc) => doc.population_type));
 });
@@ -28,9 +29,10 @@ test("el seed de bibliografía es idempotente en PostgreSQL", async () => {
   `);
   const first = await seedBibliography(db);
   const second = await seedBibliography(db);
-  const result = await db.query(`SELECT count(*)::int AS total, count(study_type)::int AS classified FROM documents;`);
+  const result = await db.query(`SELECT count(*)::int AS total, count(study_type)::int AS classified,
+    count(*) FILTER (WHERE revisado)::int AS reviewed FROM documents;`);
   assert.deepEqual(first, { total: 40, inserted: 40, updated: 0 });
   assert.deepEqual(second, { total: 40, inserted: 0, updated: 40 });
-  assert.deepEqual(result.rows[0], { total: 40, classified: 40 });
+  assert.deepEqual(result.rows[0], { total: 40, classified: 40, reviewed: 0 });
   await db.close();
 });

@@ -9,6 +9,7 @@ import {
   acceptWeeklyPlanRevision,
   createPlanChangeProposal,
   createPlanningDraft,
+  getAcceptedWeeklyPlanRevision,
   getPlanChangeProposal,
   getWeeklyPlanRevision,
   hashPlanningInput,
@@ -21,6 +22,7 @@ const migrationFiles = [
   "0004_document_legacy_id.js", "0005_embeddings_index.js", "0006_citations_ui.js",
   "0007_integrity_hardening.js", "0008_user_ai_settings.js",
   "0009_instance_embedding_settings.js", "0010_weekly_planning.js",
+  "0011_planning_and_evidence_integrity.js",
 ];
 
 async function database() {
@@ -58,16 +60,25 @@ async function fixture(db, suffix = "a") {
   );
   const { rows: docs } = await db.query(
     `INSERT INTO documents(titulo,autores,anio,study_type,evidence_grade,origen,revisado)
-     VALUES('Concurrent training','Wilson',2012,'meta_analysis','fuerte','pdf',true) RETURNING id;`,
+     VALUES('Concurrent training','Wilson',2012,'meta_analysis','fuerte','pdf',false) RETURNING id;`,
   );
   const { rows: chunks } = await db.query(
     `INSERT INTO document_chunks(document_id,chunk_index,seccion,pagina_inicio,texto)
      VALUES($1,0,'results',4,'Separar las modalidades reduce la interferencia.') RETURNING id;`, [docs[0].id],
   );
-  return { profileId, planId, chunkId: chunks[0].id };
+  await db.query(`UPDATE documents SET revisado=true WHERE id=$1;`, [docs[0].id]);
+  return {
+    profileId,
+    planId,
+    chunkId: chunks[0].id,
+    planningContextVersion: Number(profiles[0].planning_context_version),
+    structureHash: "a".repeat(64),
+  };
 }
 
-const draftInput = ({ profileId, planId, chunkId, baseRevisionId = null }) => ({
+const draftInput = ({
+  profileId, planId, chunkId, planningContextVersion, structureHash, baseRevisionId = null,
+}) => ({
   profileId,
   planId,
   weekNumber: 1,
@@ -77,7 +88,14 @@ const draftInput = ({ profileId, planId, chunkId, baseRevisionId = null }) => ({
     rulesVersion: "rules-v1",
     provider: "test",
     model: "deterministic-fixture",
-    inputSnapshot: { availability: [0, 2, 5], fatigue: 4 },
+    inputSnapshot: {
+      context: {
+        profile: { planning_context_version: planningContextVersion },
+        plan: { structure_hash: structureHash },
+        availability: [0, 2, 5],
+        fatigue: 4,
+      },
+    },
     analytics: { km7d: 18 },
     queryPlan: [{ key: "concurrent", query: "fuerza y carrera" }],
     retrievalDiagnostics: { candidates: 1 },
@@ -139,7 +157,7 @@ test("crea de forma atómica un run, borrador, sesiones, evidencia y guardrails"
   assert.deepEqual(created.sessions[0].intensity, { rpe_min: 6, rpe_max: 7 });
   assert.equal(created.evidence[0].used_by_model, true);
   assert.equal(created.guardrails[0].result, "pass");
-  assert.equal(created.run.input_hash, hashPlanningInput({ availability: [0, 2, 5], fatigue: 4 }));
+  assert.equal(created.run.input_hash, hashPlanningInput(draftInput(ids).run.inputSnapshot));
 
   const loaded = await getWeeklyPlanRevision(created.revision.id, ids.profileId, db);
   assert.equal(loaded.sessions[0].session_code, "GYM A");
@@ -194,6 +212,30 @@ test("aceptar usa la base esperada, sustituye la revisión previa y rechaza borr
   assert.equal(rejected.revision.status, "rejected");
   const linkedRejected = await db.query(`SELECT status FROM plan_change_proposals WHERE weekly_plan_revision_id=$1`, [rejectedDraft.revision.id]);
   assert.equal(linkedRejected.rows[0].status, "rejected");
+  await db.close();
+});
+
+test("lee solo la revisión aceptada de la semana del plan activo y del perfil propietario", async () => {
+  const db = await database();
+  const owner = await fixture(db, "accepted-owner");
+  const stranger = await fixture(db, "accepted-stranger");
+  assert.equal(await getAcceptedWeeklyPlanRevision(owner.profileId, 1, db), null);
+
+  const draft = await createPlanningDraft(draftInput(owner), db);
+  await acceptWeeklyPlanRevision({
+    revisionId: draft.revision.id,
+    profileId: owner.profileId,
+    expectedRevision: draft.revision.revision,
+  }, db);
+
+  const accepted = await getAcceptedWeeklyPlanRevision(owner.profileId, 1, db);
+  assert.equal(accepted.revision.id, draft.revision.id);
+  assert.equal(accepted.revision.status, "accepted");
+  assert.equal(accepted.sessions[0].session_code, "GYM A");
+  assert.equal(await getAcceptedWeeklyPlanRevision(stranger.profileId, 1, db), null);
+
+  await db.query(`UPDATE training_plans SET activo=false WHERE id=$1`, [owner.planId]);
+  assert.equal(await getAcceptedWeeklyPlanRevision(owner.profileId, 1, db), null, "una revisión de un plan histórico no se reactiva");
   await db.close();
 });
 

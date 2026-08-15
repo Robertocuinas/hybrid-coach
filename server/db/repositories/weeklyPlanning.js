@@ -71,14 +71,44 @@ const addDays = (value, days) => {
   return date.toISOString().slice(0, 10);
 };
 
-async function ownedPlan(client, profileId, planId, { lock = false } = {}) {
+async function ownedPlan(client, profileId, planId, { lock = false, requireActive = false } = {}) {
   const suffix = lock ? " FOR UPDATE" : "";
   const { rows } = await client.query(
     `SELECT * FROM training_plans WHERE id = $1 AND athlete_profile_id = $2${suffix};`,
     [planId, profileId],
   );
   if (!rows[0]) throw new PlanningNotFoundError("Plan maestro no encontrado para este perfil");
+  if (requireActive && rows[0].activo !== true) {
+    throw new PlanningConflictError("El plan maestro de esta propuesta ya no está activo. Genera una propuesta nueva.");
+  }
   return rows[0];
+}
+
+function snapshotContext(inputSnapshot = {}) {
+  return inputSnapshot?.context && typeof inputSnapshot.context === "object"
+    ? inputSnapshot.context
+    : inputSnapshot;
+}
+
+function assertSnapshotMatchesState(inputSnapshot, { contextVersion, structureHash }) {
+  const snapshot = snapshotContext(inputSnapshot);
+  const expectedVersion = Number(snapshot?.profile?.planning_context_version);
+  if (!Number.isSafeInteger(expectedVersion)) {
+    throw new PlanningConflictError("La propuesta no contiene una versión verificable del contexto. Regénérala antes de aceptarla.");
+  }
+  if (expectedVersion !== Number(contextVersion)) {
+    throw new PlanningConflictError("Los datos de entrenamiento o salud cambiaron desde que se generó la propuesta.", {
+      expectedContextVersion: expectedVersion,
+      actualContextVersion: Number(contextVersion),
+    });
+  }
+  const expectedHash = snapshot?.plan?.structure_hash ?? null;
+  if ((expectedHash || structureHash) && expectedHash !== structureHash) {
+    throw new PlanningConflictError("El plan maestro cambió desde que se generó la propuesta.", {
+      expectedStructureHash: expectedHash,
+      actualStructureHash: structureHash,
+    });
+  }
 }
 
 /**
@@ -86,7 +116,7 @@ async function ownedPlan(client, profileId, planId, { lock = false } = {}) {
  * dominio: devuelve filas reales, acotadas temporalmente, y conserva por
  * separado plan maestro, agenda, ejecución y recuperación.
  */
-export async function readCanonicalPlanningContext(profileId, {
+async function readCanonicalPlanningContextSnapshot(profileId, {
   db = pool,
   planId = null,
   weekNumber = null,
@@ -199,6 +229,26 @@ export async function readCanonicalPlanningContext(profileId, {
   };
 }
 
+export async function readCanonicalPlanningContext(profileId, options = {}) {
+  const source = options.db || pool;
+  if (typeof source.connect !== "function") {
+    return readCanonicalPlanningContextSnapshot(profileId, { ...options, db: source });
+  }
+
+  const client = await source.connect();
+  try {
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    const snapshot = await readCanonicalPlanningContextSnapshot(profileId, { ...options, db: client });
+    await client.query("COMMIT");
+    return snapshot;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 const assertSessionInsideWeek = (session, start, end) => {
   const date = dateOnly(session.sessionDate ?? session.session_date ?? session.date ?? session.fecha);
   if (!date || date < start || date > end) {
@@ -273,7 +323,16 @@ export async function createPlanningDraft({
   }
 
   return transaction(db, async (client) => {
-    await ownedPlan(client, profileId, planId, { lock: true });
+    const masterPlan = await ownedPlan(client, profileId, planId, { lock: true, requireActive: true });
+    const inputSnapshot = run.inputSnapshot ?? run.input_snapshot ?? {};
+    const { rows: profileRows } = await client.query(
+      `SELECT planning_context_version FROM athlete_profiles WHERE id=$1 FOR SHARE;`,
+      [profileId],
+    );
+    assertSnapshotMatchesState(inputSnapshot, {
+      contextVersion: profileRows[0]?.planning_context_version,
+      structureHash: masterPlan.structure_hash ?? null,
+    });
     const { rows: weekRows } = await client.query(
       `SELECT * FROM training_weeks
         WHERE training_plan_id=$1 AND numero_semana=$2 FOR UPDATE;`, [planId, weekNumber],
@@ -306,7 +365,6 @@ export async function createPlanningDraft({
       if (!bases[0]) throw new PlanningConflictError("La revisión base no pertenece a esta semana", { baseRevisionId });
     }
 
-    const inputSnapshot = run.inputSnapshot ?? run.input_snapshot ?? {};
     const status = run.status || "completed";
     const completedAt = run.completedAt ?? run.completed_at ?? (status === "running" ? null : new Date());
     const validatedOutput = run.validatedOutput ?? run.validated_output ?? null;
@@ -442,9 +500,14 @@ export async function createPlanningDraft({
 
 async function lockedRevision(client, revisionId, profileId) {
   const { rows } = await client.query(
-    `SELECT r.* FROM weekly_plan_revisions r
+    `SELECT r.*, p.activo AS plan_active, p.structure_hash AS current_structure_hash,
+            ap.planning_context_version AS current_context_version,
+            pr.input_snapshot
+       FROM weekly_plan_revisions r
       JOIN training_weeks tw ON tw.id = r.training_week_id
       JOIN training_plans p ON p.id = tw.training_plan_id
+      JOIN athlete_profiles ap ON ap.id = r.athlete_profile_id
+      JOIN planning_runs pr ON pr.id = r.planning_run_id
      WHERE r.id = $1 AND r.athlete_profile_id = $2 AND p.athlete_profile_id = $2
      FOR UPDATE OF r;`,
     [revisionId, profileId],
@@ -473,6 +536,13 @@ export async function acceptWeeklyPlanRevision({ revisionId, profileId, expected
     if (candidate.status !== "draft") {
       throw new PlanningConflictError(`No se puede aceptar una revisión en estado ${candidate.status}`, { status: candidate.status });
     }
+    if (candidate.plan_active !== true) {
+      throw new PlanningConflictError("El plan maestro de esta propuesta ya no está activo. Genera una propuesta nueva.");
+    }
+    assertSnapshotMatchesState(candidate.input_snapshot, {
+      contextVersion: candidate.current_context_version,
+      structureHash: candidate.current_structure_hash ?? null,
+    });
 
     const { rows: activeRows } = await client.query(
       `SELECT * FROM weekly_plan_revisions

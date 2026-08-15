@@ -75,7 +75,7 @@ const PROFILE_FIELDS = Object.freeze([
   "superficie", "exp_fuerza", "equipamiento", "cargas", "tecnica", "estructural",
   "cirugias", "banderas", "momento_entreno", "cross_training", "horas_sueno",
   "calidad_sueno", "estres", "trabajo", "nutricion_objetivo", "suplementos",
-  "reloj", "current_complaints",
+  "reloj", "current_complaints", "planning_context_version",
 ]);
 
 const PLAN_FIELDS = Object.freeze([
@@ -279,7 +279,9 @@ export function buildCanonicalPlannerContext(canonical, input, { now = new Date(
     recovery,
     checkins: feedback,
     injuries: (canonical.injuries || []).map((item) => elegir(item, ["zona", "recurrente", "contexto"])),
-    redFlags: Array.isArray(profile.banderas) ? profile.banderas : [],
+    redFlags: Array.isArray(profile.banderas)
+      ? profile.banderas.filter((flag) => flag && !/^ninguna$/i.test(String(flag).trim()))
+      : [],
     now: today,
     coachRequest: coachRequest || null,
   };
@@ -381,7 +383,10 @@ function runRecord(result, context, diagnostics, { failed = false } = {}) {
     provider: result.provider,
     model: result.model,
     inputSnapshot,
-    inputHash: hashPlanningInput(inputSnapshot),
+    // capturedAt es auditoría temporal, no parte de la identidad del input.
+    // Dos contextos iguales deben producir el mismo hash aunque se ejecuten
+    // en instantes distintos.
+    inputHash: hashPlanningInput({ context }),
     analytics: result.analytics,
     queryPlan: result.queries,
     retrievalDiagnostics: diagnostics,

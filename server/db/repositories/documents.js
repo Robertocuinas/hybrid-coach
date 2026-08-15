@@ -89,6 +89,16 @@ export async function updateDocument(id, datos = {}) {
   return rows[0] || null;
 }
 
+export async function documentHasChunks(id, db = pool) {
+  const { rows } = await db.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM document_chunks WHERE document_id = $1
+     ) AS has_chunks;`,
+    [id],
+  );
+  return rows[0]?.has_chunks === true;
+}
+
 export async function deleteDocument(id) {
   const { rows } = await pool.query(`DELETE FROM documents WHERE id = $1 RETURNING *;`, [id]);
   return rows[0] || null;
@@ -175,6 +185,8 @@ export async function listPendingReview() {
     `SELECT d.*, count(dc.id)::int AS num_chunks
        FROM documents d LEFT JOIN document_chunks dc ON dc.document_id = d.id
       WHERE d.revisado = false
+        AND d.origen = 'pdf'
+        AND EXISTS (SELECT 1 FROM document_chunks present WHERE present.document_id = d.id)
       GROUP BY d.id
       ORDER BY d.created_at DESC;`
   );

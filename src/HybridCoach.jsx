@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { createSyncController } from "./sync.js";
 import {
@@ -10,7 +10,8 @@ import { ejecutarAccion } from "./acciones.js";
 import { BIBLIO_SEED } from "./data/biblioSeed.js";
 import { documentoDesdeAPI, documentoParaAPI } from "./data/documentAdapter.js";
 import {
-  acceptPlanningProposal, createWeekProposal, formatPlanningIntensity, normalizeProposal, proposalSessionsToAssignments, rejectPlanningProposal,
+  acceptPlanningProposal, acceptedProposalToLocalWeek, createWeekProposal, formatPlanningIntensity,
+  getAcceptedWeekPlan, normalizeProposal, proposalSessionsToAssignments, rejectPlanningProposal,
 } from "./planningApi.js";
 
 /* ============================================================
@@ -1389,10 +1390,12 @@ export default function HybridCoach({ user, activeProfile, onLogout }) {
      cada pantalla para que abrir un día en el calendario y saltar a Entrenar
      conserve la fecha en vez de volver a hoy (§16). */
   const [fechaSel, setFechaSel] = useState(() => iso(new Date()));
+  const [planningWeek, setPlanningWeek] = useState(null);
   const [coachAbierto, setCoachAbierto] = useState(false);
   const [toast, setToast] = useState(null);
   const stateKey = `${KEY_PREFIX}:${user.id}`;
   const syncRef = useRef(null);
+  const startupPlanningHydrationRef = useRef(null);
   if (!syncRef.current && typeof window !== "undefined") {
     syncRef.current = createSyncController({ storage: window.localStorage, fetchImpl: window.fetch.bind(window) });
   }
@@ -1435,6 +1438,64 @@ export default function HybridCoach({ user, activeProfile, onLogout }) {
   });
   const notify = (m) => setToast(m);
 
+  /* PostgreSQL es la autoridad de la revisión táctica aceptada. Esta escritura
+     solo reconcilia la caché local: no entra en la cola de dual-write ni vuelve
+     a mutar el servidor como efecto secundario de una lectura. */
+  const hydrateAcceptedWeek = useCallback((profileLocalId, weekNumber, weekStart, proposal) => {
+    if (proposal) acceptedProposalToLocalWeek(proposal, weekStart);
+    setSt((previousState) => {
+      const currentProfile = previousState?.perfiles?.[profileLocalId];
+      if (!currentProfile) return previousState;
+      const currentWeek = currentProfile.weeks?.[weekNumber];
+      if (!proposal && currentWeek?.source !== "ai-rag") return previousState;
+
+      const nextState = {
+        ...previousState,
+        perfiles: { ...previousState.perfiles },
+      };
+      const nextProfile = {
+        ...currentProfile,
+        weeks: { ...(currentProfile.weeks || {}) },
+      };
+      nextState.perfiles[profileLocalId] = nextProfile;
+      if (proposal) {
+        nextProfile.weeks[weekNumber] = acceptedProposalToLocalWeek(proposal, weekStart, currentWeek);
+      } else {
+        delete nextProfile.weeks[weekNumber];
+      }
+      void saveState(stateKey, nextState);
+      return nextState;
+    });
+  }, [stateKey]);
+
+  const startupProfile = st?.perfiles?.[st?.activo] || null;
+  const startupPlanSignature = startupProfile?.plan
+    ? [startupProfile.plan.generado, startupProfile.plan.totalSemanas,
+      startupProfile.plan.semanas?.[0]?.inicio, startupProfile.plan.semanas?.at?.(-1)?.inicio].join(":")
+    : "";
+  useEffect(() => { setPlanningWeek(null); }, [st?.activo, startupPlanSignature]);
+
+  /* Al restaurar una sesión, la vista Hoy también debe recibir la aceptación
+     hecha en otro dispositivo aunque el usuario no abra antes Mi semana. */
+  useEffect(() => {
+    if (!st) return undefined;
+    const startupKey = `${stateKey}:${activeProfile?.id || st.activo || "none"}`;
+    if (startupPlanningHydrationRef.current === startupKey) return undefined;
+    startupPlanningHydrationRef.current = startupKey;
+    const localProfile = st.perfiles?.[st.activo];
+    if (!localProfile?.plan) return undefined;
+    const currentWeek = weekOf(localProfile.plan, today).w;
+    const weekStart = semanaPlan(localProfile.plan, currentWeek).inicio;
+    let cancelled = false;
+    void getAcceptedWeekPlan(currentWeek).then((proposal) => {
+      if (!cancelled) hydrateAcceptedWeek(localProfile.id, currentWeek, weekStart, proposal);
+    }).catch(() => {
+      /* Una lectura fallida nunca borra la copia utilizable. Mi semana vuelve a
+         intentarlo al montarse y cada vez que se cambia de semana. */
+    });
+    return () => { cancelled = true; };
+  }, [activeProfile?.id, hydrateAcceptedWeek, startupPlanSignature, stateKey, st?.activo, today]);
+
   if (!st) return (<div className="hc"><style>{CSS}</style><div className="wrap" style={{ paddingTop: 60 }}><p className="eyebrow">Cargando…</p></div></div>);
 
   const P = st.perfiles[st.activo];
@@ -1442,7 +1503,8 @@ export default function HybridCoach({ user, activeProfile, onLogout }) {
      calendario, la semana y el resumen de hoy. Una sola función evita que cada
      pantalla recuerde poner las dos cosas (§20). */
   const abrirDia = (fecha) => { setFechaSel(fecha); setPantalla(null); setTab("entrenar"); };
-  const ctx = { st, P, update, notify, today, setTab, setPantalla, tab, onLogout, user, fechaSel, setFechaSel, abrirDia };
+  const ctx = { st, P, update, notify, today, setTab, setPantalla, tab, onLogout, user, fechaSel, setFechaSel, abrirDia,
+    hydrateAcceptedWeek, planningWeek, setPlanningWeek };
 
   if (!P) return (<div className="hc"><style>{CSS}</style><div className="wrap"><Bienvenida {...ctx} /></div></div>);
   if (pantalla === "wizard" || !P.plan) return (<div className="hc"><style>{CSS}</style><div className="wrap"><Wizard {...ctx} onClose={() => setPantalla(null)} /></div>{toast && <Toast m={toast} />}</div>);
@@ -1453,12 +1515,14 @@ export default function HybridCoach({ user, activeProfile, onLogout }) {
   /* Lo mínimo para que el coach sepa dónde está el atleta (§12). Solo cuatro
      campos, no el estado de la pantalla: el servidor los filtra por lista
      blanca y de ahí no puede salir texto arbitrario hacia el prompt. */
-  const diaMirado = tab === "entrenar" ? (fechaSel || today) : today;
+  const semanaMirada = tab === "semana" ? clamp(planningWeek || curW, 1, P.plan.totalSemanas) : weekOf(P.plan, today).w;
+  const diaMirado = tab === "entrenar" ? (fechaSel || today)
+    : tab === "semana" ? semanaPlan(P.plan, semanaMirada).inicio : today;
   const contextoPantalla = {
     vista: pantalla || tab,
     fecha: diaMirado,
     sesion: sesionDeFecha(P, diaMirado).code || null,
-    semana: weekOf(P.plan, diaMirado).w,
+    semana: tab === "semana" ? semanaMirada : weekOf(P.plan, diaMirado).w,
   };
 
   return (
@@ -1842,9 +1906,10 @@ function Semana(ctx) {
   </div>);
 }
 
-function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia }) {
+function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia,
+  hydrateAcceptedWeek, planningWeek, setPlanningWeek }) {
   const plan = P.plan, perfil = P.perfil;
-  const [w, setW] = useState(curW);
+  const [w, setW] = useState(() => clamp(planningWeek || curW, 1, plan.totalSemanas));
   const saved = P.weeks[w];
   const yaProgramada = !!saved?.assign?.length;
   const [sel, setSel] = useState(saved ? saved.assign.map((a) => a.day) : (perfil.dias || [0, 1, 3, 4, 6]));
@@ -1853,14 +1918,36 @@ function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia }
   const [draft, setDraft] = useState(null);
   const [planningBusy, setPlanningBusy] = useState("");
   const [planningError, setPlanningError] = useState("");
+  const [planningSyncWarning, setPlanningSyncWarning] = useState("");
   /* Con una semana ya activa el panel de disponibilidad arranca cerrado: lo que
      importa al entrar es ver qué toca, no volver a configurarla (§2). */
   const [reconfig, setReconfig] = useState(!yaProgramada);
+  const visibleWeekStart = semanaPlan(plan, w).inicio;
+  useEffect(() => { setPlanningWeek(w); }, [setPlanningWeek, w]);
   useEffect(() => {
-    const s = P.weeks[w];
-    setSel(s ? s.assign.map((a) => a.day) : (perfil.dias || [0, 1, 3, 4, 6]));
-    setDraft(null); setPlanningError(""); setPlanningBusy(""); setReconfig(!s?.assign?.length);
-  }, [w]);
+    const localWeek = P.weeks[w];
+    setSel(localWeek?.assign ? localWeek.assign.map((a) => a.day) : (perfil.dias || [0, 1, 3, 4, 6]));
+    setDraft(null); setPlanningError(""); setPlanningSyncWarning(""); setPlanningBusy("hydrate");
+    setReconfig(!localWeek?.assign?.length);
+    let cancelled = false;
+    void getAcceptedWeekPlan(w).then((proposal) => {
+      if (cancelled) return;
+      hydrateAcceptedWeek(P.id, w, visibleWeekStart, proposal);
+      if (proposal) {
+        const assignments = proposalSessionsToAssignments(proposal.sessions, visibleWeekStart);
+        setSel(assignments.map((item) => item.day));
+        setReconfig(false);
+      } else if (localWeek?.source === "ai-rag") {
+        setSel(perfil.dias || [0, 1, 3, 4, 6]);
+        setReconfig(true);
+      }
+    }).catch(() => {
+      if (!cancelled) setPlanningSyncWarning("No se pudo confirmar ahora la revisión aceptada en el servidor; se conserva la copia local.");
+    }).finally(() => {
+      if (!cancelled) setPlanningBusy("");
+    });
+    return () => { cancelled = true; };
+  }, [hydrateAcceptedWeek, P.id, visibleWeekStart, w]);
 
   const gen = async () => {
     if (!sel.length) return notify("Marca al menos un día disponible.");
@@ -1941,6 +2028,8 @@ function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia }
         <div className="xs muted mono">{sp.inicio} → {addDays(sp.inicio, 6)}</div></div>
       <button className="btn sm ghost" disabled={w >= plan.totalSemanas} onClick={() => setW(w + 1)}>▶</button>
     </div>
+    {planningBusy === "hydrate" && <p className="xs muted" aria-live="polite">Comprobando la semana aceptada…</p>}
+    {planningSyncWarning && <p className="xs" style={{ color: "var(--gym)" }}>{planningSyncWarning}</p>}
 
     {/* Estado de la programación. Con semana activa el acento va al progreso,
         y regenerar pasa a ser una acción secundaria (§2). */}
@@ -2494,8 +2583,10 @@ function descripcionAccion(accion) {
   return "Aplicar el cambio propuesto.";
 }
 
-function Coach({ P, curW, today, update, notify, setPantalla, setTab, modo = "tab", pantalla = null, onCerrar = null }) {
+function Coach({ P, curW, today, update, notify, setPantalla, setTab, hydrateAcceptedWeek,
+  planningWeek, setPlanningWeek, modo = "tab", pantalla = null, onCerrar = null }) {
   const esPanel = modo === "panel";
+  const targetWeek = clamp(Number(pantalla?.semana || planningWeek || curW), 1, P.plan.totalSemanas);
   const [msgs, setMsgs] = useState([]);
   const [convId, setConvId] = useState(null);      // conversación viva en el servidor
   const [historial, setHistorial] = useState([]);
@@ -2525,6 +2616,7 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab, modo = "ta
     update, hoy: today,
     detalle: (w, code) => { try { return sessionDetail(P.plan, P.perfil, w, code, P); } catch { return null; } },
     semanaDe: (fecha) => weekOf(P.plan, fecha || today).w,
+    semanaObjetivo: targetWeek,
   };
 
   /* Confirmar una acción de nivel "confirmacion": es el ACEPTAR de §16. */
@@ -2537,6 +2629,30 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab, modo = "ta
     const resultado = await ejecutarAccion(m.accion, P, depsAccion);
     setMsgs((c) => c.map((x, j) => (j === i ? { ...x, accionPendiente: false, resultado } : x)));
     notify(resultado.ok ? resultado.mensaje : "No se pudo aplicar: " + resultado.mensaje);
+  };
+
+  const resolverPropuestaSemanal = async (i, aceptar) => {
+    const propuesta = msgs[i]?.resultado?.resumen?.propuesta;
+    if (!propuesta) return;
+    setResolviendo(i);
+    try {
+      const result = aceptar
+        ? await acceptPlanningProposal(propuesta.id, propuesta.revisionNumber)
+        : await rejectPlanningProposal(propuesta.id, propuesta.revisionNumber);
+      if (aceptar) {
+        const accepted = normalizeProposal(result);
+        const weekNumber = clamp(Number(accepted.weekNumber || msgs[i]?.resultado?.resumen?.semana || targetWeek), 1, P.plan.totalSemanas);
+        const weekStart = semanaPlan(P.plan, weekNumber).inicio;
+        hydrateAcceptedWeek(P.id, weekNumber, weekStart, accepted);
+        setPlanningWeek?.(weekNumber);
+      }
+      setMsgs((current) => current.map((message, index) => index === i
+        ? { ...message, propuestaSemanalResuelta: aceptar ? "accepted" : "rejected" }
+        : message));
+      notify(aceptar ? "✓ Semana aceptada y sincronizada con el servidor." : "Propuesta semanal rechazada.");
+    } catch (error) {
+      notify("No se pudo resolver la propuesta semanal: " + (error.message || String(error)) + ". El plan activo no ha cambiado.");
+    } finally { setResolviendo(null); }
   };
 
   const nueva = () => { setVerId(null); setConvId(null); setMsgs([]); setQ(""); setDrawer(null); };
@@ -2580,7 +2696,7 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab, modo = "ta
       const data = await api("/api/coach/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          consulta: content, conversationId: enHistorial ? null : convId, weekNumber: curW,
+          consulta: content, conversationId: enHistorial ? null : convId, weekNumber: targetWeek,
           /* Dónde estaba el atleta al escribir: permite que "esto" o "hoy" se
              refieran a lo que tiene delante (§12). El servidor lo filtra por
              lista blanca, así que no es una vía para inyectar en el prompt. */
@@ -2629,7 +2745,7 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab, modo = "ta
             const candidate = result?.proposal || result;
             if (Array.isArray(candidate?.sessions)) {
               const proposal = normalizeProposal(result);
-              const weekNumber = +(proposal.weekNumber || proposal.week_number || proposal.week?.number || m.cambio?.semana || curW);
+              const weekNumber = +(proposal.weekNumber || proposal.week_number || proposal.week?.number || m.cambio?.semana || targetWeek);
               const weekPlan = semanaPlan(P.plan, weekNumber);
               acceptedWeek = { proposal, weekNumber, assign: proposalSessionsToAssignments(proposal.sessions, weekPlan.inicio) };
             }
@@ -2649,7 +2765,7 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab, modo = "ta
           return s; });
       } else if (accept && !proposalId) {
         update((s) => { const p = s.perfiles[P.id];
-          p.changes.push({ fecha: today, semana: curW, plan_original: m.cambio.de, cambio: m.cambio.tipo + " → " + (m.cambio.a || "-") + " (" + (m.cambio.dia || "") + ")", motivo: m.cambio.motivo, datos: "Propuesto por el coach · flujo legacy" });
+          p.changes.push({ fecha: today, semana: targetWeek, plan_original: m.cambio.de, cambio: m.cambio.tipo + " → " + (m.cambio.a || "-") + " (" + (m.cambio.dia || "") + ")", motivo: m.cambio.motivo, datos: "Propuesto por el coach · flujo legacy" });
           return s; });
       }
       notify(accept ? (acceptedWeek ? "✓ Cambio aceptado y semana local actualizada." : proposalId ? "✓ Cambio aceptado en el servidor." : "✓ Cambio legacy aceptado y registrado.") : "Cambio rechazado.");
@@ -2727,6 +2843,25 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab, modo = "ta
             <p className="xs muted" style={{ margin: "6px 0 0" }}>{m.resultado.resumen.desc}</p>)}
         </div>)}
 
+      {m.resultado?.ok && m.resultado.resumen?.tipo === "propuesta-semana" && (() => {
+        const propuesta = m.resultado.resumen.propuesta;
+        const estado = m.propuestaSemanalResuelta;
+        return (<div className="card" style={{ borderColor: "#4E4483" }}>
+          <span className="tag evid">Propuesta semanal · {estado === "accepted" ? "aceptada" : estado === "rejected" ? "rechazada" : "sin aceptar"}</span>
+          <p className="sm" style={{ margin: "8px 0 4px" }}><strong>Semana {propuesta.weekNumber || m.resultado.resumen.semana}</strong> · {propuesta.summary}</p>
+          <p className="xs muted" style={{ margin: "0 0 8px" }}>Evidencia: {propuesta.evidenceState} · {(propuesta.sessions || []).length} sesiones</p>
+          {(propuesta.sessions || []).map((session, sessionIndex) => (
+            <p key={session.session_key || session.id || sessionIndex} className="xs" style={{ margin: "3px 0" }}>
+              {DSHORT[Number(session.day_of_week ?? session.day)] || "Día"} · <strong>{session.session_code || session.master_session_code || session.code}</strong> · {session.title || session.objective || "Sesión propuesta"}
+            </p>
+          ))}
+          {!estado && <div className="row" style={{ marginTop: 10 }} aria-busy={resolviendo === i}>
+            <button className="btn primary sm" style={{ flex: 1 }} disabled={resolviendo !== null} onClick={() => resolverPropuestaSemanal(i, true)}>{resolviendo === i ? "Resolviendo…" : "Aceptar semana"}</button>
+            <button className="btn ghost sm" style={{ flex: 1 }} disabled={resolviendo !== null} onClick={() => resolverPropuestaSemanal(i, false)}>Rechazar</button>
+          </div>}
+        </div>);
+      })()}
+
       {/* Acción que cambia algo importante: se propone y espera (§15, §16). */}
       {m.accionPendiente && !abierta && (<div className="accion pendiente">
         <span className="tag gym">Requiere tu confirmación</span>
@@ -2774,7 +2909,7 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab, modo = "ta
   return (<div>
     <div className="between" style={{ marginTop: 8 }}>
       <div>
-        <p className="eyebrow" style={{ margin: 0 }}>Semana {curW} · {daysBetween(today, P.perfil.fechaCarrera)} días para la carrera</p>
+        <p className="eyebrow" style={{ margin: 0 }}>Semana {targetWeek} · {daysBetween(today, P.perfil.fechaCarrera)} días para la carrera</p>
         <h1>Coach</h1>
       </div>
       {/* En escritorio las columnas están siempre visibles y estos botones

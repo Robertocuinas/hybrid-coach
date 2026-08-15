@@ -23,4 +23,10 @@ test("adapta una edición del frontend al contrato de escritura API", () => {
   assert.equal(body.fuenteRevista, "Revista");
   assert.equal(body.temaPrincipal, "Fuerza");
   assert.equal(body.doi, null);
+  assert.equal(body.revisado, false, "una ficha manual sin chunks no puede activarse como evidencia");
+});
+
+test("solo una ficha PDF persistida puede pedir confirmación humana", () => {
+  assert.equal(documentoParaAPI({ _dbId: "doc-1", origen: "pdf", titulo: "Paper" }).revisado, true);
+  assert.equal(documentoParaAPI({ origen: "pdf", titulo: "Importación local" }).revisado, false);
 });

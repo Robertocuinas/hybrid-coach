@@ -50,7 +50,9 @@ export function buildSeedDocuments() {
     limites: ref.limites || null,
     aplicacion_practica: ref.aplicacion || null,
     origen: "semilla",
-    revisado: true,
+    // Son fichas de catálogo heredadas, no texto verificable. Sin chunks del
+    // documento original nunca pueden funcionar como evidencia citable.
+    revisado: false,
   }));
 }
 

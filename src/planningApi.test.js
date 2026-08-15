@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  acceptPlanningProposal, createWeekProposal, normalizeProposal,
+  acceptPlanningProposal, acceptedProposalToLocalWeek, createWeekProposal, getAcceptedWeekPlan, normalizeProposal,
   formatPlanningIntensity, proposalSessionsToAssignments, rejectPlanningProposal,
 } from "./planningApi.js";
 
@@ -21,6 +21,43 @@ test("crea y normaliza una propuesta semanal", async () => {
   assert.equal(proposal.id, "42");
   assert.equal(proposal.evidenceState, "limited");
   assert.equal(proposal.summary, "Semana conservadora");
+});
+
+test("consulta la revisión aceptada de la semana y admite que todavía no exista", async () => {
+  const calls = [];
+  const accepted = await getAcceptedWeekPlan(4, async (url, options) => {
+    calls.push([url, options]);
+    return response({ proposal: {
+      id: "rev-accepted", status: "accepted", revision: 2, weekNumber: 4,
+      weekStart: "2026-08-31", sessions: [{ day_of_week: 1, session_code: "GYM A" }],
+    } });
+  });
+  assert.equal(calls[0][0], "/api/planning/weeks/4/accepted");
+  assert.equal(calls[0][1].method, "GET");
+  assert.equal(accepted.id, "rev-accepted");
+  assert.equal(accepted.status, "accepted");
+
+  const empty = await getAcceptedWeekPlan(5, async () => response({ ok: true, proposal: null }));
+  assert.equal(empty, null);
+});
+
+test("hidrata la prescripción aceptada sin perder el progreso local", () => {
+  const local = acceptedProposalToLocalWeek({
+    id: "rev-accepted", status: "accepted", revision: 2, weekNumber: 1,
+    weekStart: "2026-08-10", acceptedAt: "2026-08-09T19:20:00.000Z",
+    summary: "Carga ajustada", evidenceState: "sufficient",
+    sessions: [{ day_of_week: 2, session_code: "RUN B", title: "Tempo" }],
+    warnings: [], citations: [{ chunkId: "chunk-1" }],
+  }, "2026-08-10", { done: ["GYM A"], notes: ["Conservar"] });
+
+  assert.deepEqual(local.assign, [{ day: 2, code: "RUN B" }]);
+  assert.deepEqual(local.done, ["GYM A"]);
+  assert.deepEqual(local.notes, ["Conservar"]);
+  assert.equal(local.proposalId, "rev-accepted");
+  assert.equal(local.generated, "2026-08-09");
+  assert.throws(() => acceptedProposalToLocalWeek({
+    id: "old", status: "accepted", weekStart: "2026-08-03", sessions: [],
+  }, "2026-08-10"), /otra versión del plan maestro/);
 });
 
 test("materializa sesiones por indice, nombre o fecha", () => {

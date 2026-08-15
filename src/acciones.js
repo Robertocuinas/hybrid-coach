@@ -89,8 +89,8 @@ export function actualizarPerfil(P, { campos }, { update }) {
    que la pantalla de planificación. La propuesta llega con su id, su resumen,
    su estado de evidencia y sus citas, y se acepta o rechaza con
    acceptPlanningProposal(), igual que desde la interfaz. */
-export async function proponerSemana(P, params, { semanaDe }) {
-  const semana = params.semana || semanaDe(params.hoy);
+export async function proponerSemana(P, params, { semanaDe, semanaObjetivo = null }) {
+  const semana = params.semana || semanaObjetivo || semanaDe(params.hoy);
   const propuesta = await createWeekProposal(semana, {
     availableDays: params.dias,
     gym: params.gimnasio !== false,

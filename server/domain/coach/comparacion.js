@@ -85,7 +85,9 @@ export async function compararSistemas(profileId, preguntas, deps) {
   const { rows: fichas } = await db.query(
     `SELECT id, titulo, autores, anio, fuente_revista, tema_principal, tags, resumen,
             aplicacion_practica, poblacion, evidence_grade
-       FROM documents WHERE revisado = true;`
+       FROM documents d
+      WHERE d.revisado = true
+        AND EXISTS (SELECT 1 FROM document_chunks dc WHERE dc.document_id = d.id);`
   );
 
   const resultados = [];

@@ -12,11 +12,11 @@ const canonical = () => ({
   profile: {
     id: "profile-private", user_id: "user-private", nombre: "Nombre privado",
     distancia_objetivo: "Media maratón", fecha_carrera: "2026-10-18",
-    prioridades: ["Rendimiento"], banderas: [], current_complaints: [],
+    prioridades: ["Rendimiento"], banderas: [], current_complaints: [], planning_context_version: 0,
   },
   injuries: [],
   availability: { dias: [0, 1, 3, 5], vigente_desde: "2026-08-01", min_gym: 45, min_run: 40, min_finde: 90 },
-  masterPlan: { id: "plan-1", version: 1, distancia_objetivo: "Media maratón", total_semanas: 12, techo_tirada_larga_min: 90 },
+  masterPlan: { id: "plan-1", version: 1, distancia_objetivo: "Media maratón", total_semanas: 12, techo_tirada_larga_min: 90, structure_hash: "a".repeat(64) },
   masterWeeks: [{
     id: "week-1", numero_semana: 3, inicio: "2026-08-17", fase: "Construcción",
     sessions: [
@@ -125,4 +125,3 @@ test("el Coach viaja como petición no confiable y el DTO solo expone evidencia 
   assert.equal(dto.proposal.citations[0].text, "Fragmento");
   assert.equal(Object.hasOwn(dto.proposal, "validated_output"), false);
 });
-

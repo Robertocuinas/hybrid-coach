@@ -8,7 +8,7 @@ import { setNutritionTarget, listNutritionTargets, addMealOption, listMealCatalo
 import { requireAuth } from "../middleware/auth.js";
 import { requireActiveProfile, ownedProfile, requireAdmin } from "../middleware/authorization.js";
 import { assertPlanInput } from "../domain/training/index.js";
-import { createDocument, deleteDocument, listDocumentsPaginated, updateDocument } from "../db/repositories/documents.js";
+import { createDocument, deleteDocument, documentHasChunks, listDocumentsPaginated, updateDocument } from "../db/repositories/documents.js";
 
 const router = express.Router();
 router.use(requireAuth);
@@ -135,7 +135,7 @@ router.post("/documents", requireAdmin, async (req, res, next) => { try {
   const data = documentFields(req.body);
   const invalid = invalidDocumentInput(data, { requireTitle: true });
   if (invalid) return res.status(400).json({ ok: false, message: invalid });
-  const document = await createDocument({ ...data, origen: data.origen || "manual", revisado: data.revisado ?? true, subidoPor: req.auth.userId });
+  const document = await createDocument({ ...data, origen: data.origen || "manual", revisado: false, subidoPor: req.auth.userId });
   res.status(201).json({ ok: true, document });
 } catch (e) { next(e); } });
 
@@ -143,6 +143,12 @@ router.patch("/documents/:id", requireAdmin, async (req, res, next) => { try {
   const data = documentFields(req.body);
   const invalid = invalidDocumentInput(data);
   if (invalid) return res.status(400).json({ ok: false, message: invalid });
+  if (data.revisado === true && !(await documentHasChunks(req.params.id))) {
+    return res.status(409).json({
+      ok: false,
+      message: "Una ficha sin fragmentos del documento original no puede activarse como evidencia.",
+    });
+  }
   const document = await updateDocument(req.params.id, data);
   if (!document) return res.status(404).json({ ok: false, message: "Documento no encontrado" });
   res.json({ ok: true, document });

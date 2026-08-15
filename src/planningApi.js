@@ -102,6 +102,18 @@ export async function createWeekProposal(week, input, fetchImpl) {
   return normalizeProposal(data);
 }
 
+export async function getAcceptedWeekPlan(week, fetchImpl) {
+  const data = await requestPlanning(`/api/planning/weeks/${encodeURIComponent(week)}/accepted`, {
+    method: "GET",
+  }, fetchImpl);
+  if (data === null || data?.proposal === null) return null;
+  const proposal = normalizeProposal(data);
+  if (proposal.status !== "accepted") {
+    throw new PlanningApiError("El servidor no devolvió una revisión semanal aceptada.", { code: "INVALID_ACCEPTED_PROPOSAL" });
+  }
+  return proposal;
+}
+
 export async function resolvePlanningProposal(id, action, expectedRevisionOrFetch, maybeFetchImpl) {
   if (!id || !["accept", "reject"].includes(action)) {
     throw new PlanningApiError("Acción de propuesta no válida.", { code: "INVALID_PROPOSAL_ACTION" });
@@ -190,4 +202,30 @@ export function proposalSessionsToAssignments(sessions, weekStart) {
     codes.add(assignment.code);
   }
   return assignments.sort((a, b) => a.day - b.day);
+}
+
+/** Proyección local de una revisión aceptada. Conserva exclusivamente el
+ * progreso que pertenece al dispositivo; la prescripción procede del servidor. */
+export function acceptedProposalToLocalWeek(proposalValue, weekStart, previous = {}) {
+  const proposal = normalizeProposal(proposalValue);
+  if (proposal.status !== "accepted") {
+    throw new PlanningApiError("Solo se puede hidratar una revisión aceptada.", { code: "PROPOSAL_NOT_ACCEPTED" });
+  }
+  if (proposal.weekStart && String(proposal.weekStart).slice(0, 10) !== String(weekStart).slice(0, 10)) {
+    throw new PlanningApiError("La revisión aceptada pertenece a otra versión del plan maestro.", { code: "MASTER_PLAN_MISMATCH" });
+  }
+  const acceptedAt = proposal.acceptedAt || proposal.accepted_at || null;
+  return {
+    assign: proposalSessionsToAssignments(proposal.sessions, weekStart),
+    done: Array.isArray(previous?.done) ? previous.done : [],
+    notes: Array.isArray(previous?.notes) ? previous.notes : [],
+    generated: acceptedAt ? String(acceptedAt).slice(0, 10) : (previous?.generated || null),
+    source: "ai-rag",
+    proposalId: proposal.id,
+    summary: proposal.summary,
+    evidenceState: proposal.evidenceState,
+    warnings: proposal.warnings || [],
+    citations: proposal.citations || [],
+    sessions: proposal.sessions,
+  };
 }

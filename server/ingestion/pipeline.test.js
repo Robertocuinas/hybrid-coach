@@ -111,7 +111,7 @@ async function baseDeDatosConEmbeddings() {
   return db;
 }
 
-test("un PDF con ficha completa entra ya disponible, con chunks y original en el almacén", async () => {
+test("un PDF con ficha completa entra pendiente de revisión humana, con chunks y original", async () => {
   const db = await baseDeDatos();
   const storage = almacenFalso();
   const resultado = await ingerirPDF(PDF_MINIMO, {
@@ -122,8 +122,9 @@ test("un PDF con ficha completa entra ya disponible, con chunks y original en el
   const { rows } = await db.query(`SELECT * FROM documents;`);
   assert.equal(rows.length, 1);
   const doc = rows[0];
-  assert.equal(doc.revisado, true, "con título, autores, año, tipo y grado no hace falta revisión previa");
-  assert.equal(resultado.faltaRevision, null);
+  assert.equal(doc.revisado, false, "la ficha del LLM nunca sustituye la revisión humana");
+  assert.deepEqual(resultado.faltaRevision, []);
+  assert.equal(resultado.requiereRevisionHumana, true);
   assert.equal(doc.origen, "pdf");
   assert.equal(doc.study_type, "meta_analysis");
   assert.equal(doc.population_type, "runners");

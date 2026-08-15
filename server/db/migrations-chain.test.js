@@ -9,6 +9,7 @@ const migrationFiles = [
   "0004_document_legacy_id.js", "0005_embeddings_index.js", "0006_citations_ui.js",
   "0007_integrity_hardening.js", "0008_user_ai_settings.js",
   "0009_instance_embedding_settings.js", "0010_weekly_planning.js",
+  "0011_planning_and_evidence_integrity.js",
 ];
 
 const baseMigrada = async () => {
@@ -31,11 +32,13 @@ test("las migraciones se aplican en orden sobre una base vacía", async () => {
     EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='instance_embedding_settings') AS embedding_settings,
     EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='planning_runs') AS planning_runs,
     EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='weekly_plan_revisions') AS weekly_revisions,
-    EXISTS (SELECT 1 FROM pg_indexes WHERE indexname='idx_weekly_plan_one_accepted') AS one_weekly_accepted`);
+    EXISTS (SELECT 1 FROM pg_indexes WHERE indexname='idx_weekly_plan_one_accepted') AS one_weekly_accepted,
+    EXISTS (SELECT 1 FROM information_schema.columns
+      WHERE table_name='athlete_profiles' AND column_name='planning_context_version') AS planning_context_version`);
   assert.deepEqual(result.rows[0], {
     state_time: true, one_active: true, role_check: true, ai_settings: true,
     embedding_settings: true, planning_runs: true, weekly_revisions: true,
-    one_weekly_accepted: true,
+    one_weekly_accepted: true, planning_context_version: true,
   });
   await db.close();
 });
@@ -77,7 +80,7 @@ test("solo se aceptan proveedores de embeddings que el código sabe instanciar",
 test("0010 deduplica sesiones maestras antes de imponer la clave estable", async () => {
   const db = new PGlite({ extensions: { vector, pgcrypto } });
   const pgm = { sql: (statement) => db.exec(statement) };
-  for (const file of migrationFiles.slice(0, -1)) {
+  for (const file of migrationFiles.slice(0, migrationFiles.indexOf("0010_weekly_planning.js"))) {
     const migration = await import(`./migrations/${file}`);
     await migration.up(pgm);
   }
@@ -105,5 +108,66 @@ test("0010 deduplica sesiones maestras antes de imponer la clave estable", async
     () => db.query(`INSERT INTO planned_sessions(training_week_id,dia_semana,codigo_sesion) VALUES($1,3,'RUN A');`, [weeks[0].id]),
     /unique|duplicate/i,
   );
+  await db.close();
+});
+
+test("0011 desactiva evidencia no confirmable y versiona cambios del contexto", async () => {
+  const db = new PGlite({ extensions: { vector, pgcrypto } });
+  const pgm = { sql: (statement) => db.exec(statement) };
+  const cutoff = migrationFiles.indexOf("0011_planning_and_evidence_integrity.js");
+  for (const file of migrationFiles.slice(0, cutoff)) {
+    const migration = await import("./migrations/" + file);
+    await migration.up(pgm);
+  }
+  const users = await db.query("INSERT INTO users(email) VALUES('integrity@test') RETURNING id;");
+  const profiles = await db.query(
+    "INSERT INTO athlete_profiles(user_id) VALUES($1) RETURNING id;",
+    [users.rows[0].id],
+  );
+  const pdf = await db.query(
+    "INSERT INTO documents(titulo,origen,revisado) VALUES('PDF autoaprobado','pdf',true) RETURNING id;",
+  );
+  await db.query(
+    "INSERT INTO document_chunks(document_id,chunk_index,seccion,texto) VALUES($1,0,'results','Texto verificable');",
+    [pdf.rows[0].id],
+  );
+  const manual = await db.query(
+    "INSERT INTO documents(titulo,origen,revisado) VALUES('Ficha sola','manual',true) RETURNING id;",
+  );
+
+  const migration = await import("./migrations/0011_planning_and_evidence_integrity.js");
+  await migration.up(pgm);
+  const reviewState = await db.query("SELECT titulo,revisado FROM documents ORDER BY titulo;");
+  assert.deepEqual(reviewState.rows, [
+    { titulo: "Ficha sola", revisado: false },
+    { titulo: "PDF autoaprobado", revisado: false },
+  ]);
+  await assert.rejects(
+    () => db.query("UPDATE documents SET revisado=true WHERE id=$1;", [manual.rows[0].id]),
+    /sin fragmentos|23514/i,
+  );
+  await db.query(
+    "INSERT INTO document_chunks(document_id,chunk_index,seccion,texto) VALUES($1,0,'abstract','Texto real');",
+    [manual.rows[0].id],
+  );
+  await db.query("UPDATE documents SET revisado=true WHERE id=$1;", [manual.rows[0].id]);
+  await db.query("DELETE FROM document_chunks WHERE document_id=$1;", [manual.rows[0].id]);
+  const afterDelete = await db.query("SELECT revisado FROM documents WHERE id=$1;", [manual.rows[0].id]);
+  assert.equal(afterDelete.rows[0].revisado, false);
+
+  const before = await db.query(
+    "SELECT planning_context_version FROM athlete_profiles WHERE id=$1;",
+    [profiles.rows[0].id],
+  );
+  assert.equal(Number(before.rows[0].planning_context_version), 0);
+  await db.query(
+    "INSERT INTO feedback_logs(athlete_profile_id,fecha,dolor) VALUES($1,'2026-08-14',3);",
+    [profiles.rows[0].id],
+  );
+  const after = await db.query(
+    "SELECT planning_context_version FROM athlete_profiles WHERE id=$1;",
+    [profiles.rows[0].id],
+  );
+  assert.equal(Number(after.rows[0].planning_context_version), 1);
   await db.close();
 });
