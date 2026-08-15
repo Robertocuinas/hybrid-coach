@@ -1,4 +1,5 @@
 import { pool, insertRow } from "./_helpers.js";
+import { nombreCanonico } from "../../integrations/exercises/types.js";
 
 export function createCompletedSession(profileId, { plannedSessionId = null, fecha, tipo, semana }, db = pool) {
   return insertRow("completed_sessions", {
@@ -63,18 +64,52 @@ export async function lastSetForExercise(exerciseId) {
   return rows[0] || null;
 }
 
-export async function findOrCreateExercise({ nombre, grupoMuscular = null, patron = null, incrementoKgDefault = null, profileId = null }, db = pool) {
+/* Resolución de identidad en tres pasos, del más fiable al más laxo:
+
+     1. (provider, external_id) — la identidad del catálogo de origen.
+     2. canonical_name          — nombre normalizado, para los propios.
+     3. crear.
+
+   El paso 2 es lo que impide que "Press banca", "Press Banca" y "press-banca"
+   acaben siendo tres ejercicios con tres historiales de carga separados, que
+   es lo que ocurría comparando `nombre` en crudo. */
+export async function findOrCreateExercise({
+  nombre, grupoMuscular = null, patron = null, incrementoKgDefault = null, profileId = null,
+  provider = "custom", externalId = null, target = null, secundarios = null,
+  equipamiento = null, bodyPart = null, media = null,
+}, db = pool) {
+  if (externalId) {
+    const { rows } = await db.query(
+      `SELECT * FROM strength_exercises WHERE provider = $1 AND external_id = $2;`,
+      [provider, externalId]
+    );
+    if (rows[0]) return rows[0];
+  }
+
+  const canonico = nombreCanonico(nombre);
   const { rows } = await db.query(
-    `SELECT * FROM strength_exercises WHERE nombre = $1 AND athlete_profile_id IS NOT DISTINCT FROM $2;`,
-    [nombre, profileId]
+    `SELECT * FROM strength_exercises
+      WHERE canonical_name = $1 AND athlete_profile_id IS NOT DISTINCT FROM $2
+      ORDER BY external_id NULLS LAST LIMIT 1;`,
+    [canonico, profileId]
   );
   if (rows[0]) return rows[0];
+
   return insertRow("strength_exercises", {
     nombre,
+    canonical_name: canonico,
+    provider,
+    external_id: externalId,
     grupo_muscular: grupoMuscular,
     patron,
     incremento_kg_default: incrementoKgDefault,
     athlete_profile_id: profileId,
+    target,
+    secondary_muscles: secundarios,
+    equipment: equipamiento,
+    body_part: bodyPart,
+    media_url: media,
+    last_synced: externalId ? new Date() : null,
   }, "*", db);
 }
 

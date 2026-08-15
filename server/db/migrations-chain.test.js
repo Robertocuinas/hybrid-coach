@@ -9,7 +9,7 @@ const migrationFiles = [
   "0004_document_legacy_id.js", "0005_embeddings_index.js", "0006_citations_ui.js",
   "0007_integrity_hardening.js", "0008_user_ai_settings.js",
   "0009_instance_embedding_settings.js", "0010_weekly_planning.js",
-  "0011_planning_and_evidence_integrity.js",
+  "0011_planning_and_evidence_integrity.js", "0012_exercise_identity.js",
 ];
 
 const baseMigrada = async () => {
@@ -47,6 +47,58 @@ test("las migraciones se aplican en orden sobre una base vacía", async () => {
    dos filas significarían dos modelos vectorizando la misma biblioteca, y el
    retrieval solo ve el índice activo. La restricción lo hace imposible desde
    la propia base de datos, no solo desde el código que escribe. */
+/* La identidad externa es lo que impide importar dos veces el mismo ejercicio
+   del catálogo. Los propios no llevan external_id y no quedan afectados. */
+test("un ejercicio externo no se puede duplicar, y los propios no se estorban", async () => {
+  const db = await baseMigrada();
+
+  await db.query(`INSERT INTO strength_exercises (nombre, canonical_name, provider, external_id)
+                  VALUES ('Barbell Bench Press', 'barbell bench press', 'exercisedb', 'abc123');`);
+
+  await assert.rejects(
+    () => db.query(`INSERT INTO strength_exercises (nombre, canonical_name, provider, external_id)
+                    VALUES ('Bench Press', 'bench press', 'exercisedb', 'abc123');`),
+    /duplicate key|unique/i,
+    "el mismo external_id no puede entrar dos veces",
+  );
+
+  /* Varios ejercicios propios conviven sin external_id: el índice único no
+     los alcanza porque PostgreSQL no compara NULL entre sí. */
+  await db.query(`INSERT INTO strength_exercises (nombre, canonical_name, provider)
+                  VALUES ('Press banca', 'press banca', 'custom'), ('Sentadilla', 'sentadilla', 'custom');`);
+
+  const total = await db.query(`SELECT count(*)::int AS n FROM strength_exercises;`);
+  assert.equal(total.rows[0].n, 3);
+  await db.close();
+});
+
+/* El relleno de la migración debe dejar los nombres ya normalizados: si no,
+   el primer registro de un ejercicio existente crearía un duplicado. */
+test("la migración normaliza el nombre de los ejercicios que ya existían", async () => {
+  const db = new PGlite({ extensions: { vector, pgcrypto } });
+  const pgm = { sql: (statement) => db.exec(statement) };
+  for (const file of migrationFiles.slice(0, migrationFiles.indexOf("0012_exercise_identity.js"))) {
+    await (await import(`./migrations/${file}`)).up(pgm);
+  }
+  await db.query(`INSERT INTO strength_exercises (nombre) VALUES ('Elevación de gemelo SENTADO'), ('  Press-Banca  ');`);
+
+  await (await import("./migrations/0012_exercise_identity.js")).up(pgm);
+
+  const { rows } = await db.query(`SELECT canonical_name, provider FROM strength_exercises ORDER BY canonical_name;`);
+  assert.deepEqual(rows.map((r) => r.canonical_name), ["elevacion de gemelo sentado", "press banca"]);
+  assert.ok(rows.every((r) => r.provider === "custom"), "lo que ya existía es del atleta");
+  await db.close();
+});
+
+test("un proveedor de ejercicios desconocido se rechaza en la base", async () => {
+  const db = await baseMigrada();
+  await assert.rejects(
+    () => db.query(`INSERT INTO strength_exercises (nombre, provider) VALUES ('X', 'inventado');`),
+    /provider_check/,
+  );
+  await db.close();
+});
+
 test("la configuración de embeddings no admite una segunda fila", async () => {
   const db = await baseMigrada();
   await db.query(`INSERT INTO instance_embedding_settings (provider, model) VALUES ('voyage', 'voyage-3');`);
