@@ -2380,6 +2380,110 @@ function RunForm({ st, P, update, notify, curW, today, sug, onTerminado }) {
    que se enseña como referencia. Se busca dentro de la misma rutina, porque el
    mismo ejercicio puede ir a cargas distintas según la sesión. */
 
+/* Sustitución de un ejercicio dentro de su patrón (§36, §53).
+
+   No cambia la rutina ni el patrón: el planificador decidió que hoy toca
+   "dominante de rodilla" y eso no se toca. Lo único que cambia es CON QUÉ se
+   hace ese patrón, y se guarda en `P.ejercicios`, que es el mismo catálogo
+   propio que ya usaba el editor de rutinas. Por eso `exName()` lo recoge solo
+   y no hace falta almacenamiento nuevo. */
+function CambiarEjercicio({ ejercicio, P, update, notify }) {
+  const [abierto, setAbierto] = useState(false);
+  const [estado, setEstado] = useState(null);      // { candidatos, motivo, disponible }
+  const [cargando, setCargando] = useState(false);
+  const [equipo, setEquipo] = useState("");
+
+  const buscar = async (soloEquipo = "") => {
+    setCargando(true); setEquipo(soloEquipo);
+    try {
+      const q = new URLSearchParams({ patron: ejercicio.pat, actual: ejercicio.n });
+      if (soloEquipo) q.set("equipo", soloEquipo);
+      const r = await fetch(`/api/exercises/alternativas?${q}`, { credentials: "same-origin" });
+      setEstado(await r.json());
+    } catch (e) { setEstado({ candidatos: [], motivo: "No se pudo consultar el catálogo: " + e.message }); }
+    finally { setCargando(false); }
+  };
+
+  const elegir = (candidato) => {
+    /* Se sobrescriben las tres variantes de equipamiento con el elegido: el
+       atleta ha dicho qué quiere hacer para este patrón, y mantener las otras
+       dos haría que el ejercicio cambiara solo si cambia de gimnasio. */
+    update((s) => {
+      const p = s.perfiles[P.id];
+      p.ejercicios = p.ejercicios || {};
+      const base = p.ejercicios[ejercicio.pat] || {};
+      p.ejercicios[ejercicio.pat] = {
+        ...base,
+        g: candidato.target || base.g || ejercicio.g,
+        full: candidato.nombre, basico: candidato.nombre, casa: candidato.nombre,
+        inc: base.inc ?? ejercicio.inc ?? 2.5,
+        provider: candidato.provider, externalId: candidato.externalId,
+        equipamiento: candidato.equipamiento || null,
+        media: candidato.media || null, instrucciones: candidato.instrucciones || [],
+      };
+      return s;
+    });
+    notify(`✓ ${ejercicio.n} → ${candidato.nombre}.`);
+    setAbierto(false); setEstado(null);
+  };
+
+  const propio = (P.ejercicios || {})[ejercicio.pat];
+
+  return (<div style={{ margin: "8px 0" }}>
+    {/* Ficha del catálogo, si el ejercicio actual vino de ahí. La información
+        externa va separada de la personal, que está más abajo (§28). */}
+    {propio?.externalId && (<div className="accion" style={{ marginBottom: 8 }}>
+      <div className="between">
+        <span className="xs muted">{propio.g}{propio.equipamiento ? ` · ${propio.equipamiento}` : ""}</span>
+        {propio.media && <a className="btn ghost sm" href={propio.media} target="_blank" rel="noreferrer">Ver demostración</a>}
+      </div>
+      {!!propio.instrucciones?.length && (<details style={{ marginTop: 6 }}>
+        <summary className="xs muted">Instrucciones</summary>
+        <ol className="xs muted" style={{ paddingLeft: 18, margin: "6px 0 0" }}>
+          {propio.instrucciones.map((i, n) => <li key={n} style={{ marginBottom: 3 }}>{i}</li>)}
+        </ol>
+      </details>)}
+    </div>)}
+
+    {!abierto ? (
+      <button className="btn ghost sm" style={{ width: "100%" }} onClick={() => { setAbierto(true); void buscar(); }}>
+        Cambiar ejercicio
+      </button>
+    ) : (<div className="accion pendiente">
+      <div className="between">
+        <span className="eyebrow">Alternativas para {ejercicio.g}</span>
+        <button className="icobtn" aria-label="Cerrar" onClick={() => setAbierto(false)}>×</button>
+      </div>
+
+      <div className="row" style={{ gap: 5, margin: "9px 0", flexWrap: "wrap" }}>
+        {[["", "Todas"], ["dumbbell", "Mancuernas"], ["barbell", "Barra"], ["body weight", "Sin material"], ["cable", "Polea"]].map(([v, l]) =>
+          <button key={l} className={"chip" + (equipo === v ? " on" : "")} style={{ flex: "1 1 30%", minHeight: 38, fontSize: 12 }}
+            onClick={() => buscar(v)} disabled={cargando}>{l}</button>)}
+      </div>
+
+      {cargando && <p className="xs muted">Buscando…</p>}
+
+      {!cargando && estado && !estado.candidatos?.length && (
+        <p className="xs muted" style={{ margin: 0 }}>
+          {estado.disponible === false
+            ? "El catálogo de ejercicios no está configurado en el servidor. Puedes cambiarlo a mano desde Editar rutina."
+            : estado.motivo || "No hay alternativas para ese patrón con tu equipamiento."}
+        </p>)}
+
+      {!cargando && estado?.candidatos?.map((c) => (
+        <button key={c.externalId || c.nombre} className="convitem" onClick={() => elegir(c)}>
+          {c.nombre}
+          <small>{[c.target, c.equipamiento].filter(Boolean).join(" · ")}</small>
+        </button>))}
+
+      {propio && (<button className="btn ghost sm" style={{ width: "100%", marginTop: 6 }}
+        onClick={() => { update((s) => { delete s.perfiles[P.id].ejercicios[ejercicio.pat]; return s; }); notify("Ejercicio restaurado al de serie."); setAbierto(false); }}>
+        Volver al de serie
+      </button>)}
+    </div>)}
+  </div>);
+}
+
 function StrengthForm({ st, P, update, notify, curW, today, sug, codes, setPantalla, onTerminado }) {
   const plan = P.plan, perfil = P.perfil;
   const [code, setCode] = useState(codes.includes(sug) ? sug : codes[0]);
@@ -2473,6 +2577,7 @@ function StrengthForm({ st, P, update, notify, curW, today, sug, codes, setPanta
           </span></div>
         </button>
         {isOpen && (<>
+          <CambiarEjercicio ejercicio={e} P={P} update={update} notify={notify} />
           <div style={{ background: "var(--ink)", border: "1px solid var(--line)", borderRadius: 9, padding: 10, margin: "10px 0" }}>
             <span className="eyebrow">Hoy sugerido</span>
             <div className="mono" style={{ fontSize: 20, color: "var(--gym)" }}>{sg.peso ? sg.peso + " kg" : "—"}</div>

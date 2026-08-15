@@ -23,6 +23,7 @@ import adminRoutes from "./server/routes/admin.js";
 import coachRoutes from "./server/routes/coach.js";
 import planningRoutes from "./server/routes/planning.js";
 import evidenceRoutes from "./server/routes/evidence.js";
+import exerciseRoutes from "./server/routes/exercises.js";
 import syncRoutes from "./server/routes/sync.js";
 import aiSettingsRoutes from "./server/routes/ai-settings.js";
 import { startReconciliationJob } from "./server/jobs/reconciliation.js";
@@ -109,6 +110,7 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/planning", aiRateLimiter, planningRoutes);
 app.use("/api/coach", aiRateLimiter, coachRoutes);
 app.use("/api/evidence", evidenceRoutes);
+app.use("/api/exercises", exerciseRoutes);
 app.use("/api", apiRoutes);
 
 /* La ruta heredada /api/entrar devuelve 410; no existe fallback de contraseña compartida. */

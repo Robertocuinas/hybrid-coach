@@ -6,7 +6,7 @@
    queda persistido en conversations/messages. */
 import { buildContext } from "./context.js";
 import { extraerCambio } from "./validacion.js";
-import { extraerAccion } from "./acciones.js";
+import { ejecutorDe, extraerAccion } from "./acciones.js";
 import { SIN_EVIDENCIA_TEXTO } from "./prompt.js";
 import {
   compactarSiHaceFalta, guardarMensaje, historialParaPrompt, obtenerOCrearConversacion,
@@ -53,6 +53,7 @@ export async function responder(profileId, consulta, deps) {
   const {
     db, repo, llmProvider, embeddingProvider, rerankProvider, indice, config,
     conversationId = null, hoy = new Date(), persistir = true, pantalla = null,
+    ejecutarEnServidor = null,
     onValidatedChange = null,
   } = deps;
   if (!llmProvider) throw new Error("No hay proveedor de IA configurado");
@@ -109,6 +110,16 @@ export async function responder(profileId, consulta, deps) {
      acción que lo ejecuta). */
   const { texto, accion, avisos: avisosAccion } = extraerAccion(sinCambio);
 
+  /* Las acciones de ejecutor "servidor" —consultar el catálogo de ejercicios—
+     se resuelven aquí y su resultado viaja con la respuesta: son de lectura y
+     el atleta ya las ha pedido. Un fallo se devuelve como resultado, nunca
+     tumba el turno de conversación. */
+  let resultadoAccion = null;
+  if (accion && ejecutorDe(accion.accion) === "servidor" && ejecutarEnServidor) {
+    try { resultadoAccion = await ejecutarEnServidor(accion); }
+    catch (error) { resultadoAccion = { ok: false, mensaje: error.message }; }
+  }
+
   /* Se registran como citas del turno solo los fragmentos que el modelo
      realmente mencionó por id; el resto se entregó pero no se usó. */
   const citadas = contexto.chunks.filter((c) => respuesta.text.includes(c.id)).map((c) => c.id);
@@ -150,7 +161,7 @@ export async function responder(profileId, consulta, deps) {
   }
 
   return {
-    texto, cambio, accion, avisos: [...avisos, ...avisosAccion],
+    texto, cambio, accion, resultadoAccion, avisos: [...avisos, ...avisosAccion],
     hayEvidencia: contexto.hayEvidencia,
     citas: contexto.chunks
       .filter((c) => citadas.includes(c.id))

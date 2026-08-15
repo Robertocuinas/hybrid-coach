@@ -72,9 +72,30 @@ El Coach no ejecuta: propone. El reparto es deliberado y **no se rompe sin permi
 | Ejecución en cliente | `src/acciones.js` | Consultas y registros propios. Escribe en el estado del cliente y viaja por el sync |
 | Ejecución de plan | `src/planningApi.js` | **Toda la programación semanal es del planificador IA + RAG.** El Coach delega, no genera |
 
-`catalogoParaPrompt({ planificador })` oculta las acciones del planificador mientras
-`server/routes/planning.js` no exista, para que el modelo no ofrezca lo que no se puede
-cumplir. Se activa solo cuando esa ruta aparece.
+`catalogoParaPrompt({ planificador, catalogo })` oculta las acciones cuyo ejecutor no está
+disponible, para que el modelo no ofrezca lo que no se puede cumplir. Se activan solas
+cuando aparece la ruta del planificador o se configura `EXERCISE_PROVIDER`.
+
+### Catálogo externo de ejercicios
+
+**ExerciseDB es un catálogo, no un entrenador.** El reparto es el mismo principio que el
+RAG: la evidencia y el planificador deciden qué hace falta; el catálogo dice qué opciones
+reales existen.
+
+| Pieza | Dónde | Qué hace |
+|---|---|---|
+| Patrones | `PAT` en `src/HybridCoach.jsx` | 20 patrones de movimiento. **No se sustituyen por nombres concretos** |
+| Traducción | `server/domain/exercises/patrones.js` | Patrón → músculos y equipamiento del catálogo. Si añades un patrón a `PAT`, añádelo aquí o la búsqueda devolverá vacío en silencio |
+| Búsqueda | `server/domain/exercises/busqueda.js` | Candidatos filtrados y ordenados. Sin catálogo devuelve vacío con motivo, nunca inventa |
+| Adaptador | `server/integrations/exercises/` | Aísla el JSON y la vía de acceso (RapidAPI o directo) |
+| Identidad | migración `0012` | `(provider, external_id)` para lo externo, `canonical_name` para lo propio. Es lo que impide tres historiales para el mismo ejercicio |
+
+El equipamiento sale **siempre del perfil en el servidor**, nunca de la petición ni del
+modelo. Y el filtro se aplica también en local aunque ya se haya enviado a la API: es la
+garantía de que no se propone una prensa a quien entrena en casa.
+
+Una sustitución no cambia el patrón ni la rutina: escribe el nombre elegido en
+`P.ejercicios[patron]`, que es el catálogo propio que ya usaba el editor de rutinas.
 
 ## 4. Reglas duras — no romper sin permiso explícito
 

@@ -144,6 +144,26 @@ export const ACCIONES = Object.freeze({
     },
   },
 
+  /* Sustituir un ejercicio es lectura: devuelve alternativas para que el
+     atleta elija. Cambiar la rutina de verdad es otra cosa y no pasa por aquí:
+     lo hace el editor de rutinas o el planificador. */
+  buscar_alternativas: {
+    ejecutor: "servidor",
+    nivel: "lectura",
+    descripcion: "Buscar ejercicios alternativos para un patrón de movimiento, respetando el equipamiento del atleta.",
+    ejemplo: '{ "patron": "rodilla", "ejercicioActual": "Prensa de piernas", "conEquipo": "dumbbell" }',
+    parametros: (p) => {
+      const patron = texto(p.patron, 30);
+      if (!patron) return { ok: false, motivo: "falta el patrón de movimiento" };
+      const valor = { patron };
+      const actual = texto(p.ejercicioActual, 80);
+      const equipo = texto(p.conEquipo, 30);
+      if (actual) valor.ejercicioActual = actual;
+      if (equipo) valor.conEquipo = equipo;
+      return { ok: true, valor };
+    },
+  },
+
   generar_semana: {
     ejecutor: "planificador",
     nivel: "confirmacion",
@@ -231,9 +251,10 @@ export const ejecutorDe = (nombre) => ACCIONES[nombre]?.ejecutor || null;
    `planificador` filtra por ejecutor: mientras sus rutas no existan, sus
    acciones no se le ofrecen al modelo. Prometer "te preparo la semana" y
    fallar después es peor que decir desde el principio que aún no se puede. */
-export function catalogoParaPrompt({ planificador = false } = {}) {
+export function catalogoParaPrompt({ planificador = false, catalogo = false } = {}) {
+  const disponible = { cliente: true, planificador, servidor: catalogo };
   return Object.entries(ACCIONES)
-    .filter(([, d]) => d.ejecutor !== "planificador" || planificador)
+    .filter(([, d]) => disponible[d.ejecutor] !== false)
     .map(([nombre, d]) => `- ${nombre} (${d.nivel}): ${d.descripcion}\n  ejemplo de parámetros: ${d.ejemplo}`)
     .join("\n");
 }

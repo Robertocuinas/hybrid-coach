@@ -15,6 +15,11 @@ import { cargarContexto } from "../../db/repositories/coachContext.js";
 import { recuperar } from "../../rag/retrieval.js";
 import { catalogoParaPrompt } from "./acciones.js";
 import { bloquePerfil, estadoPerfil, REGLAS_PERFIL } from "./perfil.js";
+import { readExerciseConfig } from "../../integrations/exercises/factory.js";
+
+/* Sin catálogo externo configurado, sus acciones no se le ofrecen al modelo:
+   ofrecer alternativas y no poder darlas es peor que no ofrecerlas. */
+const hayCatalogo = () => { try { return readExerciseConfig().enabled; } catch { return false; } };
 
 /* El planificador IA + RAG está en desarrollo. Mientras sus rutas no existan,
    sus acciones NO se le ofrecen al modelo: prometer "te preparo la semana" y
@@ -206,7 +211,7 @@ export async function buildContext(profileId, consulta, deps) {
        completo son ruido en el prompt y arriesgan que pregunte de más. */
     ...(perfilEstado.completo ? [] : ["", REGLAS_PERFIL]),
     "",
-    reglasAcciones(catalogoParaPrompt({ planificador }), new Date(hoy).toISOString().slice(0, 10)),
+    reglasAcciones(catalogoParaPrompt({ planificador, catalogo: hayCatalogo() }), new Date(hoy).toISOString().slice(0, 10)),
     /* Contexto de la pantalla desde la que se abre el coach: permite que
        "¿puedo hacer esto mañana?" se refiera a lo que el atleta está mirando
        sin que tenga que describirlo. Solo lo mínimo, nunca la página entera. */

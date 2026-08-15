@@ -14,6 +14,9 @@ import { listarDecisionesConCitas } from "../db/repositories/trainingPlans.js";
 import { deleteConversation, listConversationsByProfile } from "../db/repositories/aiConversations.js";
 import { compararSistemas, PREGUNTAS_COMPARACION } from "../domain/coach/comparacion.js";
 import { COACH_LOCAL_TOOLS, NEEDLE_SYSTEM_PROMPT } from "../domain/coach/local-tools.js";
+import { createExerciseProvider } from "../integrations/exercises/factory.js";
+import { alternativasA, explicarCandidato } from "../domain/exercises/busqueda.js";
+import { cargarContexto } from "../db/repositories/coachContext.js";
 
 const router = express.Router();
 router.use(requireAuth, requireActiveProfile);
@@ -27,6 +30,30 @@ const perezoso = (fabrica) => {
   };
 };
 const getToolRouter = perezoso(() => createToolRouterProvider());
+const getCatalogo = perezoso(() => createExerciseProvider());
+
+/* Ejecutor de las acciones de servidor. Hoy solo el catálogo de ejercicios:
+   es lectura, así que se resuelve y se responde sin confirmar nada. El
+   equipamiento sale del perfil, NUNCA de lo que diga el modelo. */
+async function ejecutarAccionServidor(profileId, accion) {
+  if (accion.accion !== "buscar_alternativas") {
+    return { ok: false, mensaje: `No sé resolver "${accion.accion}" en el servidor.` };
+  }
+  const { perfil } = await cargarContexto(profileId, {});
+  const { patron, ejercicioActual, conEquipo } = accion.parametros;
+  const salida = await alternativasA(getCatalogo(), {
+    patron,
+    equipamiento: perfil?.equipamiento,
+    ejercicioActual: ejercicioActual ? { nombre: ejercicioActual, canonico: ejercicioActual.toLowerCase() } : null,
+    soloEquipo: conEquipo || null,
+  });
+  if (!salida.candidatos.length) return { ok: false, mensaje: salida.motivo };
+  return {
+    ok: true,
+    mensaje: salida.candidatos.map((c) => explicarCandidato(c, salida.criterios)).join("\n"),
+    resumen: { tipo: "alternativas", criterios: salida.criterios, candidatos: salida.candidatos },
+  };
+}
 
 const dependencias = (userId) => resolveRAGRuntime(userId);
 
@@ -75,6 +102,7 @@ router.post("/chat", async (req, res, next) => {
          lista blanca en describirPantalla(): el cliente no puede inyectar
          texto arbitrario en el prompt por esta vía. */
       pantalla: req.body?.pantalla || null,
+      ejecutarEnServidor: (accion) => ejecutarAccionServidor(perfil(req), accion),
     });
     res.json({ ok: true, ...salida });
   } catch (error) { next(error); }
