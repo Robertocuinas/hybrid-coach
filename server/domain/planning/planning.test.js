@@ -283,3 +283,95 @@ test("selección de evidencia deduplica, prioriza jerarquía y limita diversidad
   assert.deepEqual(selection.chunks.map((x) => x.id), ["meta", "rct"]);
   assert.equal(selection.complete, true);
 });
+
+test("adherence links accepted sessions to their master FK and does not lose today's session", () => {
+  const analytics = calcularAnaliticaEntrenamiento({
+    plannedSessions: [
+      { id: "weekly-1", master_planned_session_id: "master-1", fecha: "2026-08-14", tipo: "running", codigo_sesion: "RUN C" },
+      { id: "weekly-2", master_planned_session_id: "master-2", fecha: "2026-08-16", tipo: "running", codigo_sesion: "RUN A" },
+    ],
+    completedSessions: [
+      { id: "done-1", planned_session_id: "master-1", fecha: "2026-08-14", tipo: "running", codigo_sesion: "RUN C", duracion_min: 30 },
+    ],
+  }, { hoy: "2026-08-16" });
+  assert.equal(analytics.adherencia.planificadasVencidas, 1);
+  assert.equal(analytics.adherencia.completadas, 1);
+  assert.equal(analytics.adherencia.ratio, 1);
+  assert.equal(analytics.adherencia.perdidas.length, 0);
+});
+
+test("schema rejects incompatible modality, empty weeks and duplicate agenda codes", () => {
+  const incompatible = outputFor();
+  incompatible.sessions[0].modality = "strength";
+  incompatible.sessions[0].session_type = "race";
+  const invalidPair = validarPlanSemanal(incompatible, {
+    evidenceIds: ["ev-weekly_distribution"], availabilityDays: [0, 1, 3, 5],
+    weekStart: WEEK_START, weekEnd: WEEK_END,
+  });
+  assert.ok(invalidPair.errors.some((item) => item.code === "MODALITY_MISMATCH"));
+
+  const empty = validarPlanSemanal(outputFor([]), {
+    evidenceIds: ["ev-weekly_distribution"], availabilityDays: [0, 1, 3, 5],
+    weekStart: WEEK_START, weekEnd: WEEK_END,
+  });
+  assert.ok(empty.errors.some((item) => item.path === "$.sessions" && item.code === "RANGE"));
+
+  const duplicate = outputFor();
+  duplicate.sessions[1].master_session_code = "RUN C";
+  const invalidDuplicate = validarPlanSemanal(duplicate, {
+    evidenceIds: ["ev-weekly_distribution"], availabilityDays: [0, 1, 3, 5],
+    weekStart: WEEK_START, weekEnd: WEEK_END,
+  });
+  assert.ok(invalidDuplicate.errors.some((item) => item.code === "DUPLICATE_AGENDA_CODE"));
+});
+
+test("guardrails derive the real diff and reject a misleading unchanged label", () => {
+  const proposal = outputFor();
+  proposal.sessions[0].date = "2026-08-18";
+  proposal.sessions[0].day_of_week = 1;
+  proposal.sessions[0].change_from_master.type = "unchanged";
+  const result = evaluarGuardrailsPlan(proposal, context(), {});
+  assert.ok(result.hard.some((item) => item.code === "SESSION_CHANGE_MISMATCH"));
+  assert.ok(result.hard.some((item) => item.code === "MISSING_OR_INCORRECT_CHANGE"));
+});
+
+test("running load uses the conservative history and limits distance too", () => {
+  const proposal = outputFor();
+  proposal.sessions.filter((s) => s.modality === "running").forEach((s) => { s.prescription.distance_km = 40; });
+  const result = evaluarGuardrailsPlan(proposal, context(), {
+    comparativaAnterior7d: { minutosCarrera: 30, km: 5 },
+    seguridad: { dolorMaximo: 0, redFlags: [] },
+  });
+  assert.ok(result.hard.some((item) => item.code === "WEEKLY_PROGRESSION_LIMIT"));
+  assert.ok(result.hard.some((item) => item.code === "WEEKLY_DISTANCE_PROGRESSION_LIMIT"));
+  assert.ok(result.hard.some((item) => item.code === "IMPLAUSIBLE_RUNNING_DISTANCE"));
+});
+
+test("a completed accepted session is immutable when its FK points to the master session", () => {
+  const accepted = outputFor().sessions.map((s, index) => ({
+    ...s, id: `weekly-${index}`, master_planned_session_id: s.change_from_master.master_session_id,
+  }));
+  const changed = structuredClone(outputFor());
+  changed.sessions[0].date = "2026-08-18";
+  changed.sessions[0].day_of_week = 1;
+  changed.sessions[0].change_from_master.type = "moved";
+  changed.changes_from_master_plan = [{
+    type: "moved", session_key: "easy", before: { date: "2026-08-17" }, after: { date: "2026-08-18" },
+    reason: "Move", evidence_ids: ["ev-weekly_distribution"],
+  }];
+  const result = evaluarGuardrailsPlan(changed, context({
+    acceptedRevision: { id: "revision-1", sessions: accepted },
+    completedSessions: [{ planned_session_id: "m-easy", fecha: "2026-08-17", tipo: "running", codigo_sesion: "RUN C", duracion_min: 30 }],
+  }), {});
+  assert.ok(result.hard.some((item) => item.code === "COMPLETED_IMMUTABLE"));
+});
+
+test("mid-week replanning keeps completed days even when availability only lists future days", () => {
+  const proposal = outputFor();
+  const result = evaluarGuardrailsPlan(proposal, context({
+    now: "2026-08-19",
+    availability: [3, 5],
+    completedSessions: [{ planned_session_id: "m-easy", fecha: "2026-08-17", tipo: "running", codigo_sesion: "RUN C", duracion_min: 30 }],
+  }), { calculadaEn: "2026-08-19", seguridad: { dolorMaximo: 0, redFlags: [] } });
+  assert.equal(result.hard.some((item) => item.code === "UNAVAILABLE_DAY" && item.path === "$.sessions[0].date"), false);
+});

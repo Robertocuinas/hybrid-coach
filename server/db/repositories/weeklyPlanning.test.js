@@ -307,3 +307,46 @@ test("los cambios del Coach conservan ownership, revisión optimista y evidencia
   assert.equal(loaded.evidence[0].titulo, "Concurrent training");
   await db.close();
 });
+
+test("stale clinical data prevents accepting a draft", async () => {
+  const db = await database();
+  const ids = await fixture(db, "stale-clinical");
+  const draft = await createPlanningDraft(draftInput(ids), db);
+  await db.query(
+    `INSERT INTO feedback_logs(athlete_profile_id,fecha,dolor,cuando_aparece)
+     VALUES($1,'2026-08-11',6,'pain also at rest');`,
+    [ids.profileId],
+  );
+  await assert.rejects(
+    () => acceptWeeklyPlanRevision({
+      revisionId: draft.revision.id,
+      profileId: ids.profileId,
+      expectedRevision: draft.revision.revision,
+    }, db),
+    (error) => error instanceof PlanningConflictError && error.status === 409,
+  );
+  const loaded = await getWeeklyPlanRevision(draft.revision.id, ids.profileId, db);
+  assert.equal(loaded.revision.status, "draft");
+  await db.close();
+});
+
+test("a draft from a replaced master plan cannot be accepted", async () => {
+  const db = await database();
+  const ids = await fixture(db, "stale-plan");
+  const draft = await createPlanningDraft(draftInput(ids), db);
+  await db.query(`UPDATE training_plans SET activo=false WHERE id=$1;`, [ids.planId]);
+  await db.query(
+    `INSERT INTO training_plans(athlete_profile_id,total_semanas,activo,structure_hash)
+     VALUES($1,10,true,$2);`,
+    [ids.profileId, "b".repeat(64)],
+  );
+  await assert.rejects(
+    () => acceptWeeklyPlanRevision({
+      revisionId: draft.revision.id,
+      profileId: ids.profileId,
+      expectedRevision: draft.revision.revision,
+    }, db),
+    (error) => error instanceof PlanningConflictError && error.status === 409,
+  );
+  await db.close();
+});

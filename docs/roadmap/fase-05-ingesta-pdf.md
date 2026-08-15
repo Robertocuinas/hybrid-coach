@@ -46,9 +46,9 @@ listo para revisión humana. **Sin embeddings todavía** (Fase 6).
 - [ ] Endpoint de subida, **solo rol `admin`**
 - [ ] Validar tipo real por magic bytes, límite de tamaño (~50 MB)
 - [ ] Pantalla de administración: subir, ver estado de procesado, revisar ficha, confirmar
-- [ ] Solo participa en retrieval lo que tiene `revisado = true`. Lo pone la ingesta si la
-      ficha automática sale completa (título, autores, año, tipo y grado); si falta algo,
-      espera confirmación humana. Ver `fichaCompleta()` y docs/05-rag.md §2.5
+- [x] Solo participa en retrieval lo que tiene chunks y `revisado = true`. La ingesta deja
+      siempre la ficha automática pendiente: una persona debe contrastarla y confirmarla.
+      La base impide revisar fichas sin chunks. Ver docs/05-rag.md §2.5.
 
 ## Criterio de terminado
 

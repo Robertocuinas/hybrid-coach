@@ -124,6 +124,7 @@ inventados por el modelo.
 ### Consultar y resolver una propuesta
 
 ```http
+GET  /api/planning/weeks/:week/accepted
 GET  /api/planning/proposals/:id
 POST /api/planning/proposals/:id/accept
 POST /api/planning/proposals/:id/reject
@@ -132,16 +133,19 @@ Content-Type: application/json
 { "expectedRevision": 2 }
 ```
 
-`expectedRevision` implementa concurrencia optimista. Una revisión obsoleta o ya resuelta
-responde `409`; una repetición de la misma decisión es idempotente. Aceptar es la única
-operación que cambia cuál es la agenda semanal vigente.
+El primer endpoint devuelve la revisión aceptada de la semana del plan activo, o `null`, y
+permite que PostgreSQL vuelva a hidratar la agenda en otro navegador. `expectedRevision`
+implementa concurrencia optimista. Una revisión obsoleta, perteneciente a un plan maestro
+sustituido o generada antes de un cambio clínico/ejecución responde `409`; una repetición de
+la misma decisión es idempotente. Aceptar es la única operación que cambia cuál es la agenda
+semanal vigente.
 
 Errores públicos usan `{ "code": "...", "message": "..." }` sin prompts, datos de otros
 usuarios ni mensajes internos del proveedor.
 
 ## 4. Persistencia y trazabilidad
 
-La migración `0010_weekly_planning.js` añade:
+Las migraciones `0010_weekly_planning.js` y `0011_planning_and_evidence_integrity.js` añaden:
 
 | Entidad | Propósito |
 |---|---|
@@ -155,6 +159,11 @@ La migración `0010_weekly_planning.js` añade:
 También añade `training_plans.structure_hash`, `training_weeks.inicio`,
 `athlete_profiles.current_complaints`, restricciones de rango y una clave única estable para
 las sesiones maestras.
+
+`0011` incorpora `planning_context_version`, que cambia con perfil, lesiones,
+disponibilidad, sesiones realizadas, molestias, recuperación y series. Crear y aceptar una
+propuesta compara esa versión y el `structure_hash`; así un borrador no sobrevive en silencio
+a datos nuevos. La lectura canónica usa una transacción `REPEATABLE READ READ ONLY`.
 
 La trazabilidad de una propuesta se recorre así:
 
@@ -181,11 +190,13 @@ por `athlete_profile_id` y recorriendo después únicamente sus IDs hijos.
 | proveedor LLM no configurado/caído | `llm_failed` | intento fallido | no cambia |
 | JSON inválido | una reparación; después fallback | hasta 2 llamadas | no cambia |
 | guardarraíl duro incumplido | propuesta descartada | 1 o 2 | no cambia |
-| interfaz o red no disponibles | semana determinista local señalada como fallback | no desde cliente | no activa una revisión IA |
+| interfaz o red no disponibles | puede ofrecer semana determinista local señalada como fallback | no desde cliente | solo cambia tras aceptación explícita |
 
 El fallback determinista conserva continuidad del producto, pero nunca se presenta como una
-recomendación respaldada por RAG. No hay evidencia suficiente significa exactamente eso;
-no autoriza al modelo a completar desde memoria.
+recomendación respaldada por RAG. Se oculta ante dolor alto, dolor en reposo, banderas rojas
+o un fallo de guardarraíl, y tampoco puede aceptarse si conserva violaciones. No hay
+evidencia suficiente significa exactamente eso; no autoriza al modelo a completar desde
+memoria.
 
 ## 6. Despliegue de la migración
 
@@ -194,7 +205,8 @@ La migración es aditiva, pero la aplicación nueva consulta sus tablas. Orden r
 1. Crear y verificar un backup lógico (`npm run backup:db`).
 2. Desplegar una revisión de mantenimiento o ejecutar `npm run migrate` contra el entorno
    correcto antes de enrutar tráfico a la aplicación nueva.
-3. Confirmar que `0010_weekly_planning.js` figura aplicada.
+3. Confirmar que `0010_weekly_planning.js` y `0011_planning_and_evidence_integrity.js`
+   figuran aplicadas.
 4. Verificar tablas e índice de exclusividad:
 
    ```sql

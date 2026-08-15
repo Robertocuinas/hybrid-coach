@@ -34,7 +34,7 @@ un archivo nuevo.
    atrás durante el rollback de aplicación.
 4. Repetir las comprobaciones anteriores.
 
-### Planificador semanal (`0010_weekly_planning.js`)
+### Planificador semanal (`0010_weekly_planning.js` y `0011_planning_and_evidence_integrity.js`)
 
 Tras el primer despliegue del planificador, comprobar además que las tablas de ejecución y
 revisión existen, que una propuesta nueva nace `draft` y que una semana nunca tiene más de
@@ -42,6 +42,9 @@ una revisión `accepted`. Ante un problema, hacer primero rollback de aplicació
 el esquema aditivo: `migrate:down` eliminaría el historial de propuestas. El procedimiento,
 consultas de verificación y alcance destructivo del rollback de esquema están en
 [`11-planificador-semanal-ia-rag.md`](11-planificador-semanal-ia-rag.md#6-despliegue-de-la-migración).
+Comprobar también que un cambio de molestias o sesiones completadas vuelve obsoleto un
+borrador previo (`409`) y que la interfaz recupera la revisión aceptada mediante
+`GET /api/planning/weeks/:week/accepted`.
 
 ## Conciliación diaria
 

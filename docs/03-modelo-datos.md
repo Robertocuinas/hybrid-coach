@@ -259,7 +259,7 @@ Un paper. Generalización de `BIBLIO_SEED` + `normRef()`.
 | `resumen`, `limites`, `aplicacion_practica` | text | los tres campos que ya genera `SYS_PDF` |
 | `storage_key` | text | ruta del PDF en R2 |
 | `origen` | enum | `semilla` \| `manual` \| `pdf` |
-| `revisado` | bool | Única condición para participar en retrieval. La ingesta lo pone a true si la ficha automática sale completa; si no, espera confirmación (docs/05-rag.md §2.5) |
+| `revisado` | bool | Solo una confirmación humana puede ponerlo a `true`, y la base exige que exista al menos un `document_chunk` (docs/05-rag.md §2.5) |
 | `subido_por` | uuid FK users nullable | |
 | `created_at` | timestamptz | |
 

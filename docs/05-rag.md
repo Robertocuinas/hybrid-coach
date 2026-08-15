@@ -104,24 +104,19 @@ API de embeddings; las parejas válidas son `voyage`, `openai` y `openai-compati
 
 ### 2.5 Revisión humana
 
-`revisado = true` sigue siendo la única condición para participar en el retrieval, pero no
-se exige que la ponga siempre una persona: la decide `fichaCompleta()` en
-`server/ingestion/pipeline.js`.
+`revisado = true` es una condición necesaria para participar en retrieval, pero ya no basta
+por sí sola: el documento debe tener al menos un `document_chunk`. La base de datos impide
+confirmar fichas vacías y vuelve a desmarcar un documento si se elimina su último chunk.
 
-Un documento entra disponible si el modelo extrajo lo necesario para **citarlo**: título,
-autores, año, `study_type` y `evidence_grade`. Los dos últimos son enums cerrados que
-`normalizarFicha()` ya validó contra la lista real, así que un valor inventado llega como
-null y el documento cae del lado de la revisión por sí solo. Sin proveedor de IA la ficha
-viene vacía y nada entra automáticamente.
+La extracción del LLM rellena una **ficha candidata**. Aunque incluya título, autores, año,
+`study_type` y `evidence_grade`, el PDF queda siempre `revisado = false` hasta que una
+persona contraste esos campos y confirme la ficha. Validar enums evita valores imposibles,
+pero no demuestra que el modelo haya identificado correctamente el estudio.
 
-Lo que falte se enumera en `faltaRevision` y el panel lo muestra: un PDF que no aparece en
-las respuestas tiene que decir por qué, no dejar al usuario adivinando.
-
-El razonamiento: un modelo puede equivocarse leyendo y un error se propaga a cada
-recomendación que cite ese documento, pero exigir revisión manual de *todo* hacía que en la
-práctica la biblioteca se quedara vacía. La revisión se reserva para los casos dudosos, que
-son justo aquellos en los que la extracción ya falló en algo comprobable. `revisado` se
-puede volver a poner a false desde el panel en cualquier momento.
+Las 40 referencias semilla y las fichas manuales sin texto permanecen no citables: sirven
+como inventario, no como evidencia. `faltaRevision` explica los campos pendientes y el panel
+solo muestra en la cola PDFs con chunks que realmente pueden revisarse. La migración 0011
+desmarca documentos históricos sin chunks y PDFs que pudieron quedar autoaprobados.
 
 ---
 
@@ -305,10 +300,10 @@ Cinco mecanismos, en orden de aplicación:
 Cuando la literatura no es consistente, el sistema **no debe elegir arbitrariamente ni
 promediar**.
 
-- **Nivel 1 (suficiente para empezar):** instruir en el prompt que, si los chunks
-  recuperados contienen posiciones contradictorias, la respuesta debe presentar ambas con
-  sus citas y marcar el tema como evidencia mixta. Añadir un campo `evidencia_mixta: []` al
-  JSON de salida, en la línea del `sin_respaldo` que ya existe.
+- **Nivel 1 (implementado):** el prompt obliga a presentar ambas posiciones, sus IDs de
+  chunk y una elección conservadora; el schema exige al menos dos posiciones cuando la
+  salida declara evidencia `mixed`. Esta detección sigue dependiendo del análisis del
+  modelo y no debe describirse como un clasificador determinista de contradicciones.
 - **Nivel 2 (más adelante):** añadir a `documents` un campo `finding_direction`
   (`favorable` \| `nulo` \| `desfavorable`) extraído en la ingesta, para detectar conflictos
   automáticamente antes de llamar al LLM.
