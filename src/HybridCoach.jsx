@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { Component, useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { createSyncController } from "./sync.js";
 import {
@@ -1555,18 +1555,23 @@ export default function HybridCoach({ user, activeProfile, onLogout }) {
             <button className="icobtn" title="Cerrar sesión" onClick={onLogout}>↪</button>
           </div>
         </div>
-        {pantalla === "perfiles" ? <Perfiles {...full} onClose={() => setPantalla(null)} />
-          : pantalla === "biblio" ? <Biblioteca {...full} onClose={() => setPantalla(null)} />
-          : pantalla === "rutinas" ? <EditorRutinas {...full} onClose={() => setPantalla(null)} />
-          : pantalla === "nutricion" ? <Nutricion {...full} onClose={() => setPantalla(null)} />
-          : pantalla === "ajustes" ? <Ajustes {...full} onClose={() => setPantalla(null)} />
-          : (<>
-            {tab === "hoy" && <Today {...full} />}
-            {tab === "semana" && <Semana {...full} />}
-            {tab === "entrenar" && <Entrenar {...full} />}
-            {tab === "coach" && <Coach {...full} />}
-            {tab === "progreso" && <Progreso {...full} />}
-          </>)}
+        {/* La barrera envuelve solo el contenido: la barra superior y la
+            navegación de abajo quedan fuera, para que un fallo en una pantalla
+            no impida moverse a otra. */}
+        <Barrera zona={pantalla || tab}>
+          {pantalla === "perfiles" ? <Perfiles {...full} onClose={() => setPantalla(null)} />
+            : pantalla === "biblio" ? <Biblioteca {...full} onClose={() => setPantalla(null)} />
+            : pantalla === "rutinas" ? <EditorRutinas {...full} onClose={() => setPantalla(null)} />
+            : pantalla === "nutricion" ? <Nutricion {...full} onClose={() => setPantalla(null)} />
+            : pantalla === "ajustes" ? <Ajustes {...full} onClose={() => setPantalla(null)} />
+            : (<>
+              {tab === "hoy" && <Today {...full} />}
+              {tab === "semana" && <Semana {...full} />}
+              {tab === "entrenar" && <Entrenar {...full} />}
+              {tab === "coach" && <Coach {...full} />}
+              {tab === "progreso" && <Progreso {...full} />}
+            </>)}
+        </Barrera>
       </div>
       {toast && <Toast m={toast} />}
 
@@ -1904,6 +1909,47 @@ function Today({ st, P, curW, today, wk, setTab, setPantalla }) {
 /* ============================================================
    MI SEMANA
    ============================================================ */
+/* ============================================================
+   BARRERA DE ERROR
+
+   Sin esto, cualquier excepción durante el render desmonta el árbol entero y
+   la aplicación se queda en blanco: no se ve la pestaña rota, pero tampoco la
+   navegación para salir de ella. Ya ha pasado una vez con una propuesta
+   guardada que no se podía trasladar a la agenda.
+
+   Es la única clase del proyecto: React solo permite capturar errores de
+   render en componentes de clase, no hay equivalente con hooks.
+   ============================================================ */
+class Barrera extends Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+
+  /* La clave es `zona`: al cambiar de pestaña se remonta la barrera y se
+     limpia el error, para que un fallo en una pantalla no deje inservibles
+     las demás. */
+  componentDidUpdate(prev) {
+    if (prev.zona !== this.props.zona && this.state.error) this.setState({ error: null });
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (<div className="card" style={{ borderColor: "var(--alert)" }}>
+      <span className="tag alert">Algo ha fallado aquí</span>
+      <p className="sm" style={{ margin: "9px 0 0" }}>
+        No se ha podido mostrar esta pantalla. El resto de la aplicación sigue funcionando
+        y tus datos están guardados: usa la barra de abajo para ir a otra pestaña.
+      </p>
+      <p className="xs muted mono" style={{ margin: "9px 0 0", overflowWrap: "anywhere" }}>
+        {String(this.state.error?.message || this.state.error)}
+      </p>
+      <div style={{ height: 10 }} />
+      <button className="btn ghost sm" style={{ width: "100%" }} onClick={() => this.setState({ error: null })}>
+        Reintentar
+      </button>
+    </div>);
+  }
+}
+
 function Semana(ctx) {
   const [vista, setVista] = useState("semana");
   return (<div>
@@ -2036,10 +2082,20 @@ function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia,
   const proposalByDay = {};
   const detailedSessions = draft?.source === "server" ? draft.proposal.sessions
     : (!draft && saved?.source === "ai-rag" ? (saved.sessions || []) : []);
-  detailedSessions.forEach((session) => {
-    const assignment = proposalSessionsToAssignments([session], sp.inicio)[0];
-    proposalByDay[assignment.day] = session;
-  });
+  /* El detalle por sesión es un extra sobre la semana, no la semana.
+     `proposalSessionsToAssignments()` LANZA si una sesión no se puede situar
+     (sin día, sin código, o dos el mismo día), y aquí estamos en pleno render:
+     una propuesta guardada que ya no encaja tumbaba el árbol de React y dejaba
+     la pestaña Semana en blanco.
+
+     Se protege sesión a sesión, no el bloque entero, para que una sola
+     incompatible no se lleve por delante el detalle de las demás. */
+  for (const session of detailedSessions) {
+    try {
+      const [assignment] = proposalSessionsToAssignments([session], sp.inicio);
+      if (assignment) proposalByDay[assignment.day] = session;
+    } catch { /* esa sesión no se puede situar en la agenda; el resto sí */ }
+  }
   const warningText = (value) => typeof value === "string" ? value : value?.message || value?.text || JSON.stringify(value);
 
   return (<div>
