@@ -3485,6 +3485,193 @@ const GENERALES = [
   ["Sueño", "7-9 h. Es la variable de recuperación con más impacto y la primera que se nota cuando falla."],
 ];
 
+/* ============================================================
+   CONTEO DIARIO Y REGISTRO DE ALIMENTOS (§48, §49)
+
+   El objetivo lo calcula el motor determinista con su suelo de seguridad y no
+   lo toca ninguna API. Open Food Facts solo dice cuánto tiene un alimento.
+   Aquí se restan, y la resta la hace el servidor: el cliente no suma macros.
+   ============================================================ */
+const MOMENTOS_COMIDA = [["desayuno", "Desayuno"], ["comida", "Comida"], ["cena", "Cena"], ["snack", "Snack"]];
+
+/* `objetivoLocal` es el que acaba de calcular el motor determinista en este
+   navegador, que es la fuente de la verdad del proyecto. Se usa para pintar y
+   además se publica, para que el Coach y el planificador lo vean desde el
+   servidor en vez de responder "sin objetivos calculados". */
+function ContadorDiario({ notify, objetivoLocal = null }) {
+  const [dia, setDia] = useState(null);          // { consumido, objetivo, restante, registros }
+  const [abierto, setAbierto] = useState(false);
+  const [q, setQ] = useState("");
+  const [resultados, setResultados] = useState(null);
+  const [elegido, setElegido] = useState(null);
+  const [gramos, setGramos] = useState("");
+  const [momento, setMomento] = useState("comida");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const cargar = async () => {
+    try {
+      const r = await fetch("/api/foods/dia", { credentials: "same-origin" });
+      const data = await r.json();
+      /* El objetivo local manda sobre el del servidor: el motor acaba de
+         calcularlo aquí con los datos de hoy, y la fila persistida puede ser
+         de antes de que cambiara la sesión del día. */
+      if (r.ok) setDia({ ...data, objetivo: objetivoLocal || data.objetivo });
+    } catch { /* sin conexión: la pantalla de nutrición sigue sirviendo */ }
+  };
+
+  /* Publicar el objetivo es "fire and forget": si falla, el contador sigue
+     funcionando con el local y solo se pierde que el Coach lo sepa. */
+  const publicar = async () => {
+    if (!objetivoLocal) return;
+    try {
+      await fetch("/api/nutrition/targets", {
+        method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fecha: new Date().toISOString().slice(0, 10),
+          kcal: objetivoLocal.kcal, proteinaG: objetivoLocal.proteina,
+          carbohidratoG: objetivoLocal.carbohidrato, grasaG: objetivoLocal.grasa,
+        }),
+      });
+    } catch { /* el Coach se quedará sin el dato; nada más */ }
+  };
+
+  useEffect(() => { void publicar().then(cargar); }, []);
+
+  const buscar = async () => {
+    const texto = q.trim(); if (!texto) return;
+    setBusy(true); setError(""); setResultados(null);
+    try {
+      const r = await fetch(`/api/foods/buscar?q=${encodeURIComponent(texto)}`, { credentials: "same-origin" });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.message || "No se pudo buscar");
+      setResultados(data);
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const registrar = async () => {
+    const cantidad = Number(String(gramos).replace(",", "."));
+    if (!Number.isFinite(cantidad) || cantidad <= 0) return setError("Pon una cantidad en gramos.");
+    setBusy(true); setError("");
+    try {
+      const r = await fetch("/api/foods/consumo", {
+        method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ alimento: elegido, gramos: cantidad, momento }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.message || "No se pudo registrar");
+      notify(`✓ ${elegido.nombre} · ${cantidad} g.`);
+      setElegido(null); setGramos(""); setResultados(null); setQ(""); setAbierto(false);
+      await cargar();
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const borrar = async (id) => {
+    try {
+      await fetch(`/api/foods/consumo/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "same-origin" });
+      await cargar();
+    } catch { notify("No se pudo borrar el registro."); }
+  };
+
+  const fila = (etiqueta, consumido, objetivo, unidad = "g") => {
+    const pct = objetivo ? Math.min(100, Math.round((consumido / objetivo) * 100)) : 0;
+    return (<div key={etiqueta} style={{ marginBottom: 9 }}>
+      <div className="between xs">
+        <span className="muted">{etiqueta}</span>
+        <span className="mono">{Math.round(consumido)}{objetivo ? ` / ${Math.round(objetivo)}` : ""} {unidad}</span>
+      </div>
+      <div className="prog" style={{ marginTop: 3 }}>
+        {/* Pasarse se ve: la barra cambia de color en vez de quedarse llena. */}
+        <span style={{ width: pct + "%", background: objetivo && consumido > objetivo ? "var(--alert)" : "var(--gym)" }} />
+      </div>
+    </div>);
+  };
+
+  return (<div className="card">
+    <div className="between">
+      <h3>Hoy has comido</h3>
+      <button className="btn ghost sm" onClick={() => setAbierto(!abierto)}>{abierto ? "Cerrar" : "Añadir alimento"}</button>
+    </div>
+
+    {!dia ? <p className="xs muted" style={{ margin: "8px 0 0" }}>Cargando…</p> : (<>
+      <div style={{ marginTop: 12 }}>
+        {fila("Calorías", dia.consumido.kcal, dia.objetivo?.kcal, "kcal")}
+        {fila("Proteína", dia.consumido.proteina, dia.objetivo?.proteina)}
+        {fila("Carbohidratos", dia.consumido.carbohidrato, dia.objetivo?.carbohidrato)}
+        {fila("Grasa", dia.consumido.grasa, dia.objetivo?.grasa)}
+      </div>
+
+      {dia.restante && (<p className="xs muted" style={{ margin: "2px 0 0" }}>
+        Te quedan <span className="mono">{Math.round(dia.restante.kcal)} kcal</span> y <span className="mono">{Math.round(dia.restante.proteina)} g</span> de proteína.
+      </p>)}
+      {!dia.objetivo && <p className="xs muted" style={{ margin: "2px 0 0" }}>Sin objetivo calculado para hoy: se muestra solo lo consumido.</p>}
+      {/* Un total al que le faltan datos no se presenta como exacto. */}
+      {dia.consumido.incompletos > 0 && (<p className="xs" style={{ color: "var(--alert)", margin: "6px 0 0" }}>
+        {dia.consumido.incompletos} {dia.consumido.incompletos === 1 ? "registro no tenía" : "registros no tenían"} datos nutricionales: el total está incompleto.
+      </p>)}
+
+      {!!dia.registros?.length && (<div style={{ marginTop: 12 }}>
+        {dia.registros.map((r) => (<div key={r.id} className="between" style={{ padding: "6px 0", borderTop: "1px solid var(--line)", gap: 8 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="sm" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.nombre}</div>
+            <div className="xs muted mono">{Math.round(r.gramos)} g{r.kcal !== null ? ` · ${Math.round(r.kcal)} kcal` : " · sin datos"}{r.momento ? ` · ${r.momento}` : ""}</div>
+          </div>
+          <button className="icobtn" style={{ width: 30, height: 30, minWidth: 30, minHeight: 30 }} aria-label="Borrar" onClick={() => borrar(r.id)}>×</button>
+        </div>))}
+      </div>)}
+    </>)}
+
+    {abierto && (<div style={{ marginTop: 12, borderTop: "1px solid var(--line)", paddingTop: 12 }}>
+      {!elegido ? (<>
+        <div className="row">
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Yogur griego, arroz, pollo…"
+            onKeyDown={(e) => { if (e.key === "Enter") buscar(); }} style={{ fontFamily: "'IBM Plex Sans',sans-serif" }} />
+          <button className="btn sm" style={{ width: 88 }} onClick={buscar} disabled={busy}>Buscar</button>
+        </div>
+        {busy && <p className="xs muted" style={{ marginTop: 8 }}>Buscando…</p>}
+        {resultados && !resultados.alimentos?.length && <p className="xs muted" style={{ marginTop: 8 }}>Sin resultados.</p>}
+        {resultados?.alimentos?.map((a) => (
+          <button key={a.externalId} className="convitem" onClick={() => { setElegido(a); setGramos(a.racionGramos ? String(a.racionGramos) : ""); }}>
+            {a.nombre}
+            <small>{[a.marca, a.por100g.kcal !== null ? `${a.por100g.kcal} kcal/100 g` : "sin datos nutricionales"].filter(Boolean).join(" · ")}</small>
+          </button>))}
+        {/* Atribución exigida por la licencia ODbL de Open Food Facts. */}
+        {resultados?.atribucion && (<p className="xs muted" style={{ margin: "8px 0 0" }}>
+          <a href={resultados.atribucion.enlace} target="_blank" rel="noreferrer">{resultados.atribucion.texto}</a>
+        </p>)}
+      </>) : (<>
+        <div className="between">
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="sm">{elegido.nombre}</div>
+            <div className="xs muted">{elegido.marca || "sin marca"}</div>
+          </div>
+          <button className="btn ghost sm" onClick={() => setElegido(null)}>Cambiar</button>
+        </div>
+        {elegido.por100g.kcal === null && (<p className="xs" style={{ color: "var(--alert)", margin: "8px 0 0" }}>
+          Este producto no tiene datos nutricionales en Open Food Facts: se registrará sin macros.
+        </p>)}
+        {!!elegido.alergenos?.length && (<p className="xs" style={{ color: "var(--alert)", margin: "6px 0 0" }}>
+          Alérgenos declarados: {elegido.alergenos.join(", ")}.
+        </p>)}
+        <div style={{ height: 9 }} />
+        <div className="grid2">
+          <div><label>Cantidad (g)</label><input inputMode="decimal" value={gramos} onChange={(e) => setGramos(e.target.value)} placeholder="150" /></div>
+          <div><label>Momento</label>
+            <select value={momento} onChange={(e) => setMomento(e.target.value)}>
+              {MOMENTOS_COMIDA.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+        </div>
+        <div style={{ height: 10 }} />
+        <button className="btn primary" onClick={registrar} disabled={busy || !gramos}>Registrar</button>
+      </>)}
+      {error && <p className="xs" style={{ color: "var(--alert)", marginTop: 8 }}>{error}</p>}
+    </div>)}
+  </div>);
+}
+
 function Nutricion({ st, P, update, notify, curW, today, wk, onClose }) {
   const [vista, setVista] = useState("hoy");
   const [dia, setDia] = useState(wk.fuera ? 0 : wk.dayIdx);
@@ -3518,6 +3705,14 @@ function Nutricion({ st, P, update, notify, curW, today, wk, onClose }) {
       <div className="row" style={{ gap: 4, marginBottom: 10 }}>
         {DSHORT.map((d, i) => <button key={i} className={"chip" + (dia === i ? " on" : "")} style={{ flex: 1, padding: "8px 0" }} onClick={() => setDia(i)}>{d}</button>)}
       </div>
+
+      {/* Lo consumido de verdad va antes que la recomendación: es el dato que
+          se consulta a media tarde para saber qué queda (§48). Solo tiene
+          sentido para hoy, no para un día cualquiera de la semana. */}
+      {dia === (wk.fuera ? 0 : wk.dayIdx) && (
+        <ContadorDiario notify={notify} objetivoLocal={{
+          kcal: n.obj.kcal, proteina: n.obj.prot, carbohidrato: n.obj.ch, grasa: n.obj.gras,
+        }} />)}
 
       <div className="card">
         <div className="between"><h3>{DAYS[dia]}</h3><span className="mono" style={{ fontSize: 22 }}>{n.obj.kcal}<span className="muted sm"> kcal</span></span></div>

@@ -110,6 +110,26 @@ test("el consumo guarda un snapshot, y un macro desconocido queda en NULL", asyn
   await db.close();
 });
 
+/* El objetivo de un día es un estado, no un historial: recalcularlo sustituye
+   la fila de esa fecha. Sin esto, abrir la pantalla de nutrición diez veces
+   dejaba diez filas del mismo día y la consulta tenía que adivinar cuál valía. */
+test("recalcular el objetivo del día sustituye la fila, no acumula", async () => {
+  const db = await baseMigrada();
+  const { rows: u } = await db.query(`INSERT INTO users(email) VALUES('obj@test') RETURNING id;`);
+  const { rows: p } = await db.query(`INSERT INTO athlete_profiles(user_id) VALUES($1) RETURNING id;`, [u[0].id]);
+  const { setNutritionTarget } = await import("./repositories/nutrition.js");
+
+  await setNutritionTarget(p[0].id, { fecha: "2026-08-16", kcal: 2400, proteinaG: 145 }, db);
+  await setNutritionTarget(p[0].id, { fecha: "2026-08-16", kcal: 2650, proteinaG: 150 }, db);
+  await setNutritionTarget(p[0].id, { fecha: "2026-08-17", kcal: 2200 }, db);
+
+  const { rows } = await db.query(`SELECT fecha, kcal FROM nutrition_targets ORDER BY fecha;`);
+  assert.equal(rows.length, 2, "dos días, dos filas");
+  assert.equal(Number(rows[0].kcal), 2650, "el recálculo del día 16 sustituyó al anterior");
+  assert.equal(Number(rows[1].kcal), 2200);
+  await db.close();
+});
+
 test("una cantidad imposible no llega a guardarse", async () => {
   const db = await baseMigrada();
   const { rows: u } = await db.query(`INSERT INTO users(email) VALUES('x@test') RETURNING id;`);
