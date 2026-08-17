@@ -1526,7 +1526,15 @@ export default function HybridCoach({ user, activeProfile, onLogout }) {
   /* Lo mínimo para que el coach sepa dónde está el atleta (§12). Solo cuatro
      campos, no el estado de la pantalla: el servidor los filtra por lista
      blanca y de ahí no puede salir texto arbitrario hacia el prompt. */
-  const semanaMirada = tab === "semana" ? clamp(planningWeek || curW, 1, P.plan.totalSemanas) : weekOf(P.plan, today).w;
+  /* `wk.w` y no `curW`: aquí estamos en el cuerpo de HybridCoach, donde la
+     semana actual solo existe como propiedad de `full` (`curW: wk.w`). Escribir
+     `curW` suelto era una variable libre, y al no estar declarada en ningún
+     ámbito lanzaba ReferenceError en cuanto se evaluaba —es decir, con
+     `planningWeek` todavía a null, que es su valor inicial: la primera vez que
+     se abría Mi semana tras cargar la página—. Y como este cálculo ocurre en el
+     render de HybridCoach, FUERA de <Barrera>, se desmontaba el árbol entero y
+     la pantalla se quedaba en negro, sin tarjeta de error y sin navegación. */
+  const semanaMirada = tab === "semana" ? clamp(planningWeek || wk.w, 1, P.plan.totalSemanas) : weekOf(P.plan, today).w;
   const diaMirado = tab === "entrenar" ? (fechaSel || today)
     : tab === "semana" ? semanaPlan(P.plan, semanaMirada).inicio : today;
   const contextoPantalla = {
