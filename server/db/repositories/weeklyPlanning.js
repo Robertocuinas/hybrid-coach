@@ -687,11 +687,17 @@ export async function listWeeklyPlanRevisions(profileId, { planId = null, weekNu
  * Del plan de consultas sale solo la CLAVE y nunca el texto: la consulta
  * `pain_safety` se construye con las zonas lesionadas dentro.
  */
-export async function listPlanningRuns({ limit = 20, status = null } = {}, db = pool) {
+export async function listPlanningRuns({ limit = 20, status = null, onlyFailed = false } = {}, db = pool) {
   const acotado = Math.max(1, Math.min(100, Number(limit) || 20));
   const params = [acotado];
   const filtros = [];
   if (status) { params.push(status); filtros.push(`status = $${params.length}`); }
+  /* `failure IS NOT NULL` y no `status='failed'`: runRecord() reserva el estado
+     `failed` para llm_failed y retrieval_failed —cuando algo externo se cayó— y
+     graba como `completed` las generaciones que sí terminaron pero cuya salida
+     no pasó schema o guardarraíles. Desde fuera las dos son "no salió
+     propuesta", y filtrar por estado escondía justo el caso más común. */
+  if (onlyFailed) filtros.push("failure IS NOT NULL");
   const { rows } = await db.query(
     `SELECT id, kind, status, week_number, provider, model, latency_ms,
             prompt_version, schema_version, rules_version,

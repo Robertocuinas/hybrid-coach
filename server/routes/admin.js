@@ -248,7 +248,13 @@ router.get("/retrieval/config", async (_req, res, next) => {
    ============================================================ */
 router.get("/planning/runs", async (req, res, next) => {
   try {
-    const runs = await listPlanningRuns({ limit: req.query.limit, status: req.query.status || null }, pool);
+    const runs = await listPlanningRuns({
+      limit: req.query.limit,
+      status: req.query.status || null,
+      /* ?failed=true devuelve toda generación que no acabó en propuesta, sin
+         depender de la columna status. Ver listPlanningRuns(). */
+      onlyFailed: String(req.query.failed || "") === "true",
+    }, pool);
     /* El desglose por fase que faltaba: `latency_ms` es el total de la
        generación y cada consulta de retrieval trae el suyo. La diferencia es,
        en la práctica, el LLM más la validación —que es código y no llega al

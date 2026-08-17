@@ -393,3 +393,29 @@ test("el diagnóstico de generaciones no expone datos de salud del atleta", asyn
   }
   await db.close();
 });
+
+/* Una generación que termina pero cuya salida no pasa los guardarraíles se
+   guarda como `completed` con un `failure` dentro: filtrar por status='failed'
+   la escondía, que es exactamente el caso que hay que diagnosticar. */
+test("el filtro de fallos encuentra también las generaciones que terminaron sin propuesta", async () => {
+  const db = await database();
+  const { profileId, planId } = await fixture(db, "fallos");
+  const insertar = (status, failure) => db.query(
+    `INSERT INTO planning_runs(athlete_profile_id,training_plan_id,week_number,kind,status,completed_at,failure)
+     VALUES($1,$2,1,'weekly_plan',$3,now(),$4);`,
+    [profileId, planId, status, failure],
+  );
+  await insertar("completed", JSON.stringify({ code: "guardrail_failed" }));
+  await insertar("failed", JSON.stringify({ code: "llm_failed" }));
+  await insertar("completed", null);
+
+  const fallidas = await listPlanningRuns({ onlyFailed: true }, db);
+  assert.deepEqual(
+    fallidas.map((r) => r.failure.code).sort(),
+    ["guardrail_failed", "llm_failed"],
+    "las dos formas de no acabar en propuesta",
+  );
+  assert.equal((await listPlanningRuns({ status: "failed" }, db)).length, 1, "el estado solo ve la externa");
+  assert.equal((await listPlanningRuns({}, db)).length, 3);
+  await db.close();
+});
