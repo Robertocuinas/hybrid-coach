@@ -35,6 +35,7 @@ import { resolveEmbeddingConfig } from "./server/ai/instance-embeddings.js";
 import { resolveUserLLMProvider } from "./server/ai/user-provider.js";
 import { getEmbeddingStatus, validateEmbeddingStartup } from "./server/embeddings/index-state.js";
 import { readLegacyStravaConfig, requireLegacyStrava } from "./server/integrations/strava-config.js";
+import { comprobarExtractor } from "./server/integrations/pdf-extractor.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -64,6 +65,16 @@ if (readEmbeddingConfig(process.env).enabled && !process.env.DATABASE_URL) {
 }
 await validateEmbeddingStartup(embeddingConfig, pool);
 
+/* El extractor de PDF se comprueba UNA vez al arrancar y se cachea. Es lo
+   primero que hay que saber antes de ingerir bibliografía —sin Python o sin
+   PyMuPDF no entra ni un documento— y hasta ahora solo se veía desde el panel
+   de administración, con sesión de admin.
+
+   Cacheado y no bajo demanda a propósito: `comprobarExtractor()` lanza un
+   subproceso, y exponer eso en un endpoint sin autenticar sería un vector de
+   saturación trivial. */
+const extractorPDF = await comprobarExtractor().catch((error) => ({ ok: false, motivo: error.message }));
+
 app.use(express.json({ limit: "2mb" }));
 app.disable("x-powered-by");
 app.use(securityHeaders);
@@ -87,6 +98,9 @@ app.get("/api/estado", async (_req, res) => {
     db: dbStatus.db,
     pgvector: dbStatus.pgvector,
     embeddings,
+    /* Estado del extractor sin exponer rutas ni versiones del sistema: solo si
+       se puede ingerir bibliografía y, si no, por qué. */
+    extractorPdf: { ok: !!extractorPDF.ok, motivo: extractorPDF.ok ? null : extractorPDF.motivo || null },
     localModel: {
       enabled: !!toolRouterProvider,
       provider: toolRouterProvider ? "needle" : null,
