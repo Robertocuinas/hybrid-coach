@@ -47,6 +47,34 @@ function errorExtractor(error, stderr, env) {
 }
 
 /* ---------- 1. Extracción ---------- */
+
+/* PostgreSQL RECHAZA el byte NUL en cualquier columna de texto: no es que lo
+   guarde raro, es que aborta la inserción entera con «invalid byte sequence
+   for encoding UTF8: 0x00». Un PDF con la codificación de fuentes rota los
+   produce sin avisar, y como el documento y sus chunks se escriben en una
+   transacción, un solo NUL en una página tiraba la ingesta completa del
+   documento. El síntoma en la aplicación era mudo: cero fragmentos y ninguna
+   pista de por qué.
+
+   Los sustitutos sueltos van en el mismo saco por el mismo motivo: son UTF-16
+   mal formado que tampoco sobrevive a la codificación de la conexión.
+
+   Se limpia aquí, en la frontera donde el binario se vuelve texto, y no en el
+   repositorio: así lo hereda TODO lo que sale del extractor —páginas y
+   metadatos— sin que cada consumidor tenga que acordarse. El resto de
+   controles C0 se respetan; no son ilegales y no toca inventarse criterios de
+   limpieza que nadie ha pedido. */
+const SIN_REPRESENTACION = /\u0000|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+export function sanearTexto(valor) {
+  if (typeof valor === "string") return valor.replace(SIN_REPRESENTACION, "");
+  if (Array.isArray(valor)) return valor.map(sanearTexto);
+  if (valor && typeof valor === "object") {
+    return Object.fromEntries(Object.entries(valor).map(([k, v]) => [k, sanearTexto(v)]));
+  }
+  return valor;
+}
+
 export function ejecutarExtractor(buffer, { env = process.env } = {}) {
   return new Promise((resolve, reject) => {
     const hijo = execFile(pythonBin(env), [SCRIPT], {
@@ -55,7 +83,7 @@ export function ejecutarExtractor(buffer, { env = process.env } = {}) {
       windowsHide: true,
     }, (error, stdout, stderr) => {
       if (error) return reject(errorExtractor(error, stderr, env));
-      try { resolve(JSON.parse(stdout)); }
+      try { resolve(sanearTexto(JSON.parse(stdout))); }
       catch { reject(new Error("El extractor devolvió una salida ilegible")); }
     });
     hijo.stdin.end(buffer);

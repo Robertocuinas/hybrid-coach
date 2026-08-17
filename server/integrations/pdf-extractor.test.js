@@ -6,11 +6,40 @@ import { fileURLToPath } from "node:url";
 import {
   extraerDOI, limpiarPaginas, detectarSecciones, seccionDeEncabezado,
   normalizarFicha, extraerJSON, extraerDocumento, comprobarExtractor, pythonBin,
+  sanearTexto,
 } from "./pdf-extractor.js";
 
 const SCRIPT_EXTRACTOR = path.join(path.dirname(fileURLToPath(import.meta.url)), "extract.py");
 
 /* ---------- Puras: no necesitan Python ---------- */
+
+/* Regresión de producción: un PDF con la codificación de fuentes rota metía un
+   NUL en el texto y PostgreSQL abortaba la transacción de la ingesta entera con
+   «invalid byte sequence for encoding UTF8: 0x00». No se veía nada en la
+   aplicación: cero fragmentos y ningún error visible. */
+test("el texto extraído sale sin bytes que PostgreSQL rechaza", () => {
+  const NUL = String.fromCharCode(0);
+  assert.equal(sanearTexto(`entrena${NUL}miento`), "entrenamiento");
+
+  /* Un sustituto suelto es UTF-16 mal formado y falla igual que el NUL; una
+     pareja bien formada es un carácter legítimo y NO debe tocarse. */
+  assert.equal(sanearTexto("VO2\uD800max"), "VO2max");
+  assert.equal(sanearTexto("progreso 💪"), "progreso 💪");
+
+  /* Recorre estructuras: del extractor sale un objeto con páginas y metadatos,
+     no una cadena suelta, y cualquiera de los dos llega a la base. */
+  const limpio = sanearTexto({
+    meta: { titulo: `Fuerza${NUL} y resistencia` },
+    paginas: [{ numero: 1, bloques: [`bloque${NUL}`, "sano"] }],
+  });
+  assert.equal(limpio.meta.titulo, "Fuerza y resistencia");
+  assert.deepEqual(limpio.paginas[0].bloques, ["bloque", "sano"]);
+
+  /* Los saltos de línea y tabuladores son estructura real del PDF: si se
+     colaran en la limpieza se perderían los párrafos y el troceado por
+     secciones dejaría de funcionar. */
+  assert.equal(sanearTexto("uno\ndos\ttres"), "uno\ndos\ttres");
+});
 
 test("el DOI se extrae del texto y se limpia la puntuación final", () => {
   assert.equal(extraerDOI("Disponible en doi: 10.1519/JSC.0b013e31823a3e2d."), "10.1519/JSC.0b013e31823a3e2d");
