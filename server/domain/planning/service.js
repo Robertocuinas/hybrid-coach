@@ -185,6 +185,10 @@ export async function planificarSemana(contexto = {}, deps = {}) {
     contexto: contextoCanonico, analytics, queries, evidence: seleccion.chunks,
     semana: limitesSemana(contextoCanonico),
     disponibilidad: idsDisponibilidad(contextoCanonico),
+    /* La MISMA configuración que evaluará los guardarraíles: si el prompt
+       anunciara otros topes, se le exigiría al modelo algo distinto de lo que
+       se le valida. */
+    guardrailConfig,
   });
   let respuesta;
   try {

@@ -1,6 +1,7 @@
 import { WEEKLY_PLAN_SCHEMA_VERSION, MODALIDADES, TIPOS_SESION, PRIORIDADES, TIPOS_CAMBIO, diaDeFecha } from "./schema.js";
+import { DEFAULT_GUARDRAIL_CONFIG, derivarCambiosPlan } from "./guardrails.js";
 
-export const PLANNER_PROMPT_VERSION = "weekly-planner.2";
+export const PLANNER_PROMPT_VERSION = "weekly-planner.3";
 
 export const SYSTEM_PROMPT_PLANIFICADOR = `Eres el motor táctico semanal de Hybrid Coach. Adaptas una semana de un plan maestro de carrera y fuerza; nunca inventas un plan maestro nuevo.
 
@@ -38,6 +39,10 @@ FORMATO
 - day_of_week es un entero con lunes=0, martes=1, miércoles=2, jueves=3, viernes=4, sábado=5, domingo=6. NO es la numeración de JavaScript. Tómalo de CALENDARIO_DE_LA_SEMANA, que ya lo trae resuelto para cada fecha, y no lo calcules por tu cuenta.
 - Cada sesión debe caer en una fecha marcada disponible en CALENDARIO_DE_LA_SEMANA.
 - En changes_from_master_plan, before y after son objeto o null; nunca una cadena de texto.
+- evidence_ids NO es opcional ni decorativo: CADA sesión y CADA cambio necesita al menos un id del bloque de evidencia. Una sesión o un cambio con la lista vacía invalida toda la propuesta.
+- Etiqueta change_from_master comparando tu sesión con la de BASE_ACTIVA que le corresponde: fecha distinta es "moved"; modalidad, tipo o código distintos es "substituted"; menos duración o menos intensidad es "reduced"; igual en todo es "unchanged"; y una sesión de BASE_ACTIVA que no reprogramas es "removed". El código recalcula este diff por su cuenta, así que una etiqueta optimista no pasa: se detecta.
+- Todo cambio que no sea "unchanged" debe aparecer ADEMÁS en changes_from_master_plan con el mismo type, su session_key y su evidencia. Y al contrario: no declares ahí nada que no haya cambiado de verdad.
+- Respeta los valores de LIMITES_QUE_VALIDA_EL_CODIGO. Tener un día disponible no obliga a usarlo: si respetar el tope de días consecutivos exige dejar un día disponible sin sesión, déjalo.
 - Cada sesión debe contener exactamente: session_key, date, day_of_week, modality, session_type, master_session_code, title, priority, duration_min, intensity, prescription, objective, public_reason, evidence_ids, change_from_master.
 - intensity contiene exactamente rpe_min, rpe_max, rir_min, rir_max, pace_zone.
 - prescription contiene exactamente distance_km, sets, reps, notes.
@@ -129,8 +134,53 @@ function bloqueSemana(contexto, semana, disponibilidad) {
   };
 }
 
-export function construirPromptPlanificador({ contexto, analytics, queries, evidence, semana = null, disponibilidad = null }) {
+/* La base activa que el validador usará para deducir qué cambió, entregada tal
+   cual. Sale de `derivarCambiosPlan(contexto, [])`: sin sesiones propuestas toda
+   sesión base vuelve como `removed` con su resumen en `before`, así que esto es
+   literalmente la misma lista y la misma forma que verá el guardarraíl. Es a
+   propósito: describir la base por separado invitaría a que las dos versiones se
+   separasen con el tiempo. */
+function bloqueBaseActiva(contexto) {
+  try {
+    return derivarCambiosPlan(contexto, [])
+      .filter((c) => c.before)
+      .map((c) => ({ session_key: c.session_key, ...c.before }));
+  } catch { return []; }
+}
+
+/* Los límites numéricos que aplica el código. El prompt decía "los
+   guardarraíles los ejecuta código, no los discutas" sin decir CUÁLES son: se
+   estaba puntuando al modelo con reglas que nunca se le contaron, y por eso
+   fallaba de forma sistemática en MAX_STREAK y HEAVY_BEFORE_LONG_RUN. Se leen
+   de la configuración real, no se reescriben aquí, para que no puedan divergir. */
+function bloqueLimites(cfg, calendario) {
+  const disponibles = (calendario || []).filter((d) => d.disponible);
+  /* Racha disponible más larga: con cuatro días seguidos y un tope de tres, el
+     modelo TIENE que dejar uno de descanso, y eso no se deduce de la lista. */
+  let racha = 0, maxRacha = 0, previo = null;
+  for (const dia of disponibles) {
+    racha = previo !== null && dia.day_of_week === previo + 1 ? racha + 1 : 1;
+    maxRacha = Math.max(maxRacha, racha);
+    previo = dia.day_of_week;
+  }
+  return {
+    max_dias_consecutivos_con_sesion: cfg.maxConsecutiveTrainingDays,
+    min_dias_descanso_en_la_semana: cfg.minRestDays,
+    min_dias_entre_fuerza_pesada_y_tirada_larga: cfg.minHeavyBeforeLongRunDays,
+    max_incremento_volumen_semanal_pct: cfg.maxWeeklyIncreasePct,
+    evidencia_obligatoria_por_sesion: !!cfg.requireEvidencePerSession,
+    dias_disponibles: disponibles.length,
+    racha_disponible_mas_larga: maxRacha,
+    ...(maxRacha > cfg.maxConsecutiveTrainingDays ? {
+      aviso: `Hay ${maxRacha} días disponibles consecutivos y el tope es ${cfg.maxConsecutiveTrainingDays}: deja al menos uno de ellos SIN sesión.`,
+    } : {}),
+  };
+}
+
+export function construirPromptPlanificador({ contexto, analytics, queries, evidence, semana = null, disponibilidad = null, guardrailConfig = {} }) {
   const bloque = bloqueSemana(contexto, semana, disponibilidad);
+  const cfg = { ...DEFAULT_GUARDRAIL_CONFIG, ...guardrailConfig };
+  const base = bloqueBaseActiva(contexto);
   const user = [
     "DATOS_Y_PLAN_MAESTRO",
     JSON.stringify(contextoMinimo(contexto), null, 2),
@@ -141,6 +191,14 @@ export function construirPromptPlanificador({ contexto, analytics, queries, evid
       "",
       "CALENDARIO_DE_LA_SEMANA (day_of_week ya resuelto; solo puedes usar las fechas disponibles)",
       JSON.stringify(bloque.calendario, null, 2),
+      "",
+      "LIMITES_QUE_VALIDA_EL_CODIGO (tu propuesta se rechaza si los incumple)",
+      JSON.stringify(bloqueLimites(cfg, bloque.calendario), null, 2),
+      "",
+    ] : []),
+    ...(base.length ? [
+      "BASE_ACTIVA (con esto se calcula qué has cambiado; compara TU fecha con la de aquí)",
+      JSON.stringify(base, null, 2),
       "",
     ] : []),
     "ANALITICA_DETERMINISTA",

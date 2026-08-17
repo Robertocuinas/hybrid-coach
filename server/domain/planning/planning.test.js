@@ -420,3 +420,74 @@ test("el prompt entrega resueltos week y el calendario que exige el validador", 
   assert.ok(texto.includes('"master_week"'), "la semana maestra se entrega como master_week");
   assert.ok(!/"week":\s*\{\s*"id"/.test(texto), "y nunca como `week` con la forma de la tabla");
 });
+
+/* Segunda tanda de runs fallidos (weekly-planner.2): los schemaErrors ya eran
+   cero, pero caían los guardarraíles con MAX_STREAK, HEAVY_BEFORE_LONG_RUN,
+   SESSION_WITHOUT_EVIDENCE y SESSION_CHANGE_MISMATCH.
+
+   La causa era la misma clase de omisión: el prompt decía "los guardarraíles los
+   ejecuta código, no los discutas" sin decir CUÁLES son. Con L-M-X-J disponibles
+   —cuatro días seguidos— y un tope de tres consecutivos, el modelo no podía
+   saber que tenía que dejar uno sin sesión. */
+test("el prompt anuncia los límites que después se validan, sin poder divergir", async () => {
+  const { construirPromptPlanificador } = await import("./prompt.js");
+  const { DEFAULT_GUARDRAIL_CONFIG } = await import("./guardrails.js");
+  const prompt = construirPromptPlanificador({
+    contexto: { plan: { id: "p" }, week: { id: "w" }, profile: {} },
+    analytics: {}, queries: [], evidence: [],
+    semana: { start: "2026-08-17", end: "2026-08-23" },
+    disponibilidad: [0, 1, 2, 3],
+  });
+  const texto = prompt.messages[0].content;
+  const limites = JSON.parse(texto.split("LIMITES_QUE_VALIDA_EL_CODIGO (tu propuesta se rechaza si los incumple)\n")[1].split("\n\n")[0]);
+
+  assert.equal(limites.max_dias_consecutivos_con_sesion, DEFAULT_GUARDRAIL_CONFIG.maxConsecutiveTrainingDays,
+    "el tope anunciado sale de la configuración real, no de una copia en prosa");
+  assert.equal(limites.min_dias_entre_fuerza_pesada_y_tirada_larga, DEFAULT_GUARDRAIL_CONFIG.minHeavyBeforeLongRunDays);
+  assert.equal(limites.evidencia_obligatoria_por_sesion, true);
+
+  assert.equal(limites.racha_disponible_mas_larga, 4, "L-M-X-J son cuatro consecutivos");
+  assert.match(limites.aviso, /deja al menos uno de ellos SIN sesión/,
+    "cuatro días seguidos con tope de tres exige avisar de que uno se queda fuera");
+});
+
+/* Un tope configurado más alto que la racha disponible no debe generar el aviso:
+   si no, el modelo aprendería a ignorarlo por aparecer siempre. */
+test("sin conflicto entre disponibilidad y tope no se avisa de nada", async () => {
+  const { construirPromptPlanificador } = await import("./prompt.js");
+  const prompt = construirPromptPlanificador({
+    contexto: { plan: { id: "p" }, week: { id: "w" }, profile: {} },
+    analytics: {}, queries: [], evidence: [],
+    semana: { start: "2026-08-17", end: "2026-08-23" },
+    disponibilidad: [0, 2, 4],
+  });
+  const texto = prompt.messages[0].content;
+  const limites = JSON.parse(texto.split("LIMITES_QUE_VALIDA_EL_CODIGO (tu propuesta se rechaza si los incumple)\n")[1].split("\n\n")[0]);
+  assert.equal(limites.racha_disponible_mas_larga, 1, "días alternos no hacen racha");
+  assert.equal(limites.aviso, undefined);
+});
+
+/* La base con la que el validador calcula el diff y la que ve el modelo tienen
+   que ser la misma lista: si se describieran por separado, acabarían separadas y
+   volverían los SESSION_CHANGE_MISMATCH. */
+test("la base activa del prompt es la que usa el diff de guardarraíles", async () => {
+  const { construirPromptPlanificador } = await import("./prompt.js");
+  const { derivarCambiosPlan } = await import("./guardrails.js");
+  const contexto = {
+    plan: { id: "p" }, week: { id: "w", sessions: [
+      { id: "s1", codigo_sesion: "GYM A", dia_semana: 0, tipo: "strength", duracion_min: 45, fecha: "2026-08-17" },
+      { id: "s2", codigo_sesion: "RUN A", dia_semana: 5, tipo: "running", duracion_min: 80, fecha: "2026-08-22" },
+    ] },
+    profile: {},
+  };
+  const prompt = construirPromptPlanificador({
+    contexto, analytics: {}, queries: [], evidence: [],
+    semana: { start: "2026-08-17", end: "2026-08-23" }, disponibilidad: [0, 5],
+  });
+  const texto = prompt.messages[0].content;
+  assert.ok(texto.includes("BASE_ACTIVA"), "la base viaja en el prompt");
+  const base = JSON.parse(texto.split("BASE_ACTIVA (con esto se calcula qué has cambiado; compara TU fecha con la de aquí)\n")[1].split("\n\n")[0]);
+  const derivada = derivarCambiosPlan(contexto, []).filter((c) => c.before);
+  assert.equal(base.length, derivada.length, "misma cantidad de sesiones base");
+  assert.deepEqual(base.map((b) => b.session_key), derivada.map((c) => c.session_key));
+});
