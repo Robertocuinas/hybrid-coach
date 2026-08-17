@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import pool from "../../server/db/pool.js";
 import { createEmbeddingProvider, readEmbeddingConfig } from "../../server/ai/factory.js";
+import { resolveEmbeddingConfig, resolveEmbeddingProvider } from "../../server/ai/instance-embeddings.js";
 import { procesarChunksPorLotes } from "../../server/ingestion/embedder.js";
 import { activateIndex, markIndexBuilding, markIndexFailed, refreshIndexProgress } from "../../server/embeddings/index-state.js";
 
@@ -12,7 +13,12 @@ export async function reindexEmbeddings({
   pageSize = 100,
   onProgress = () => {},
 } = {}) {
-  if (!config.enabled || !provider) throw new Error("Configura EMBEDDING_PROVIDER, EMBEDDING_MODEL y EMBEDDING_API_KEY antes de reindexar");
+  /* El mensaje nombra los dos caminos a propósito: el anterior solo hablaba de
+     variables de entorno y mandaba a configurar por ahí a quien ya lo tenía
+     puesto en el panel, que es donde manda. */
+  if (!config.enabled || !provider) {
+    throw new Error("No hay embeddings configurados: ponlos en Administración → Embeddings, o define EMBEDDING_PROVIDER, EMBEDDING_MODEL y EMBEDDING_API_KEY en el entorno");
+  }
   const totalResult = await db.query(`SELECT count(*)::int AS total FROM document_chunks;`);
   const total = totalResult.rows[0]?.total || 0;
   await markIndexBuilding(db, config, total);
@@ -61,10 +67,28 @@ export async function reindexEmbeddings({
   }
 }
 
+/* La configuración se resuelve como la resuelve el servidor: lo guardado en la
+   base MANDA sobre el entorno (migración 0009). Tomarla solo del entorno, que
+   es lo que hacía este script, tiene dos finales y los dos son malos cuando los
+   embeddings se han configurado desde el panel de administración:
+
+     - sin variables EMBEDDING_* en el proceso, aborta diciendo que no hay nada
+       configurado cuando sí lo hay;
+     - con variables distintas a las guardadas, construye y ACTIVA un índice
+       bajo otro (provider, model, dimensions). El servidor, que lee la config
+       de la base, no lo reconoce como suyo y el retrieval sigue sin vectores
+       después de haber pagado el reindexado entero.
+
+   `scripts/ingest-biblio.js` ya lo hacía así; esto lo pone de acuerdo. */
 async function main() {
   const force = process.argv.includes("--force");
+  const config = await resolveEmbeddingConfig({ db: pool });
+  const provider = await resolveEmbeddingProvider({ db: pool });
+  console.log(`Configuración de embeddings: ${config.enabled ? `${config.provider}/${config.model} (${config.dimensions}d, ${config.origen})` : "sin configurar"}`);
   const result = await reindexEmbeddings({
     force,
+    config,
+    provider,
     onProgress: ({ indexed, total, tokens }) => console.log(`Embeddings: ${indexed}/${total} chunks · ${tokens} tokens`),
   });
   console.log(`Reindexado completo: ${result.indexed_chunks}/${result.total_chunks} chunks con ${result.provider}/${result.model} (${result.dimensions}d).`);
