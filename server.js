@@ -399,12 +399,19 @@ app.get("/api/strava/actividades", requireAuth, requireLegacyStravaEnabled, asyn
   }
 });
 
-app.use((error, _req, res, _next) => {
+app.use((error, req, res, _next) => {
   const requested = Number(error.status);
   const status = error.code === "23505" ? 409
     : Number.isInteger(requested) && requested >= 400 && requested < 600 ? requested
       : 500;
-  if (status === 500) console.error("Error interno de API:", error.name, error.code || "");
+  /* Con el nombre y el código del error a secas no se puede saber QUÉ ruta ha
+     fallado, y un 500 en producción se queda sin diagnóstico posible. Se añade
+     método y ruta, recortando la query: ahí es donde viajan los términos de
+     búsqueda de alimentos y no tienen por qué acabar en un log. */
+  if (status === 500) {
+    const ruta = String(req.originalUrl || req.url || "").split("?")[0].slice(0, 120);
+    console.error("Error interno de API:", req.method, ruta, error.name, error.code || "");
+  }
   const postgresError = /^[0-9A-Z]{5}$/.test(String(error.code || ""));
   const safeMessage = error.publicMessage
     || (error.code === "23505" ? "El registro ya existe"
