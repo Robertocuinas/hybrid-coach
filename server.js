@@ -79,7 +79,20 @@ const {
 if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
   throw new Error("SESSION_SECRET es obligatoria y debe tener al menos 32 caracteres.");
 }
-const llmProvider = createLLMProvider(process.env);
+/* Una configuración de proveedor incompleta NO puede impedir el arranque. Poner
+   LLM_PROVIDER=openai y olvidar LLM_MODEL o LLM_API_KEY hacía que readLLMConfig()
+   lanzara en el nivel superior del módulo: exit 1 y bucle de reinicio en Railway,
+   con toda la aplicación fuera por una capa que es opcional por diseño.
+   Sin proveedor la app funciona igual —lo dice la cabecera de este fichero— así
+   que el fallo se registra y se sigue con la IA desactivada. Y se registra fuerte:
+   una IA que calla porque una variable está a medias es peor que una que falta. */
+function crearProveedorOpcional(nombre, factoria) {
+  try { return factoria(); } catch (error) {
+    console.error(`[arranque] ${nombre} desactivado por configuración incompleta:`, error.message);
+    return null;
+  }
+}
+const llmProvider = crearProveedorOpcional("IA", () => createLLMProvider(process.env));
 /* La configuración de embeddings puede venir de la base de datos (ajuste de
    instancia editable desde la aplicación) o del entorno. Se resuelve aquí para
    que la validación de arranque compruebe la que se va a usar de verdad.
@@ -90,7 +103,7 @@ const llmProvider = createLLMProvider(process.env);
    llegar a consultar la base, de modo que /api/estado seguía diciendo "sin
    embeddings" —y cero fragmentos— con el índice ya poblado. */
 const embeddingConfig = await resolveEmbeddingConfig({ db: pool, env: process.env });
-const toolRouterProvider = createToolRouterProvider(process.env);
+const toolRouterProvider = crearProveedorOpcional("modelo local de enrutado", () => createToolRouterProvider(process.env));
 if (readEmbeddingConfig(process.env).enabled && !process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL es obligatoria cuando los embeddings están activados.");
 }
