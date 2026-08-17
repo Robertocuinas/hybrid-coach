@@ -82,7 +82,13 @@ if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
 const llmProvider = createLLMProvider(process.env);
 /* La configuración de embeddings puede venir de la base de datos (ajuste de
    instancia editable desde la aplicación) o del entorno. Se resuelve aquí para
-   que la validación de arranque compruebe la que se va a usar de verdad. */
+   que la validación de arranque compruebe la que se va a usar de verdad.
+
+   Esta copia es SOLO para la validación de arranque. No la reutilices para
+   informar del estado: al configurarse los embeddings desde el panel, la copia
+   de arranque se queda vieja y `getEmbeddingStatus()` cortocircuita a ceros sin
+   llegar a consultar la base, de modo que /api/estado seguía diciendo "sin
+   embeddings" —y cero fragmentos— con el índice ya poblado. */
 const embeddingConfig = await resolveEmbeddingConfig({ db: pool, env: process.env });
 const toolRouterProvider = createToolRouterProvider(process.env);
 if (readEmbeddingConfig(process.env).enabled && !process.env.DATABASE_URL) {
@@ -150,7 +156,10 @@ app.get("/health", async (_req, res) => {
 });
 app.get("/api/estado", async (_req, res) => {
   const dbStatus = await checkDatabaseStatus();
-  const embeddings = await getEmbeddingStatus(embeddingConfig, pool);
+  /* Se relee en vez de usar la copia de arranque: el panel guarda en la base y
+     el estado debe reflejarlo sin redesplegar. `resolveEmbeddingConfig()` ya
+     cachea 60 s, así que esto no añade una consulta por petición. */
+  const embeddings = await getEmbeddingStatus(await resolveEmbeddingConfig({ db: pool, env: process.env }), pool);
   const localModelHealth = toolRouterProvider ? await toolRouterProvider.health() : { ready: false, version: null };
   res.json({
     ok: true,
