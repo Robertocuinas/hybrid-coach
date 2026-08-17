@@ -675,6 +675,42 @@ export async function listWeeklyPlanRevisions(profileId, { planId = null, weekNu
   return rows;
 }
 
+/* Diagnóstico de generaciones para el panel de administración.
+ *
+ * La lista de campos es una LISTA BLANCA, no un `SELECT *`, y eso es
+ * deliberado: `input_snapshot`, `analytics` y `validated_output` contienen
+ * peso, lesiones, dolor y sensaciones —datos de salud del atleta (CLAUDE.md
+ * §8)— y quien mira este panel es otra persona. Para saber por qué falló una
+ * generación basta con el fallo, los errores de validación y los contadores del
+ * retrieval; nada de eso describe al atleta.
+ *
+ * Del plan de consultas sale solo la CLAVE y nunca el texto: la consulta
+ * `pain_safety` se construye con las zonas lesionadas dentro.
+ */
+export async function listPlanningRuns({ limit = 20, status = null } = {}, db = pool) {
+  const acotado = Math.max(1, Math.min(100, Number(limit) || 20));
+  const params = [acotado];
+  const filtros = [];
+  if (status) { params.push(status); filtros.push(`status = $${params.length}`); }
+  const { rows } = await db.query(
+    `SELECT id, kind, status, week_number, provider, model, latency_ms,
+            prompt_version, schema_version, rules_version,
+            failure, validation_results, retrieval_diagnostics, query_plan,
+            started_at, completed_at, created_at
+       FROM planning_runs
+      ${filtros.length ? `WHERE ${filtros.join(" AND ")}` : ""}
+      ORDER BY created_at DESC
+      LIMIT $1;`, params,
+  );
+  return rows.map((run) => ({
+    ...run,
+    queryPlan: (Array.isArray(run.query_plan) ? run.query_plan : []).map((q) => ({
+      key: q?.key || null, required: q?.required ?? null,
+    })),
+    query_plan: undefined,
+  }));
+}
+
 export async function createPlanChangeProposal(profileId, data, db = pool) {
   if (!profileId || !data?.planningRunId || !data?.changeType) {
     throw new TypeError("profileId, planningRunId y changeType son obligatorios");

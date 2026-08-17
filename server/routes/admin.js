@@ -18,6 +18,7 @@ import {
   deleteInstanceEmbeddingSettings, findInstanceEmbeddingSettings,
   saveInstanceEmbeddingSettings, updateInstanceEmbeddingTest,
 } from "../db/repositories/embeddingSettings.js";
+import { listPlanningRuns } from "../db/repositories/weeklyPlanning.js";
 import { ingerirPDF, IngestaError, MAX_BYTES } from "../ingestion/pipeline.js";
 import { recuperar } from "../rag/retrieval.js";
 
@@ -231,6 +232,61 @@ router.get("/retrieval/config", async (_req, res, next) => {
       rerank: { provider, model: model || null, baseURL: baseURL || null },
       embeddings: embeddings.enabled ? { provider: embeddings.provider, model: embeddings.model, dimensions: embeddings.dimensions } : null,
     });
+  } catch (error) { next(error); }
+});
+
+/* ============================================================
+   PLANIFICADOR — diagnóstico de generaciones
+
+   `planning_runs` ya guardaba por qué falló cada generación y cuánto tardó,
+   pero no había forma de leerlo sin abrir una consola de PostgreSQL, así que
+   en la práctica nadie lo miraba y un planificador roto solo se veía como un
+   mensaje genérico en la pantalla del atleta.
+
+   No devuelve datos de salud: el repositorio filtra por lista blanca y aquí
+   solo se derivan agregados. Ver listPlanningRuns().
+   ============================================================ */
+router.get("/planning/runs", async (req, res, next) => {
+  try {
+    const runs = await listPlanningRuns({ limit: req.query.limit, status: req.query.status || null }, pool);
+    /* El desglose por fase que faltaba: `latency_ms` es el total de la
+       generación y cada consulta de retrieval trae el suyo. La diferencia es,
+       en la práctica, el LLM más la validación —que es código y no llega al
+       milisegundo—, así que sirve para saber si el tiempo se va en recuperar
+       evidencia o en el modelo, que es la pregunta que importa. */
+    const resumen = runs.map((run) => {
+      const diagnosticos = Array.isArray(run.retrieval_diagnostics) ? run.retrieval_diagnostics : [];
+      const latenciasRetrieval = diagnosticos.map((d) => Number(d?.diagnostico?.latenciaMs) || 0);
+      /* Las consultas van en paralelo (Promise.allSettled): el coste real del
+         retrieval es la más lenta, no la suma. */
+      const retrievalMs = latenciasRetrieval.length ? Math.max(...latenciasRetrieval) : null;
+      const totalMs = Number(run.latency_ms) || null;
+      return {
+        id: run.id,
+        kind: run.kind,
+        status: run.status,
+        weekNumber: run.week_number,
+        provider: run.provider,
+        model: run.model,
+        createdAt: run.created_at,
+        promptVersion: run.prompt_version,
+        rulesVersion: run.rules_version,
+        fases: {
+          totalMs,
+          retrievalMs,
+          restoMs: totalMs !== null && retrievalMs !== null ? Math.max(0, totalMs - retrievalMs) : null,
+          consultas: diagnosticos.map((d) => ({
+            key: d?.queryKey || null, chunks: d?.chunks ?? 0,
+            hayEvidencia: d?.hayEvidencia ?? null, motivo: d?.motivo || null,
+            latenciaMs: Number(d?.diagnostico?.latenciaMs) || null,
+          })),
+        },
+        queryPlan: run.queryPlan,
+        failure: run.failure,
+        validationResults: run.validation_results,
+      };
+    });
+    res.json({ ok: true, runs: resumen });
   } catch (error) { next(error); }
 });
 

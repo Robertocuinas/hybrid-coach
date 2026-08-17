@@ -13,6 +13,7 @@ import {
   getPlanChangeProposal,
   getWeeklyPlanRevision,
   hashPlanningInput,
+  listPlanningRuns,
   readCanonicalPlanningContext,
   rejectWeeklyPlanRevision,
 } from "./weeklyPlanning.js";
@@ -348,5 +349,47 @@ test("a draft from a replaced master plan cannot be accepted", async () => {
     }, db),
     (error) => error instanceof PlanningConflictError && error.status === 409,
   );
+  await db.close();
+});
+
+/* El panel de administración lo mira otra persona, no el atleta. Que el
+   diagnóstico de una generación no arrastre peso, dolor ni lesiones es la razón
+   de que listPlanningRuns() use lista blanca en vez de SELECT *; sin este test,
+   añadir un campo al SELECT filtraría datos de salud sin que nadie lo note. */
+test("el diagnóstico de generaciones no expone datos de salud del atleta", async () => {
+  const db = await database();
+  const { profileId, planId } = await fixture(db, "runs");
+  await db.query(
+    `INSERT INTO planning_runs(athlete_profile_id,training_plan_id,week_number,kind,status,
+       provider,model,latency_ms,completed_at,
+       input_snapshot,analytics,query_plan,retrieval_diagnostics,validation_results,failure)
+     VALUES($1,$2,1,'weekly_plan','failed','openai','gpt-x',8200,now(),
+       $3,$4,$5,$6,$7,$8);`,
+    [profileId, planId,
+      JSON.stringify({ profile: { peso_kg: 74.5, lesiones: ["tendinitis aquiles"] } }),
+      JSON.stringify({ seguridad: { dolorMaximo: 4 }, ventana7d: { fatigaMedia: 6 } }),
+      JSON.stringify([{ key: "pain_safety", query: "dolor en gemelo izquierdo", required: true }]),
+      JSON.stringify([{ queryKey: "pain_safety", chunks: 3, hayEvidencia: true, diagnostico: { latenciaMs: 640 } }]),
+      JSON.stringify([{ path: "sessions.0.evidence_ids", code: "unknown_evidence_id" }]),
+      JSON.stringify({ status: "invalid", code: "guardrail_failed" }),
+    ],
+  );
+
+  const [run] = await listPlanningRuns({ limit: 5 }, db);
+  const serializado = JSON.stringify(run);
+
+  assert.equal(run.status, "failed");
+  assert.equal(run.latency_ms, 8200);
+  assert.deepEqual(run.failure, { status: "invalid", code: "guardrail_failed" });
+  assert.equal(run.validation_results[0].code, "unknown_evidence_id", "el motivo del fallo sí debe llegar");
+  assert.equal(run.retrieval_diagnostics[0].diagnostico.latenciaMs, 640, "y la latencia por consulta también");
+
+  assert.equal(run.input_snapshot, undefined, "el snapshot lleva peso y lesiones");
+  assert.equal(run.analytics, undefined, "la analítica lleva dolor y fatiga");
+  assert.equal(run.validated_output, undefined);
+  assert.deepEqual(run.queryPlan, [{ key: "pain_safety", required: true }], "del plan solo la clave");
+  for (const filtrado of ["74.5", "tendinitis", "gemelo izquierdo", "dolorMaximo"]) {
+    assert.ok(!serializado.includes(filtrado), `no debe viajar "${filtrado}"`);
+  }
   await db.close();
 });
