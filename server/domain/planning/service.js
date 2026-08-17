@@ -178,7 +178,14 @@ export async function planificarSemana(contexto = {}, deps = {}) {
     return respuestaFallback(inicio, "no_evidence", falloTotal ? "retrieval_failed" : "no_evidence", contexto, comunes, { coverage: seleccion.coverage });
   }
 
-  const prompt = construirPromptPlanificador({ contexto: contextoCanonico, analytics, queries, evidence: seleccion.chunks });
+  /* Los mismos límites y la misma disponibilidad que usará validarSalida(): si
+     el prompt y el validador no partieran de aquí, el modelo recibiría un
+     calendario que el validador luego rechazaría. */
+  const prompt = construirPromptPlanificador({
+    contexto: contextoCanonico, analytics, queries, evidence: seleccion.chunks,
+    semana: limitesSemana(contextoCanonico),
+    disponibilidad: idsDisponibilidad(contextoCanonico),
+  });
   let respuesta;
   try {
     comunes.modelCalls++;

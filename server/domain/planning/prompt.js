@@ -1,6 +1,6 @@
-import { WEEKLY_PLAN_SCHEMA_VERSION, MODALIDADES, TIPOS_SESION, PRIORIDADES, TIPOS_CAMBIO } from "./schema.js";
+import { WEEKLY_PLAN_SCHEMA_VERSION, MODALIDADES, TIPOS_SESION, PRIORIDADES, TIPOS_CAMBIO, diaDeFecha } from "./schema.js";
 
-export const PLANNER_PROMPT_VERSION = "weekly-planner.1";
+export const PLANNER_PROMPT_VERSION = "weekly-planner.2";
 
 export const SYSTEM_PROMPT_PLANIFICADOR = `Eres el motor táctico semanal de Hybrid Coach. Adaptas una semana de un plan maestro de carrera y fuerza; nunca inventas un plan maestro nuevo.
 
@@ -34,6 +34,10 @@ FORMATO
 - Prioridades: ${PRIORIDADES.join("|")}.
 - Tipos de cambio: ${TIPOS_CAMBIO.join("|")}.
 - La raíz debe contener exactamente: schema_version, week, summary, sessions, changes_from_master_plan, warnings, mixed_evidence, missing_evidence.
+- week contiene exactamente start_date, end_date, master_plan_id, master_week_id. NO es la semana maestra que recibes: copia literalmente el objeto de WEEK_OBLIGATORIA y no le añadas ningún campo.
+- day_of_week es un entero con lunes=0, martes=1, miércoles=2, jueves=3, viernes=4, sábado=5, domingo=6. NO es la numeración de JavaScript. Tómalo de CALENDARIO_DE_LA_SEMANA, que ya lo trae resuelto para cada fecha, y no lo calcules por tu cuenta.
+- Cada sesión debe caer en una fecha marcada disponible en CALENDARIO_DE_LA_SEMANA.
+- En changes_from_master_plan, before y after son objeto o null; nunca una cadena de texto.
 - Cada sesión debe contener exactamente: session_key, date, day_of_week, modality, session_type, master_session_code, title, priority, duration_min, intensity, prescription, objective, public_reason, evidence_ids, change_from_master.
 - intensity contiene exactamente rpe_min, rpe_max, rir_min, rir_max, pace_zone.
 - prescription contiene exactamente distance_km, sets, reps, notes.
@@ -71,7 +75,13 @@ function contextoMinimo(contexto) {
     profile: contexto.profile || contexto.perfil || null,
     injuries: contexto.injuries || contexto.lesiones || [],
     plan: contexto.plan || null,
-    week: contexto.week || contexto.masterWeek || null,
+    /* `master_week` y no `week`: la semana maestra llega con la forma de la
+       tabla (id, numero_semana, inicio, fase, es_deload…) y el contrato de
+       salida usa esa MISMA clave con otra forma (start_date, end_date,
+       master_plan_id, master_week_id). Con las dos llamándose igual, el modelo
+       copiaba la de entrada y fallaban a la vez UNKNOWN_PROPERTY, REQUIRED y
+       CONTEXT_MISMATCH. Separar los nombres quita la colisión de raíz. */
+    master_week: contexto.week || contexto.masterWeek || null,
     availability: contexto.availability || contexto.disponibilidad || [],
     constraints: contexto.constraints || contexto.restricciones || null,
     plannedSessions: contexto.plannedSessions || contexto.week?.sessions || contexto.week?.sesiones || [],
@@ -81,11 +91,58 @@ function contextoMinimo(contexto) {
   };
 }
 
-export function construirPromptPlanificador({ contexto, analytics, queries, evidence }) {
+const sumarDias = (fecha, n) => {
+  const d = new Date(`${fecha}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+/* Todo lo que el código ya sabe con certeza se entrega RESUELTO en vez de
+   pedírselo al modelo. `week` está completamente determinada por el contexto, y
+   el día de la semana de cada fecha es aritmética: dejar que las dedujera él
+   producía, de forma sistemática y en todas las generaciones, los mismos
+   errores de validación —y con ellos una segunda llamada de reparación que
+   duplicaba la latencia—. */
+function bloqueSemana(contexto, semana, disponibilidad) {
+  if (!semana?.start || !semana?.end) return null;
+  const dias = new Set((disponibilidad || []).filter((d) => Number.isInteger(d)));
+  const fechas = new Set((disponibilidad || []).filter((d) => typeof d === "string"));
+  const calendario = [];
+  for (let i = 0; i < 7; i++) {
+    const fecha = sumarDias(semana.start, i);
+    if (fecha > semana.end) break;
+    const dow = diaDeFecha(fecha);
+    calendario.push({
+      date: fecha,
+      day_of_week: dow,
+      disponible: dias.size || fechas.size ? dias.has(dow) || fechas.has(fecha) : true,
+    });
+  }
+  return {
+    week: {
+      start_date: semana.start,
+      end_date: semana.end,
+      master_plan_id: contexto.plan?.id ?? null,
+      master_week_id: contexto.week?.id ?? contexto.masterWeek?.id ?? null,
+    },
+    calendario,
+  };
+}
+
+export function construirPromptPlanificador({ contexto, analytics, queries, evidence, semana = null, disponibilidad = null }) {
+  const bloque = bloqueSemana(contexto, semana, disponibilidad);
   const user = [
     "DATOS_Y_PLAN_MAESTRO",
     JSON.stringify(contextoMinimo(contexto), null, 2),
     "",
+    ...(bloque ? [
+      "WEEK_OBLIGATORIA (cópiala literalmente como campo `week` de tu respuesta)",
+      JSON.stringify(bloque.week, null, 2),
+      "",
+      "CALENDARIO_DE_LA_SEMANA (day_of_week ya resuelto; solo puedes usar las fechas disponibles)",
+      JSON.stringify(bloque.calendario, null, 2),
+      "",
+    ] : []),
     "ANALITICA_DETERMINISTA",
     JSON.stringify(analytics, null, 2),
     "",

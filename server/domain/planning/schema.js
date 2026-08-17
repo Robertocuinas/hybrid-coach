@@ -26,7 +26,11 @@ const esEnteroONull = (v, min, max) => v === null || (Number.isInteger(v) && v >
 const fechaISO = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T12:00:00Z`));
 
 const DIAS = [6, 0, 1, 2, 3, 4, 5]; // getUTCDay -> lunes=0
-const diaDeFecha = (fecha) => DIAS[new Date(`${fecha}T12:00:00Z`).getUTCDay()];
+/* Se exporta para que el prompt pueda entregar el calendario ya resuelto. El
+   modelo no tiene por qué adivinar que aquí la semana empieza en lunes: dejarlo
+   implícito hacía que numerase los días en la convención de JavaScript
+   (domingo=0) y TODAS las sesiones fallaran con DATE_MISMATCH. */
+export const diaDeFecha = (fecha) => DIAS[new Date(`${fecha}T12:00:00Z`).getUTCDay()];
 
 function error(lista, path, code, message) {
   lista.push({ path, code, message });

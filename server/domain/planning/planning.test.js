@@ -375,3 +375,48 @@ test("mid-week replanning keeps completed days even when availability only lists
   }), { calculadaEn: "2026-08-19", seguridad: { dolorMaximo: 0, redFlags: [] } });
   assert.equal(result.hard.some((item) => item.code === "UNAVAILABLE_DAY" && item.path === "$.sessions[0].date"), false);
 });
+
+/* Los cinco runs fallidos de producción (2026-08-17, gpt-4.1-mini) fallaron
+   SIEMPRE por lo mismo, nunca por azar del modelo: el contrato de salida no
+   describía `week`, no decía que aquí la semana empieza en lunes y no decía que
+   before/after son objetos. El modelo rellenaba esos huecos copiando la semana
+   maestra de la entrada —que viajaba bajo la misma clave `week`— y numerando
+   los días como JavaScript.
+
+   Este test comprueba que el prompt entrega resuelto todo lo que el validador
+   va a exigir. Si alguien vuelve a dejar que el modelo lo deduzca, falla aquí y
+   no en producción tras 50 segundos y dos llamadas al modelo. */
+test("el prompt entrega resueltos week y el calendario que exige el validador", async () => {
+  const { construirPromptPlanificador } = await import("./prompt.js");
+  const { diaDeFecha } = await import("./schema.js");
+  const contexto = {
+    plan: { id: "plan-1" },
+    week: { id: "week-9", numero_semana: 2, inicio: "2026-08-17", fase: "Base", es_deload: false },
+    profile: { nombre: "A" },
+  };
+  const prompt = construirPromptPlanificador({
+    contexto, analytics: {}, queries: [], evidence: [],
+    semana: { start: "2026-08-17", end: "2026-08-23" },
+    disponibilidad: [0, 2, 4],
+  });
+  const texto = prompt.messages[0].content;
+  const bloque = JSON.parse(texto.split("WEEK_OBLIGATORIA (cópiala literalmente como campo `week` de tu respuesta)\n")[1].split("\n\n")[0]);
+  const calendario = JSON.parse(texto.split("CALENDARIO_DE_LA_SEMANA (day_of_week ya resuelto; solo puedes usar las fechas disponibles)\n")[1].split("\n\n")[0]);
+
+  assert.deepEqual(Object.keys(bloque).sort(), ["end_date", "master_plan_id", "master_week_id", "start_date"],
+    "exactamente las claves que exige el schema, ni una más");
+  assert.equal(bloque.master_plan_id, "plan-1");
+  assert.equal(bloque.master_week_id, "week-9");
+
+  assert.equal(calendario.length, 7);
+  assert.equal(calendario[0].day_of_week, 0, "2026-08-17 es lunes y aquí lunes es 0");
+  for (const dia of calendario) {
+    assert.equal(dia.day_of_week, diaDeFecha(dia.date), "el calendario usa la misma conversión que el validador");
+  }
+  assert.deepEqual(calendario.filter((d) => d.disponible).map((d) => d.day_of_week), [0, 2, 4]);
+
+  /* La semana maestra sigue viajando, pero bajo otra clave: es la colisión de
+     nombres lo que hacía que el modelo copiara la forma equivocada. */
+  assert.ok(texto.includes('"master_week"'), "la semana maestra se entrega como master_week");
+  assert.ok(!/"week":\s*\{\s*"id"/.test(texto), "y nunca como `week` con la forma de la tabla");
+});
