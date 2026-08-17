@@ -141,13 +141,17 @@ app.get("/health/ready", async (_req, res) => {
 app.get("/health", async (_req, res) => {
   const status = await checkDatabaseStatus();
   const opcional = (activa) => (activa ? "available" : "unavailable");
+  /* Igual que en /api/estado: la copia de arranque se queda vieja en cuanto se
+     configura o se reindexa desde el panel. `resolveEmbeddingConfig()` cachea
+     60 s, así que esto no añade una consulta por sondeo. */
+  const embeddingsAhora = await resolveEmbeddingConfig({ db: pool, env: process.env });
   res.status(status.db ? 200 : 503).json({
     status: status.db ? "ok" : "degraded",
     database: status.db ? "ok" : "error",
     services: {
       pgvector: opcional(status.pgvector),
       ia: opcional(!!llmProvider),
-      embeddings: opcional(embeddingConfig.enabled && !embeddingsDegradados),
+      embeddings: opcional(embeddingsAhora.enabled),
       alimentos: opcional(!!process.env.FOOD_PROVIDER && process.env.FOOD_PROVIDER !== "ninguno"),
       ejercicios: opcional(!!process.env.EXERCISE_PROVIDER),
       extractorPdf: opcional(!!extractorPDF.ok),
@@ -170,8 +174,13 @@ app.get("/api/estado", async (_req, res) => {
     db: dbStatus.db,
     pgvector: dbStatus.pgvector,
     /* `degradados` distingue "no hay embeddings configurados" de "los hay pero
-       el índice no es utilizable": sin esa marca la degradación era invisible. */
-    embeddings: { ...embeddings, degradados: embeddingsDegradados },
+       el índice no es utilizable": sin esa marca la degradación era invisible.
+
+       Sale del estado RECIÉN leído, no del que se calculó al arrancar: el
+       motivo de arranque se queda viejo en cuanto se reindexa, y colgaba un
+       "sin índice activo" del panel con el índice ya reconstruido y activo.
+       Solo se recurre al de arranque si sigue sin haber índice utilizable. */
+    embeddings: { ...embeddings, degradados: embeddings.ok ? null : (embeddings.reason || embeddingsDegradados || null) },
     /* Estado del extractor sin exponer rutas ni versiones del sistema: solo si
        se puede ingerir bibliografía y, si no, por qué. */
     extractorPdf: { ok: !!extractorPDF.ok, motivo: extractorPDF.ok ? null : extractorPDF.motivo || null },
