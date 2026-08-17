@@ -101,6 +101,30 @@ const resumenSesion = (s) => ({
   intensity: s?.intensity ?? s?.intensidad ?? null,
 });
 
+const diaSemana = (o) => {
+  const v = numero(valor(o, "day_of_week", "dia_semana", "day"));
+  return Number.isInteger(v) ? v : null;
+};
+
+/* Comparar por fecha a secas daba SIEMPRE "moved".
+   `planned_sessions` guarda `dia_semana` y no tiene columna de fecha: una sesión
+   del plan maestro no lleva ninguna. Así que `fecha(original)` era null y
+   `fecha(actual)` una fecha real, y null !== "2026-08-18" marcaba como movida
+   hasta la sesión que se dejaba exactamente donde estaba. El modelo no podía
+   acertar: veía date:null en la base, declaraba "unchanged" con toda la lógica
+   del mundo, y el diff lo contradecía en todas y cada una de las sesiones.
+
+   Se compara con lo que de verdad hay: fecha contra fecha cuando las dos la
+   tienen —la revisión aceptada sí— y día de la semana cuando la base solo trae
+   eso. Sin base comparable no se inventa un movimiento. */
+export function seHaMovido(original, actual) {
+  const fechaOriginal = fecha(original), fechaActual = fecha(actual);
+  if (fechaOriginal && fechaActual) return fechaOriginal !== fechaActual;
+  const diaOriginal = diaSemana(original), diaActual = diaSemana(actual);
+  if (diaOriginal !== null && diaActual !== null) return diaOriginal !== diaActual;
+  return false;
+}
+
 const intensidadCanonica = (s) => JSON.stringify(s?.intensity ?? s?.intensidad ?? null);
 const claveSesion = (s) => String(valor(s, "session_key", "sessionKey") || codigo(s) || "");
 
@@ -136,7 +160,7 @@ export function derivarCambiosPlan(contexto, sesiones = []) {
       || (tipoOriginal && tipoOriginal !== tipo(actual))
       || codigo(original) !== codigo(actual)) {
       type = "substituted";
-    } else if (fecha(original) !== fecha(actual)) {
+    } else if (seHaMovido(original, actual)) {
       type = "moved";
     } else if (duracion(original) !== duracion(actual)
       || ((original?.intensity && typeof original.intensity === "object")

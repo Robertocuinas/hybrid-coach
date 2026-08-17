@@ -562,3 +562,43 @@ test("el prompt calcula cuántas sesiones caben y pide ceder en vez de bloquear"
   assert.match(SYSTEM_PROMPT_PLANIFICADOR, /Jamás relajes un límite clínico/);
   assert.match(SYSTEM_PROMPT_PLANIFICADOR, /recomendación CONCRETA/);
 });
+
+/* El diff marcaba como "moved" TODAS las sesiones, siempre, hiciera lo que
+   hiciera el modelo: `planned_sessions` guarda `dia_semana` y no tiene columna
+   de fecha, así que una sesión del plan maestro no lleva ninguna y la
+   comparación era null !== "2026-08-18". El modelo veía date:null en la base,
+   declaraba "unchanged" con toda la lógica del mundo, y el guardarraíl lo
+   contradecía sesión por sesión. Era imposible que acertara. */
+test("una sesión del maestro que se deja en su día no cuenta como movida", async () => {
+  const { derivarCambiosPlan } = await import("./guardrails.js");
+  /* Tal y como sale de planned_sessions: día de la semana, sin fecha. */
+  const contexto = { week: { sessions: [
+    { id: "s1", codigo_sesion: "GYM A", dia_semana: 0, tipo: "strength", duracion_min: 45 },
+    { id: "s2", codigo_sesion: "RUN A", dia_semana: 2, tipo: "running", duracion_min: 60 },
+  ] } };
+
+  const enSuSitio = derivarCambiosPlan(contexto, [
+    { session_key: "GYM A", master_session_code: "GYM A", date: "2026-08-17", day_of_week: 0, modality: "strength", session_type: "strength", duration_min: 45 },
+    { session_key: "RUN A", master_session_code: "RUN A", date: "2026-08-19", day_of_week: 2, modality: "running", session_type: "running", duration_min: 60 },
+  ]);
+  assert.deepEqual(enSuSitio.map((c) => c.type), ["unchanged", "unchanged"],
+    "mismo día de la semana que el maestro: no se ha movido nada");
+
+  const movida = derivarCambiosPlan(contexto, [
+    { session_key: "GYM A", master_session_code: "GYM A", date: "2026-08-18", day_of_week: 1, modality: "strength", session_type: "strength", duration_min: 45 },
+    { session_key: "RUN A", master_session_code: "RUN A", date: "2026-08-19", day_of_week: 2, modality: "running", session_type: "running", duration_min: 60 },
+  ]);
+  assert.deepEqual(movida.map((c) => c.type), ["moved", "unchanged"],
+    "solo la que cambia de día cuenta como movida");
+});
+
+/* Cuando la base SÍ tiene fecha —una revisión ya aceptada— manda la fecha, que
+   es más precisa que el día de la semana. */
+test("con una revisión aceptada el movimiento se mide por fecha", async () => {
+  const { seHaMovido } = await import("./guardrails.js");
+  assert.equal(seHaMovido({ date: "2026-08-17", day_of_week: 0 }, { date: "2026-08-17", day_of_week: 0 }), false);
+  assert.equal(seHaMovido({ date: "2026-08-17", day_of_week: 0 }, { date: "2026-08-24", day_of_week: 0 }), true,
+    "misma posición en la semana pero otra semana: se ha movido");
+  /* Sin nada comparable no se inventa un movimiento. */
+  assert.equal(seHaMovido({}, { date: "2026-08-17" }), false);
+});

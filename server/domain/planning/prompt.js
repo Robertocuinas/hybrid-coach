@@ -1,7 +1,7 @@
 import { WEEKLY_PLAN_SCHEMA_VERSION, MODALIDADES, TIPOS_SESION, PRIORIDADES, TIPOS_CAMBIO, diaDeFecha } from "./schema.js";
 import { DEFAULT_GUARDRAIL_CONFIG, derivarCambiosPlan } from "./guardrails.js";
 
-export const PLANNER_PROMPT_VERSION = "weekly-planner.4";
+export const PLANNER_PROMPT_VERSION = "weekly-planner.5";
 
 export const SYSTEM_PROMPT_PLANIFICADOR = `Eres el motor táctico semanal de Hybrid Coach. Adaptas una semana de un plan maestro de carrera y fuerza; nunca inventas un plan maestro nuevo.
 
@@ -40,10 +40,12 @@ FORMATO
 - Cada sesión debe caer en una fecha marcada disponible en CALENDARIO_DE_LA_SEMANA.
 - En changes_from_master_plan, before y after son objeto o null; nunca una cadena de texto.
 - evidence_ids NO es opcional ni decorativo: CADA sesión y CADA cambio necesita al menos un id del bloque de evidencia. Una sesión o un cambio con la lista vacía invalida toda la propuesta.
-- Etiqueta change_from_master comparando tu sesión con la de BASE_ACTIVA que le corresponde: fecha distinta es "moved"; modalidad, tipo o código distintos es "substituted"; menos duración o menos intensidad es "reduced"; igual en todo es "unchanged"; y una sesión de BASE_ACTIVA que no reprogramas es "removed". El código recalcula este diff por su cuenta, así que una etiqueta optimista no pasa: se detecta.
+- mixed_evidence y missing_evidence son arrays y SIEMPRE deben estar, aunque vayan vacíos: escribe [] si no hay nada que poner. Omitirlos invalida la propuesta entera.
+- Etiqueta change_from_master comparando tu sesión con la de BASE_ACTIVA que le corresponde: modalidad, tipo o código distintos es "substituted"; menos duración o menos intensidad es "reduced"; igual en todo es "unchanged"; y una sesión de BASE_ACTIVA que no reprogramas es "removed".
+- Para decidir si es "moved": si esa sesión de BASE_ACTIVA trae "date", compara tu date con la suya. Si trae "date": null —el plan maestro guarda día de la semana, no fechas—, compara tu day_of_week con su day_of_week. Mismo día es "unchanged"; día distinto es "moved".
+- El código recalcula este diff por su cuenta, así que una etiqueta optimista no pasa: se detecta.
 - Todo cambio que no sea "unchanged" debe aparecer ADEMÁS en changes_from_master_plan con el mismo type, su session_key y su evidencia. Y al contrario: no declares ahí nada que no haya cambiado de verdad.
 - Respeta los valores de LIMITES_QUE_VALIDA_EL_CODIGO. Tener un día disponible no obliga a usarlo: si respetar el tope de días consecutivos exige dejar un día disponible sin sesión, déjalo.
-
 - Cada sesión debe contener exactamente: session_key, date, day_of_week, modality, session_type, master_session_code, title, priority, duration_min, intensity, prescription, objective, public_reason, evidence_ids, change_from_master.
 - intensity contiene exactamente rpe_min, rpe_max, rir_min, rir_max, pace_zone.
 - prescription contiene exactamente distance_km, sets, reps, notes.
