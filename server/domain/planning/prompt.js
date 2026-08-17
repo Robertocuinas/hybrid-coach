@@ -49,7 +49,14 @@ FORMATO
 - change_from_master contiene exactamente type, master_session_id.
 - Cada cambio contiene exactamente type, session_key, before, after, reason, evidence_ids.
 - Cada warning contiene exactamente code, severity, message, action.
-- summary contiene exactamente public_reason, confidence (0..1), evidence_state (sufficient|limited|mixed|none).`;
+- summary contiene exactamente public_reason, confidence (0..1), evidence_state (sufficient|limited|mixed|none).
+
+BREVEDAD
+- Cada token de salida se genera en serie y es el que hace esperar al atleta delante de una pantalla bloqueada. Sé denso, no extenso.
+- objective y public_reason: UNA frase corta cada uno, de no más de 20 palabras. Nada de párrafos.
+- reason de un cambio: media frase basta. El detalle vive en la evidencia citada, no repetido en prosa.
+- prescription.notes: solo lo que no quepa en los campos numéricos. Vacío si no hace falta.
+- No repitas en el texto lo que ya dicen duration_min, intensity o prescription.`;
 
 function cabeceraChunk(chunk) {
   return [
@@ -66,11 +73,28 @@ function cabeceraChunk(chunk) {
   ].filter(Boolean).join(" · ");
 }
 
-export function formatearEvidenciaPlanificador(chunks = []) {
+/* Recorte por fragmento. Estaba en 4.000 caracteres, que con 12 fragmentos son
+   48 KB de un prompt en el que la evidencia ya era el término dominante.
+
+   Los datos de producción (2026-08-17) dejaron claro dónde está el tiempo: el
+   retrieval tarda 0,2-0,9 s y la llamada al modelo entre 33 y 68 s. Con el
+   recorte anterior una generación legítima no cabía en el timeout de 45 s del
+   proveedor y se abortaba a medias.
+
+   1.200 caracteres siguen siendo unas 200 palabras por fragmento, suficiente
+   para sostener una cita: no se recorta el NÚMERO de fragmentos, que es lo que
+   sostiene la cobertura por consulta, solo cuánto texto entra de cada uno.
+   Configurable porque el punto óptimo depende del corpus. */
+export const PLANNER_CHARS_POR_CHUNK = Math.max(
+  300,
+  Number(process.env.PLANNER_EVIDENCE_CHARS || 1200) || 1200,
+);
+
+export function formatearEvidenciaPlanificador(chunks = [], charsPorChunk = PLANNER_CHARS_POR_CHUNK) {
   if (!chunks.length) return "(sin evidencia)";
   return [
     "<EVIDENCIA_NO_CONFIABLE>",
-    ...chunks.map((chunk) => `${cabeceraChunk(chunk)}\n${String(chunk.texto || chunk.text || "").slice(0, 4000)}`),
+    ...chunks.map((chunk) => `${cabeceraChunk(chunk)}\n${String(chunk.texto || chunk.text || "").slice(0, charsPorChunk)}`),
     "</EVIDENCIA_NO_CONFIABLE>",
   ].join("\n\n");
 }
@@ -182,8 +206,12 @@ export function construirPromptPlanificador({ contexto, analytics, queries, evid
   const cfg = { ...DEFAULT_GUARDRAIL_CONFIG, ...guardrailConfig };
   const base = bloqueBaseActiva(contexto);
   const user = [
+    /* Sin indentar: estos dos bloques son los más grandes del prompt y la
+       sangría es puro coste de tokens sin ayudar a interpretarlos. Los bloques
+       deterministas de abajo sí se indentan: son cortos y el modelo tiene que
+       copiarlos con precisión. */
     "DATOS_Y_PLAN_MAESTRO",
-    JSON.stringify(contextoMinimo(contexto), null, 2),
+    JSON.stringify(contextoMinimo(contexto)),
     "",
     ...(bloque ? [
       "WEEK_OBLIGATORIA (cópiala literalmente como campo `week` de tu respuesta)",
@@ -202,7 +230,7 @@ export function construirPromptPlanificador({ contexto, analytics, queries, evid
       "",
     ] : []),
     "ANALITICA_DETERMINISTA",
-    JSON.stringify(analytics, null, 2),
+    JSON.stringify(analytics),
     "",
     "PREGUNTAS_DE_PLANIFICACION_RESUELTAS_POR_RAG",
     JSON.stringify(queries.map((q) => ({ key: q.key, query: q.query, required: q.required })), null, 2),

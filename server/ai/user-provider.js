@@ -20,11 +20,22 @@ export function validateUserLLMSettings({ provider, model, apiKey }, { requireAp
   return { provider: normalizedProvider, model: normalizedModel, apiKey: normalizedApiKey };
 }
 
-function timedFetch(timeoutMs = 45_000, fetchImpl = fetch) {
+/* El tope estaba fijo en 45 s, un valor pensado para una respuesta de chat. El
+   planificador semanal no es eso: genera un JSON con varias sesiones y en
+   producción tardó entre 33 y 68 s (2026-08-17), así que abortaba generaciones
+   perfectamente válidas a mitad de camino —y el atleta veía "no se ha podido
+   generar" sin que nada estuviera roto—.
+   Configurable para poder ajustarlo sin redesplegar código. */
+export const LLM_TIMEOUT_MS = Math.max(
+  5_000,
+  Number(process.env.LLM_TIMEOUT_MS || 90_000) || 90_000,
+);
+
+function timedFetch(timeoutMs = LLM_TIMEOUT_MS, fetchImpl = fetch) {
   return (url, options = {}) => fetchImpl(url, { ...options, signal: options.signal || AbortSignal.timeout(timeoutMs) });
 }
 
-export function createUserLLMProvider({ provider, model, apiKey }, { fetchImpl = fetch, timeoutMs = 45_000 } = {}) {
+export function createUserLLMProvider({ provider, model, apiKey }, { fetchImpl = fetch, timeoutMs = LLM_TIMEOUT_MS } = {}) {
   const valid = validateUserLLMSettings({ provider, model, apiKey });
   return createLLMProvider({
     LLM_PROVIDER: valid.provider,

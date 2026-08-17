@@ -491,3 +491,37 @@ test("la base activa del prompt es la que usa el diff de guardarraíles", async 
   assert.equal(base.length, derivada.length, "misma cantidad de sesiones base");
   assert.deepEqual(base.map((b) => b.session_key), derivada.map((c) => c.session_key));
 });
+
+/* Con los datos de producción en la mano (retrieval 0,2-0,9 s frente a 33-68 s
+   de modelo) el tamaño del prompt es la única palanca de latencia que queda del
+   lado del pipeline. 12 fragmentos a 4.000 caracteres eran 48 KB solo de
+   evidencia, y una generación legítima no cabía en el timeout del proveedor.
+
+   El test fija el presupuesto, no el número exacto: lo que no puede volver a
+   pasar es que la evidencia crezca sin techo. */
+test("el prompt acota el texto por fragmento sin recortar cuántos hay", async () => {
+  const { construirPromptPlanificador, formatearEvidenciaPlanificador, PLANNER_CHARS_POR_CHUNK } = await import("./prompt.js");
+  const evidence = Array.from({ length: 12 }, (_, i) => ({
+    id: `c${i}`, titulo: `Paper ${i}`, texto: "x".repeat(5000),
+  }));
+
+  const bloque = formatearEvidenciaPlanificador(evidence);
+  assert.ok(PLANNER_CHARS_POR_CHUNK <= 2000, "el recorte por fragmento se mantiene acotado");
+  assert.equal((bloque.match(/x+/g) || []).length, 12, "siguen entrando los doce fragmentos");
+  for (const texto of bloque.match(/x+/g)) {
+    assert.equal(texto.length, PLANNER_CHARS_POR_CHUNK, "cada uno recortado al presupuesto");
+  }
+
+  const prompt = construirPromptPlanificador({
+    contexto: { plan: { id: "p" }, week: { id: "w" }, profile: {} },
+    analytics: { ventana7d: { km: 30 } }, queries: [], evidence,
+    semana: { start: "2026-08-17", end: "2026-08-23" }, disponibilidad: [0, 2, 4],
+  });
+  const total = prompt.system.length + prompt.messages[0].content.length;
+  assert.ok(total < 30_000, `el prompt completo debe caber en el presupuesto, son ${total} caracteres`);
+
+  /* Los dos bloques grandes van sin sangría; los deterministas, con ella,
+     porque el modelo tiene que copiarlos con precisión. */
+  assert.ok(prompt.messages[0].content.includes('"ventana7d":{"km":30}'), "la analítica viaja compacta");
+  assert.ok(prompt.messages[0].content.includes('"start_date": "2026-08-17"'), "WEEK_OBLIGATORIA sigue legible");
+});
