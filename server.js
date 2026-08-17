@@ -14,7 +14,7 @@
 import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkDatabaseStatus } from "./server/db/status.js";
+import { checkDatabaseStatus, describirErrorDb } from "./server/db/status.js";
 import { isReady } from "./server/health.js";
 import pool from "./server/db/pool.js";
 import authRoutes from "./server/routes/auth.js";
@@ -36,6 +36,31 @@ import { resolveUserLLMProvider } from "./server/ai/user-provider.js";
 import { getEmbeddingStatus, validateEmbeddingStartup } from "./server/embeddings/index-state.js";
 import { readLegacyStravaConfig, requireLegacyStrava } from "./server/integrations/strava-config.js";
 import { comprobarExtractor } from "./server/integrations/pdf-extractor.js";
+
+/* ============================================================
+   SUPERVIVENCIA DEL PROCESO
+
+   Un contenedor que muere por un error recuperable deja sin servicio también
+   lo que sí funcionaba. Los dos casos que de verdad ocurren en Railway:
+
+   - El Pool de pg emite 'error' cuando PostgreSQL cierra una conexión OCIOSA
+     (reinicio de la base, corte de red). Sin ningún oyente, EventEmitter
+     convierte eso en excepción no capturada y el proceso cae. El cliente roto
+     ya lo descarta el propio pool; basta con registrarlo.
+
+   - Una promesa rechazada sin capturar termina el proceso en Node 20+. Se
+     registra y se sigue: perder una petición es preferible a perder el
+     servidor entero.
+
+   `uncaughtException` NO se captura a propósito: ahí el estado del proceso ya
+   es desconocido y seguir vivo es peor que reiniciar.
+   ============================================================ */
+pool.on("error", (error) => {
+  console.error("[db] conexión ociosa perdida:", error.code || error.name, describirErrorDb(error));
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[proceso] promesa rechazada sin capturar:", reason?.code || reason?.name || "", String(reason?.message || reason).slice(0, 300));
+});
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -63,7 +88,25 @@ const toolRouterProvider = createToolRouterProvider(process.env);
 if (readEmbeddingConfig(process.env).enabled && !process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL es obligatoria cuando los embeddings están activados.");
 }
-await validateEmbeddingStartup(embeddingConfig, pool);
+/* Los embeddings son una capacidad OPCIONAL: el entrenamiento, el registro de
+   sesiones y la nutrición no dependen de ellos. Que su validación matara el
+   proceso convertía cualquier problema del índice —o un simple parpadeo de la
+   base al arrancar— en un bucle de reinicio que tumbaba la aplicación entera.
+
+   No se pierde integridad al continuar: la búsqueda vectorial filtra por
+   (provider, model, dimensions), así que un índice incompleto o de otro modelo
+   no devuelve fragmentos equivocados, simplemente no devuelve ninguno y el
+   retrieval sigue con el léxico, que es un modo ya soportado y probado.
+
+   El motivo se registra y se publica en /api/estado para que la degradación
+   sea visible en vez de silenciosa. */
+let embeddingsDegradados = null;
+try {
+  await validateEmbeddingStartup(embeddingConfig, pool);
+} catch (error) {
+  embeddingsDegradados = error.message;
+  console.error("[arranque] embeddings degradados, se continúa sin búsqueda vectorial:", error.message);
+}
 
 /* El extractor de PDF se comprueba UNA vez al arrancar y se cachea. Es lo
    primero que hay que saber antes de ingerir bibliografía —sin Python o sin
@@ -85,6 +128,26 @@ app.get("/health/ready", async (_req, res) => {
   const ready = isReady(status);
   res.status(ready ? 200 : 503).json({ ok: ready, db: status.db, pgvector: status.pgvector });
 });
+/* Diagnóstico de una sola parada: servidor y base de datos, que es lo que
+   decide si la aplicación sirve para algo, y las integraciones opcionales como
+   available/unavailable SIN que ninguna pueda tumbar el resultado principal.
+   No lleva secretos ni mensajes crudos del driver. */
+app.get("/health", async (_req, res) => {
+  const status = await checkDatabaseStatus();
+  const opcional = (activa) => (activa ? "available" : "unavailable");
+  res.status(status.db ? 200 : 503).json({
+    status: status.db ? "ok" : "degraded",
+    database: status.db ? "ok" : "error",
+    services: {
+      pgvector: opcional(status.pgvector),
+      ia: opcional(!!llmProvider),
+      embeddings: opcional(embeddingConfig.enabled && !embeddingsDegradados),
+      alimentos: opcional(!!process.env.FOOD_PROVIDER && process.env.FOOD_PROVIDER !== "ninguno"),
+      ejercicios: opcional(!!process.env.EXERCISE_PROVIDER),
+      extractorPdf: opcional(!!extractorPDF.ok),
+    },
+  });
+});
 app.get("/api/estado", async (_req, res) => {
   const dbStatus = await checkDatabaseStatus();
   const embeddings = await getEmbeddingStatus(embeddingConfig, pool);
@@ -97,7 +160,9 @@ app.get("/api/estado", async (_req, res) => {
     strava: legacyStravaConfig.enabled,
     db: dbStatus.db,
     pgvector: dbStatus.pgvector,
-    embeddings,
+    /* `degradados` distingue "no hay embeddings configurados" de "los hay pero
+       el índice no es utilizable": sin esa marca la degradación era invisible. */
+    embeddings: { ...embeddings, degradados: embeddingsDegradados },
     /* Estado del extractor sin exponer rutas ni versiones del sistema: solo si
        se puede ingerir bibliografía y, si no, por qué. */
     extractorPdf: { ok: !!extractorPDF.ok, motivo: extractorPDF.ok ? null : extractorPDF.motivo || null },
