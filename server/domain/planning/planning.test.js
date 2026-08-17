@@ -447,8 +447,8 @@ test("el prompt anuncia los límites que después se validan, sin poder divergir
   assert.equal(limites.evidencia_obligatoria_por_sesion, true);
 
   assert.equal(limites.racha_disponible_mas_larga, 4, "L-M-X-J son cuatro consecutivos");
-  assert.match(limites.aviso, /deja al menos uno de ellos SIN sesión/,
-    "cuatro días seguidos con tope de tres exige avisar de que uno se queda fuera");
+  assert.match(limites.aviso, /caben 3 sesiones/,
+    "cuatro días seguidos con tope de tres exige decir cuántas sesiones entran");
 });
 
 /* Un tope configurado más alto que la racha disponible no debe generar el aviso:
@@ -524,4 +524,41 @@ test("el prompt acota el texto por fragmento sin recortar cuántos hay", async (
      porque el modelo tiene que copiarlos con precisión. */
   assert.ok(prompt.messages[0].content.includes('"ventana7d":{"km":30}'), "la analítica viaja compacta");
   assert.ok(prompt.messages[0].content.includes('"start_date": "2026-08-17"'), "WEEK_OBLIGATORIA sigue legible");
+});
+
+/* Que el plan maestro no encaje en la disponibilidad de la semana es normal, no
+   un error: con L-M-X-J y un tope de 3 consecutivos solo caben 3 sesiones y el
+   maestro trae 4. Antes eso acababa en propuesta rechazada entera y el atleta se
+   quedaba sin nada. El prompt tiene que decirle cuántas caben y pedirle que ceda
+   con una recomendación, no que se rinda. */
+test("el prompt calcula cuántas sesiones caben y pide ceder en vez de bloquear", async () => {
+  const { construirPromptPlanificador, SYSTEM_PROMPT_PLANIFICADOR } = await import("./prompt.js");
+  const limitesDe = (disponibilidad) => {
+    const prompt = construirPromptPlanificador({
+      contexto: { plan: { id: "p" }, week: { id: "w" }, profile: {} },
+      analytics: {}, queries: [], evidence: [],
+      semana: { start: "2026-08-17", end: "2026-08-23" }, disponibilidad,
+    });
+    return JSON.parse(prompt.messages[0].content
+      .split("LIMITES_QUE_VALIDA_EL_CODIGO (tu propuesta se rechaza si los incumple)\n")[1].split("\n\n")[0]);
+  };
+
+  /* L-M-X-J: cuatro consecutivos, tope 3 -> hay que descansar uno. */
+  const cuatroSeguidos = limitesDe([0, 1, 2, 3]);
+  assert.equal(cuatroSeguidos.max_sesiones_que_caben, 3);
+  assert.match(cuatroSeguidos.aviso, /caben 3 sesiones/);
+  assert.match(cuatroSeguidos.aviso, /menor prioridad/, "dice qué hacer, no solo que no cabe");
+
+  /* Toda la semana disponible: se descuenta el descanso obligatorio y el tope
+     de racha, no se devuelven siete. */
+  assert.equal(limitesDe([0, 1, 2, 3, 4, 5, 6]).max_sesiones_que_caben, 6);
+  /* Días alternos: ninguna racha, cabe todo lo disponible. */
+  assert.equal(limitesDe([0, 2, 4, 6]).max_sesiones_que_caben, 4);
+  /* Dos bloques separados se cuentan por separado: L-M-X (3) + V-S (2). */
+  assert.equal(limitesDe([0, 1, 2, 4, 5]).max_sesiones_que_caben, 5);
+
+  /* Y el orden de cesión es explícito, con lo clínico fuera de la negociación. */
+  assert.match(SYSTEM_PROMPT_PLANIFICADOR, /CUANDO NO CABE TODO/);
+  assert.match(SYSTEM_PROMPT_PLANIFICADOR, /Jamás relajes un límite clínico/);
+  assert.match(SYSTEM_PROMPT_PLANIFICADOR, /recomendación CONCRETA/);
 });

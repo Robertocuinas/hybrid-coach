@@ -1,7 +1,7 @@
 import { WEEKLY_PLAN_SCHEMA_VERSION, MODALIDADES, TIPOS_SESION, PRIORIDADES, TIPOS_CAMBIO, diaDeFecha } from "./schema.js";
 import { DEFAULT_GUARDRAIL_CONFIG, derivarCambiosPlan } from "./guardrails.js";
 
-export const PLANNER_PROMPT_VERSION = "weekly-planner.3";
+export const PLANNER_PROMPT_VERSION = "weekly-planner.4";
 
 export const SYSTEM_PROMPT_PLANIFICADOR = `Eres el motor táctico semanal de Hybrid Coach. Adaptas una semana de un plan maestro de carrera y fuerza; nunca inventas un plan maestro nuevo.
 
@@ -43,6 +43,7 @@ FORMATO
 - Etiqueta change_from_master comparando tu sesión con la de BASE_ACTIVA que le corresponde: fecha distinta es "moved"; modalidad, tipo o código distintos es "substituted"; menos duración o menos intensidad es "reduced"; igual en todo es "unchanged"; y una sesión de BASE_ACTIVA que no reprogramas es "removed". El código recalcula este diff por su cuenta, así que una etiqueta optimista no pasa: se detecta.
 - Todo cambio que no sea "unchanged" debe aparecer ADEMÁS en changes_from_master_plan con el mismo type, su session_key y su evidencia. Y al contrario: no declares ahí nada que no haya cambiado de verdad.
 - Respeta los valores de LIMITES_QUE_VALIDA_EL_CODIGO. Tener un día disponible no obliga a usarlo: si respetar el tope de días consecutivos exige dejar un día disponible sin sesión, déjalo.
+
 - Cada sesión debe contener exactamente: session_key, date, day_of_week, modality, session_type, master_session_code, title, priority, duration_min, intensity, prescription, objective, public_reason, evidence_ids, change_from_master.
 - intensity contiene exactamente rpe_min, rpe_max, rir_min, rir_max, pace_zone.
 - prescription contiene exactamente distance_km, sets, reps, notes.
@@ -50,6 +51,14 @@ FORMATO
 - Cada cambio contiene exactamente type, session_key, before, after, reason, evidence_ids.
 - Cada warning contiene exactamente code, severity, message, action.
 - summary contiene exactamente public_reason, confidence (0..1), evidence_state (sufficient|limited|mixed|none).
+
+CUANDO NO CABE TODO
+- Es normal que el plan maestro no encaje entero en la disponibilidad de la semana. Eso NO es motivo para rendirse: devuelve siempre la mejor semana posible, aunque tenga menos sesiones de las que pedía el maestro. Mira max_sesiones_que_caben.
+- Nunca fuerces un límite para que quepa todo. Si hay tensión, en este orden: 1) recorta duración o intensidad de las sesiones de apoyo; 2) marca como "removed" las de prioridad "recovery"; 3) después las de prioridad "support"; 4) solo en último lugar toca una sesión "key".
+- Jamás relajes un límite clínico —dolor, dolor en reposo, señales de alarma— para hacer sitio. Ahí la respuesta es menos entrenamiento, nunca más.
+- Cada sesión que dejes fuera va como "removed" en changes_from_master_plan, con su evidencia, y ADEMÁS como warning.
+- Todo warning que nazca de esta tensión lleva en \`action\` una recomendación CONCRETA y accionable, no una disculpa. Por ejemplo: "habilita el viernes para recuperar la segunda sesión de fuerza" o "mueve la tirada larga al sábado y ganas dos días de separación". Nada de "consulta a un profesional" salvo que haya un motivo clínico real.
+- Devolver una semana más corta con avisos útiles es SIEMPRE mejor que devolver una propuesta que incumple un límite y se rechaza entera, porque una propuesta rechazada deja al atleta sin nada.
 
 BREVEDAD
 - Cada token de salida se genera en serie y es el que hace esperar al atleta delante de una pantalla bloqueada. Sé denso, no extenso.
@@ -187,16 +196,34 @@ function bloqueLimites(cfg, calendario) {
     maxRacha = Math.max(maxRacha, racha);
     previo = dia.day_of_week;
   }
+  /* Cuántas sesiones caben de verdad. Dentro de cada bloque de días
+     consecutivos hay que intercalar un descanso cada `max` días, así que de un
+     bloque de L días solo se pueden usar L - floor(L/(max+1)). Con L=4 y max=3
+     salen 3: es la cuenta que hacía imposible tu semana y que el modelo no
+     tenía forma de deducir de una lista de días. */
+  const tope = cfg.maxConsecutiveTrainingDays;
+  let cabenPorBloques = 0, bloque = 0;
+  previo = null;
+  const cerrar = () => { if (bloque) cabenPorBloques += bloque - Math.floor(bloque / (tope + 1)); bloque = 0; };
+  for (const dia of disponibles) {
+    if (previo !== null && dia.day_of_week === previo + 1) bloque += 1;
+    else { cerrar(); bloque = 1; }
+    previo = dia.day_of_week;
+  }
+  cerrar();
+  const caben = Math.min(cabenPorBloques, Math.max(0, (calendario || []).length - cfg.minRestDays));
+
   return {
-    max_dias_consecutivos_con_sesion: cfg.maxConsecutiveTrainingDays,
+    max_dias_consecutivos_con_sesion: tope,
     min_dias_descanso_en_la_semana: cfg.minRestDays,
     min_dias_entre_fuerza_pesada_y_tirada_larga: cfg.minHeavyBeforeLongRunDays,
     max_incremento_volumen_semanal_pct: cfg.maxWeeklyIncreasePct,
     evidencia_obligatoria_por_sesion: !!cfg.requireEvidencePerSession,
     dias_disponibles: disponibles.length,
     racha_disponible_mas_larga: maxRacha,
-    ...(maxRacha > cfg.maxConsecutiveTrainingDays ? {
-      aviso: `Hay ${maxRacha} días disponibles consecutivos y el tope es ${cfg.maxConsecutiveTrainingDays}: deja al menos uno de ellos SIN sesión.`,
+    max_sesiones_que_caben: caben,
+    ...(maxRacha > tope ? {
+      aviso: `Hay ${maxRacha} días disponibles consecutivos y el tope es ${tope}: como máximo caben ${caben} sesiones. Si el plan maestro trae más, deja fuera las de menor prioridad y explícalo en warnings con una recomendación concreta.`,
     } : {}),
   };
 }
