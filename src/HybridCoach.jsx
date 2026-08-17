@@ -1161,7 +1161,7 @@ async function llamarIA({ system, messages, max_tokens = 1400 }) {
     body: JSON.stringify({ max_tokens, system, messages }),
   });
   if (!r.ok) {
-    let d = ""; try { d = (await r.json()).message || ""; } catch { }
+    let d = ""; try { d = (await r.json()).message || ""; } catch { /* el error puede no venir en JSON; se usa el mensaje genérico */ }
     throw new Error(r.status === 503 ? (d || "El servidor no tiene clave de IA configurada") : "La API respondió " + r.status);
   }
   const data = await r.json();
@@ -1310,7 +1310,7 @@ function emptyStateForProfile(profile) {
 
 async function loadState(key, profile) {
   const prep = (s) => { if (!s.biblio || !s.biblio.length) s.biblio = BIBLIO_SEED; s.biblio = s.biblio.map(normRef); return { ...EMPTY, ...s, config: { ...EMPTY.config, ...(s.config || {}) } }; };
-  try { const r = await store.get(key); if (r) return prep(JSON.parse(r.value)); } catch { }
+  try { const r = await store.get(key); if (r) return prep(JSON.parse(r.value)); } catch { /* copia local ilegible o corrupta: se intenta la del servidor */ }
   try {
     const response = await fetch("/api/sync-state", { credentials: "same-origin" });
     const data = response.ok ? await response.json() : null;
@@ -1329,7 +1329,7 @@ async function loadState(key, profile) {
       await saveState(key, hydrated);
       return hydrated;
     }
-  } catch { }
+  } catch { /* sin red o sin sesión: se arranca con un perfil vacío, nunca se bloquea la entrada */ }
   return prep(emptyStateForProfile(profile));
 }
 async function saveState(key, s) { try { await store.set(key, JSON.stringify(s)); return true; } catch { return false; } }
