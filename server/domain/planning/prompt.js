@@ -1,7 +1,8 @@
 import { WEEKLY_PLAN_SCHEMA_VERSION, MODALIDADES, TIPOS_SESION, PRIORIDADES, TIPOS_CAMBIO, diaDeFecha } from "./schema.js";
 import { DEFAULT_GUARDRAIL_CONFIG, derivarCambiosPlan } from "./guardrails.js";
+import { distribuirSesiones } from "./distribucion.js";
 
-export const PLANNER_PROMPT_VERSION = "weekly-planner.5";
+export const PLANNER_PROMPT_VERSION = "weekly-planner.6";
 
 export const SYSTEM_PROMPT_PLANIFICADOR = `Eres el motor táctico semanal de Hybrid Coach. Adaptas una semana de un plan maestro de carrera y fuerza; nunca inventas un plan maestro nuevo.
 
@@ -56,6 +57,8 @@ FORMATO
 
 CUANDO NO CABE TODO
 - Es normal que el plan maestro no encaje entero en la disponibilidad de la semana. Eso NO es motivo para rendirse: devuelve siempre la mejor semana posible, aunque tenga menos sesiones de las que pedía el maestro. Mira max_sesiones_que_caben.
+- DISTRIBUCION_SUGERIDA ya trae el reparto resuelto: qué sesión va en qué día y cuáles no caben. El código lo ha calculado probando todas las combinaciones y CUMPLE todos los límites de agenda a la vez, que es algo difícil de acertar a ojo porque se restringen entre sí. Úsalo salvo que tengas un motivo clínico o de evidencia para cambiarlo, y si lo cambias, responde tú de que tu reparto también los cumpla.
+- Las sesiones de retirar_por_falta_de_hueco NO caben en esta semana. No intentes colarlas: van como "removed" con su aviso y su recomendación.
 - Nunca fuerces un límite para que quepa todo. Si hay tensión, en este orden: 1) recorta duración o intensidad de las sesiones de apoyo; 2) marca como "removed" las de prioridad "recovery"; 3) después las de prioridad "support"; 4) solo en último lugar toca una sesión "key".
 - Jamás relajes un límite clínico —dolor, dolor en reposo, señales de alarma— para hacer sitio. Ahí la respuesta es menos entrenamiento, nunca más.
 - Cada sesión que dejes fuera va como "removed" en changes_from_master_plan, con su evidencia, y ADEMÁS como warning.
@@ -230,10 +233,38 @@ function bloqueLimites(cfg, calendario) {
   };
 }
 
+/* El reparto de sesiones en días es una búsqueda combinatoria, no una decisión
+   de criterio: los límites de agenda se restringen entre sí y con cuatro días
+   disponibles llega a haber un único reparto válido. El modelo fallaba una
+   restricción distinta en cada intento —arreglaba una y rompía otra—, así que
+   lo resuelve el código y él recibe la solución hecha.
+
+   Se entrega como SUGERENCIA y no como imposición: sigue pudiendo apartarse si
+   la evidencia o una señal clínica lo justifican, y entonces responde de que su
+   reparto también cumpla. Lo que se elimina es tener que adivinarlo. */
+function bloqueDistribucion(contexto, bloque, cfg) {
+  if (!bloque?.calendario?.length) return null;
+  const sesiones = contexto.week?.sessions || contexto.week?.sesiones || contexto.plannedSessions || [];
+  if (!sesiones.length) return null;
+  const disponibles = bloque.calendario.filter((d) => d.disponible).map((d) => d.day_of_week);
+  const reparto = distribuirSesiones({ sesiones, diasDisponibles: disponibles, config: cfg });
+  if (!reparto?.asignaciones?.length) return null;
+
+  const fechaDe = (dia) => bloque.calendario.find((d) => d.day_of_week === dia)?.date || null;
+  return {
+    asignaciones: reparto.asignaciones.map((a) => ({ ...a, date: fechaDe(a.day_of_week) })),
+    /* Lo que no cabe se nombra explícitamente: si se dejara implícito, el modelo
+       intentaría colarlo y la propuesta entera se rechazaría. */
+    retirar_por_falta_de_hueco: reparto.descartadas,
+    cabe_el_plan_maestro_entero: reparto.completo,
+  };
+}
+
 export function construirPromptPlanificador({ contexto, analytics, queries, evidence, semana = null, disponibilidad = null, guardrailConfig = {} }) {
   const bloque = bloqueSemana(contexto, semana, disponibilidad);
   const cfg = { ...DEFAULT_GUARDRAIL_CONFIG, ...guardrailConfig };
   const base = bloqueBaseActiva(contexto);
+  const reparto = bloqueDistribucion(contexto, bloque, cfg);
   const user = [
     /* Sin indentar: estos dos bloques son los más grandes del prompt y la
        sangría es puro coste de tokens sin ayudar a interpretarlos. Los bloques
@@ -251,6 +282,11 @@ export function construirPromptPlanificador({ contexto, analytics, queries, evid
       "",
       "LIMITES_QUE_VALIDA_EL_CODIGO (tu propuesta se rechaza si los incumple)",
       JSON.stringify(bloqueLimites(cfg, bloque.calendario), null, 2),
+      "",
+    ] : []),
+    ...(reparto ? [
+      "DISTRIBUCION_SUGERIDA (reparto ya resuelto por el código; cumple TODOS los límites de agenda)",
+      JSON.stringify(reparto, null, 2),
       "",
     ] : []),
     ...(base.length ? [

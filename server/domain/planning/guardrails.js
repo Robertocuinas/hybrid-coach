@@ -5,7 +5,7 @@ const MS_DIA = 86_400_000;
 const numero = (v) => Number.isFinite(Number(v)) ? Number(v) : null;
 const valor = (o, ...ks) => { for (const k of ks) if (o?.[k] !== undefined && o?.[k] !== null) return o[k]; return null; };
 const fecha = (o) => valor(o, "date", "fecha");
-const codigo = (o) => String(valor(o, "master_session_code", "codigo_sesion", "codigoSesion", "running_code", "strength_code", "session_code", "code") || "");
+export const codigo = (o) => String(valor(o, "master_session_code", "codigo_sesion", "codigoSesion", "running_code", "strength_code", "session_code", "code") || "");
 const modalidad = (o) => String(valor(o, "modality", "tipo", "type") || "").toLowerCase();
 const tipo = (o) => String(valor(o, "session_type", "sessionType", "subtipo") || "").toLowerCase();
 const duracion = (o) => numero(valor(o, "duration_min", "duracion_min", "durationMin")) || 0;
@@ -13,11 +13,11 @@ const distancia = (o) => numero(o?.prescription?.distance_km ?? valor(o, "distan
 const diferenciaDias = (a, b) => Math.round((Date.parse(`${b}T12:00:00Z`) - Date.parse(`${a}T12:00:00Z`)) / MS_DIA);
 const TIPOS_CARRERA = new Set(["long_run", "intervals", "tempo", "easy_run", "recovery_run", "race"]);
 const TIPOS_FUERZA = new Set(["heavy_strength", "strength"]);
-const esFuerza = (s) => modalidad(s) === "strength" || TIPOS_FUERZA.has(tipo(s)) || /gym|fuerza|strength/i.test(codigo(s));
-const esFuerzaPesada = (s) => tipo(s) === "heavy_strength" || (esFuerza(s) && /heavy|pesad|pierna|lower/i.test(`${codigo(s)} ${s.title || ""}`));
-const esCarrera = (s) => modalidad(s) === "running" || TIPOS_CARRERA.has(tipo(s)) || /run|carrera/i.test(codigo(s));
-const esCalidad = (s) => ["intervals", "tempo", "race"].includes(tipo(s)) || /interval|tempo|calidad|run b/i.test(`${codigo(s)} ${s.title || ""}`);
-const esTirada = (s) => tipo(s) === "long_run" || /long|tirada|run a/i.test(`${codigo(s)} ${s.title || ""}`);
+export const esFuerza = (s) => modalidad(s) === "strength" || TIPOS_FUERZA.has(tipo(s)) || /gym|fuerza|strength/i.test(codigo(s));
+export const esFuerzaPesada = (s) => tipo(s) === "heavy_strength" || (esFuerza(s) && /heavy|pesad|pierna|lower/i.test(`${codigo(s)} ${s.title || ""}`));
+export const esCarrera = (s) => modalidad(s) === "running" || TIPOS_CARRERA.has(tipo(s)) || /run|carrera/i.test(codigo(s));
+export const esCalidad = (s) => ["intervals", "tempo", "race"].includes(tipo(s)) || /interval|tempo|calidad|run b/i.test(`${codigo(s)} ${s.title || ""}`);
+export const esTirada = (s) => tipo(s) === "long_run" || /long|tirada|run a/i.test(`${codigo(s)} ${s.title || ""}`);
 
 function registrar(lista, code, message, path = "$", details = null) {
   lista.push({ code, message, path, details });
