@@ -2822,9 +2822,17 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab, hydrateAcc
       setMsgs((c) => c.map((x, j) => (j === i ? { ...x, accionPendiente: false, accionRechazada: true } : x)));
       return;
     }
-    const resultado = await ejecutarAccion(m.accion, P, depsAccion);
-    setMsgs((c) => c.map((x, j) => (j === i ? { ...x, accionPendiente: false, resultado } : x)));
-    notify(resultado.ok ? resultado.mensaje : "No se pudo aplicar: " + resultado.mensaje);
+    /* `generar_semana` lanza el planificador entero: entre treinta segundos y un
+       minuto. Sin marcar la espera el botón parecía muerto —se pulsaba y no
+       cambiaba nada— y volver a pulsarlo disparaba una segunda generación de
+       pago. Se reutiliza `resolviendo`, que ya bloquea el resto de acciones de
+       la conversación mientras una está en curso. */
+    setResolviendo(i);
+    try {
+      const resultado = await ejecutarAccion(m.accion, P, depsAccion);
+      setMsgs((c) => c.map((x, j) => (j === i ? { ...x, accionPendiente: false, resultado } : x)));
+      notify(resultado.ok ? resultado.mensaje : "No se pudo aplicar: " + resultado.mensaje);
+    } finally { setResolviendo(null); }
   };
 
   const resolverPropuestaSemanal = async (i, aceptar) => {
@@ -3074,10 +3082,22 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab, hydrateAcc
         <span className="tag gym">Requiere tu confirmación</span>
         <p className="sm" style={{ margin: "8px 0 4px" }}>{descripcionAccion(m.accion)}</p>
         {m.accion.motivo && <p className="xs muted" style={{ margin: "0 0 9px" }}>{m.accion.motivo}</p>}
-        <div className="row">
-          <button className="btn primary sm" style={{ flex: 1 }} onClick={() => confirmarAccion(i, true)}>Aceptar</button>
-          <button className="btn ghost sm" style={{ flex: 1 }} onClick={() => confirmarAccion(i, false)}>Rechazar</button>
+        <div className="row" aria-busy={resolviendo === i}>
+          <button className="btn primary sm" style={{ flex: 1 }} disabled={resolviendo !== null}
+            onClick={() => confirmarAccion(i, true)}>
+            {/* Se nombra la espera real: generar una semana consulta la
+                bibliografía y llama al modelo, y tarda de verdad. */}
+            {resolviendo === i
+              ? (m.accion?.accion === "generar_semana" ? "Generando la semana…" : "Aplicando…")
+              : "Aceptar"}
+          </button>
+          <button className="btn ghost sm" style={{ flex: 1 }} disabled={resolviendo !== null}
+            onClick={() => confirmarAccion(i, false)}>Rechazar</button>
         </div>
+        {resolviendo === i && m.accion?.accion === "generar_semana" && (
+          <p className="xs muted" style={{ margin: "8px 0 0" }}>
+            Consultando tu contexto y la bibliografía. Puede tardar hasta un minuto.
+          </p>)}
       </div>)}
       {m.accionRechazada && <span className="tag">Acción rechazada</span>}
       {m.accion && !m.resultado && !m.accionPendiente && !m.accionRechazada && (
