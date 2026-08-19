@@ -2861,8 +2861,14 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab, hydrateAcc
 
   const nueva = () => { setVerId(null); setConvId(null); setMsgs([]); setQ(""); setDrawer(null); };
 
+  /* Abrir una conversación la convierte en la conversación VIVA, no en una
+     lectura: `convId` viaja en el siguiente mensaje y el servidor continúa ese
+     hilo. Puede hacerlo con seguridad porque obtenerOCrearConversacion() la
+     busca con `WHERE id = $1 AND athlete_profile_id = $2`, así que nadie puede
+     escribir en la conversación de otra cuenta, y historialParaPrompt()
+     reconstruye el contexto anterior —incluido el resumen compactado—. */
   const abrir = async (id) => {
-    setDrawer(null); setVerId(id); setCargando(true);
+    setDrawer(null); setVerId(id); setConvId(id); setCargando(true);
     try {
       const data = await api(`/api/coach/conversations/${encodeURIComponent(id)}/messages`);
       setMsgs((data.messages || []).map((m) => ({
@@ -2891,18 +2897,17 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab, hydrateAcc
 
   const send = async (text) => {
     const content = (text ?? q).trim(); if (!content || busy) return;
-    /* Escribir mientras se lee una conversación vieja abre una nueva: el
-       historial es de lectura. */
-    const enHistorial = !!abierta;
-    const base = enHistorial ? [] : msgs;
-    if (enHistorial) { setVerId(null); setConvId(null); }
-    const next = [...base, { role: "user", content }];
+    /* Escribir continúa el hilo abierto en vez de empezar otro. Antes se
+       descartaban los mensajes cargados y se limpiaba convId, así que retomar
+       una conversación era imposible: el Coach perdía todo lo hablado y había
+       que repetirle el contexto. Para empezar de cero está "Nueva conversación". */
+    const next = [...msgs, { role: "user", content }];
     setMsgs(next); setQ(""); setBusy(true);
     try {
       const data = await api("/api/coach/chat", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          consulta: content, conversationId: enHistorial ? null : convId, weekNumber: targetWeek,
+          consulta: content, conversationId: convId, weekNumber: targetWeek,
           /* Dónde estaba el atleta al escribir: permite que "esto" o "hoy" se
              refieran a lo que tiene delante (§12). El servidor lo filtra por
              lista blanca, así que no es una vía para inyectar en el prompt. */
@@ -3046,7 +3051,7 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab, hydrateAcc
           ))}
           <p className="xs muted" style={{ margin: "7px 0 0" }}>{(m.cambio.proposal.citations || []).length} citas verificables · evidencia {m.cambio.proposal.evidenceState}</p>
         </div>)}
-        {m.pendiente && !abierta ? (<div className="row" aria-busy={resolviendo === i}><button className="btn primary sm" style={{ flex: 1 }} disabled={resolviendo !== null} onClick={() => resolve(i, true)}>{resolviendo === i ? "Resolviendo…" : "Aceptar cambio"}</button><button className="btn ghost sm" style={{ flex: 1 }} disabled={resolviendo !== null} onClick={() => resolve(i, false)}>Rechazar</button></div>)
+        {m.pendiente ? (<div className="row" aria-busy={resolviendo === i}><button className="btn primary sm" style={{ flex: 1 }} disabled={resolviendo !== null} onClick={() => resolve(i, true)}>{resolviendo === i ? "Resolviendo…" : "Aceptar cambio"}</button><button className="btn ghost sm" style={{ flex: 1 }} disabled={resolviendo !== null} onClick={() => resolve(i, false)}>Rechazar</button></div>)
           : <span className={"tag " + (m.aceptado ? "ok" : "")}>{m.aceptado ? "Aceptado y registrado" : m.estadoPropuesta === "rejected" ? "Rechazado" : m.estadoPropuesta === "superseded" ? "Sustituido por una revisión posterior" : m.pendiente ? "Sin resolver" : "Estado histórico no disponible"}</span>}
       </div>)}
 
@@ -3078,7 +3083,7 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab, hydrateAcc
       })()}
 
       {/* Acción que cambia algo importante: se propone y espera (§15, §16). */}
-      {m.accionPendiente && !abierta && (<div className="accion pendiente">
+      {m.accionPendiente && (<div className="accion pendiente">
         <span className="tag gym">Requiere tu confirmación</span>
         <p className="sm" style={{ margin: "8px 0 4px" }}>{descripcionAccion(m.accion)}</p>
         {m.accion.motivo && <p className="xs muted" style={{ margin: "0 0 9px" }}>{m.accion.motivo}</p>}
@@ -3150,9 +3155,9 @@ function Coach({ P, curW, today, update, notify, setPantalla, setTab, hydrateAcc
     {abierta && (<div className="card" style={{ borderColor: "#4E4483" }}>
       <div className="between">
         <span className="tag evid">{abierta.titulo || "Conversación guardada"}</span>
-        <button className="btn ghost sm" onClick={nueva}>Volver a la actual</button>
+        <button className="btn ghost sm" onClick={nueva}>Nueva conversación</button>
       </div>
-      <p className="xs muted" style={{ margin: "8px 0 0" }}>Estás leyendo el historial. Si escribes, empezará una conversación nueva.</p>
+      <p className="xs muted" style={{ margin: "8px 0 0" }}>Estás en esta conversación: si escribes, el Coach continúa el hilo con todo lo que ya habéis hablado.</p>
     </div>)}
 
     <div className="coachgrid" style={{ marginTop: 12 }}>
