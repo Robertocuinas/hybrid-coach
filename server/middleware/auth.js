@@ -51,10 +51,29 @@ export const registrationRateLimiter = rateLimit({
   windowMs: 60 * 60_000, limit: 5, standardHeaders: "draft-7", legacyHeaders: false,
   message: { ok: false, message: "Demasiadas altas desde esta red. Inténtalo más tarde." },
 });
+/* Protege el bolsillo del dueño de la clave y evita que un bucle del cliente
+   dispare llamadas de pago en cadena; no es una restricción de producto. Por eso
+   se puede subir, y APAGAR del todo con AI_RATE_LIMIT_PER_MINUTE=0, que es lo
+   razonable en una instancia de un solo usuario con su propia clave.
+
+   Sube de 10 a 30: 10 por minuto se quedaba corto en cuanto reintentabas una
+   generación un par de veces seguidas. */
+export function leerLimiteIA(env = process.env) {
+  const bruto = Number(env.AI_RATE_LIMIT_PER_MINUTE ?? 30);
+  /* Se desactiva con `skip` y NO poniendo limit a 0: desde express-rate-limit v7
+     un límite de 0 no significa "sin límite" sino "bloquea todo", y el proyecto
+     va por la v8. Ponerlo a 0 para abrir la mano habría cerrado la IA entera. */
+  const desactivado = !Number.isFinite(bruto) || bruto <= 0;
+  return { desactivado, limite: desactivado ? 1000 : Math.floor(bruto) };
+}
+
+const limiteIA = leerLimiteIA();
 export const aiRateLimiter = rateLimit({
-  windowMs: 60_000, limit: Number(process.env.AI_RATE_LIMIT_PER_MINUTE || 10),
+  windowMs: 60_000,
+  limit: limiteIA.limite,
+  skip: () => limiteIA.desactivado,
   standardHeaders: "draft-7", legacyHeaders: false, keyGenerator: accountKey,
-  message: { ok: false, message: "Límite temporal de IA alcanzado." },
+  message: { ok: false, message: "Has hecho muchas peticiones de IA seguidas. Espera un minuto o sube AI_RATE_LIMIT_PER_MINUTE." },
 });
 /* 60/hora y no 10: la subida es solo para admins, así que no protege de un
    abuso externo sino del propio servidor, y con 10 no cabía ni una tanda

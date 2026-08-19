@@ -14,7 +14,7 @@ import {
   PlanningRequestError,
   publicWeeklyProposal,
 } from "../domain/planning/application.js";
-import { requireAuth } from "../middleware/auth.js";
+import { aiRateLimiter, requireAuth } from "../middleware/auth.js";
 import { requireActiveProfile } from "../middleware/authorization.js";
 
 const router = express.Router();
@@ -38,7 +38,13 @@ const expectedRevision = (req) => {
   return value;
 };
 
-router.post("/weeks/:week/proposals", async (req, res, next) => {
+/* El límite va SOLO aquí, que es lo único de este router que gasta una llamada
+   al modelo. Estaba montado sobre el router entero, así que leer la semana
+   aceptada —algo que Mi semana hace en cada cambio de semana— consumía cuota de
+   IA sin invocar a nadie: pulsar diez veces las flechas dejaba el planificador
+   bloqueado con "Límite temporal de IA alcanzado". Aceptar y rechazar tampoco
+   llaman a ningún modelo y quedan libres. */
+router.post("/weeks/:week/proposals", aiRateLimiter, async (req, res, next) => {
   try {
     const runtime = await resolveRAGRuntime(req.auth.userId);
     if (!runtime.llmProvider) {

@@ -60,3 +60,21 @@ test("sin APP_ORIGIN solo se acepta un origen con el mismo Host", () => {
   assert.equal(execute("https://evil.example"), 403);
   if (previous !== undefined) process.env.APP_ORIGIN = previous;
 });
+
+/* El limitador de IA protege el bolsillo de quien pone la clave, no es una
+   restricción de producto: tiene que poder apagarse. Y apagarlo NO puede
+   hacerse con limit:0 —desde express-rate-limit v7 eso bloquea todo, que es
+   justo lo contrario— así que se comprueba que la lectura devuelve `skip`. */
+test("el límite de IA se puede subir y apagar sin tocar código", async () => {
+  const { leerLimiteIA } = await import("./auth.js");
+
+  assert.deepEqual(leerLimiteIA({}), { desactivado: false, limite: 30 }, "por defecto, 30 por minuto");
+  assert.equal(leerLimiteIA({ AI_RATE_LIMIT_PER_MINUTE: "120" }).limite, 120);
+  assert.equal(leerLimiteIA({ AI_RATE_LIMIT_PER_MINUTE: "120" }).desactivado, false);
+
+  for (const valor of ["0", "-1", "no-es-un-numero", ""]) {
+    const leido = leerLimiteIA({ AI_RATE_LIMIT_PER_MINUTE: valor });
+    assert.equal(leido.desactivado, true, `${valor} debe desactivar el límite`);
+    assert.ok(leido.limite > 0, "y nunca dejar limit en 0, que en v7+ bloquea todo");
+  }
+});

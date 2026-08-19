@@ -218,8 +218,11 @@ app.use("/api/ai/settings", aiSettingsRoutes);
    y no debe caer en los manejadores JSON genéricos. */
 app.use("/api/admin/documents/upload", uploadRateLimiter);
 app.use("/api/admin", adminRoutes);
-app.use("/api/planning", aiRateLimiter, planningRoutes);
-app.use("/api/coach", aiRateLimiter, coachRoutes);
+/* Sin aiRateLimiter aquí: lo aplica cada router en los endpoints que de verdad
+   invocan un modelo. Montado sobre el router entero, las lecturas gastaban cuota
+   de IA y bloqueaban la generación sin haber llamado a nadie. */
+app.use("/api/planning", planningRoutes);
+app.use("/api/coach", coachRoutes);
 app.use("/api/evidence", evidenceRoutes);
 app.use("/api/exercises", exerciseRoutes);
 app.use("/api/foods", foodRoutes);

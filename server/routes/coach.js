@@ -3,7 +3,7 @@
    (docs/03-modelo-datos.md §11). */
 import express from "express";
 import { pool } from "../db/repositories/_helpers.js";
-import { requireAuth } from "../middleware/auth.js";
+import { aiRateLimiter, requireAuth } from "../middleware/auth.js";
 import { requireActiveProfile } from "../middleware/authorization.js";
 import { createToolRouterProvider } from "../ai/factory.js";
 import { resolveRAGRuntime } from "../ai/runtime.js";
@@ -61,7 +61,7 @@ const perfil = (req) => req.auth.athleteProfileId;
 
 /* Diagnóstico y clasificación local. Needle nunca recibe ni acepta un
    athlete_profile_id del cliente y no ejecuta la herramienta elegida. */
-router.post("/route", async (req, res, next) => {
+router.post("/route", aiRateLimiter, async (req, res, next) => {
   try {
     const consulta = String(req.body?.consulta || "").trim().slice(0, 1000);
     if (!consulta) return res.status(400).json({ ok: false, message: "Falta la consulta" });
@@ -72,7 +72,7 @@ router.post("/route", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-router.post("/chat", async (req, res, next) => {
+router.post("/chat", aiRateLimiter, async (req, res, next) => {
   try {
     const consulta = String(req.body?.consulta || "").trim();
     if (!consulta) return res.status(400).json({ ok: false, message: "Falta la consulta" });
@@ -108,7 +108,7 @@ router.post("/chat", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-router.post("/decisiones", async (req, res, next) => {
+router.post("/decisiones", aiRateLimiter, async (req, res, next) => {
   try {
     const deps = await dependencias(req.auth.userId);
     if (!deps.llmProvider) return res.status(503).json({ ok: false, message: "Este servidor no tiene proveedor de IA configurado" });
@@ -182,7 +182,7 @@ router.delete("/conversations/:id", async (req, res, next) => {
 /* Ejecución en paralelo: mismas preguntas contra el sistema nuevo (RAG) y el
    anterior (selección léxica sobre fichas). Sirve para detectar regresiones
    ANTES de apagar el viejo, que es el riesgo principal de esta fase. */
-router.post("/comparar", async (req, res, next) => {
+router.post("/comparar", aiRateLimiter, async (req, res, next) => {
   try {
     const deps = await dependencias(req.auth.userId);
     const preguntas = Array.isArray(req.body?.preguntas) && req.body.preguntas.length
