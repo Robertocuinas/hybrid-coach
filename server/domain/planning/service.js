@@ -1,7 +1,7 @@
 import { calcularAnaliticaEntrenamiento } from "./analytics.js";
 import { construirConsultasRAG } from "./queries.js";
 import { parsearPlanSemanal, validarPlanSemanal } from "./schema.js";
-import { evaluarGuardrailsPlan, GUARDRAILS_VERSION } from "./guardrails.js";
+import { derivarCambiosPlan, evaluarGuardrailsPlan, GUARDRAILS_VERSION } from "./guardrails.js";
 import { construirPromptPlanificador, construirPromptReparacion, PLANNER_PROMPT_VERSION } from "./prompt.js";
 import { crearFallbackSeguro } from "./fallback.js";
 
@@ -109,6 +109,56 @@ function idsDisponibilidad(contexto) {
   return raw.days || raw.dias || [];
 }
 
+/* El diff entre la semana propuesta y la base lo calcula SIEMPRE el código
+   (derivarCambiosPlan), nunca se confía en la etiqueta del modelo. Pero luego se
+   rechazaba la propuesta entera cuando esa etiqueta no coincidía con el cálculo,
+   que es castigar al atleta por un dato DERIVADO que el modelo no tenía por qué
+   acertar: en producción SESSION_CHANGE_MISMATCH y MISSING_OR_INCORRECT_CHANGE
+   salían en casi todas las generaciones, y con ellas se perdía la semana entera.
+
+   Aquí se normaliza antes de validar: la etiqueta y la lista de cambios pasan a
+   ser lo que el código ha calculado. No se relaja ningún límite —el resultado
+   sigue pasando por schema y guardarraíles completos— y no se inventa nada: el
+   motivo y la evidencia de cada cambio salen de la sesión que el propio modelo
+   escribió. Lo que decide qué se propone sigue siendo suyo; lo que es un hecho
+   derivado, del código. */
+function normalizarCambiosDerivados(plan, contexto) {
+  const sesiones = Array.isArray(plan?.sessions) ? plan.sessions : [];
+  if (!sesiones.length) return plan;
+  const calculados = derivarCambiosPlan(contexto, sesiones);
+  const porClave = new Map(calculados.map((c) => [String(c.session_key), c]));
+  const declarados = new Map(
+    (Array.isArray(plan.changes_from_master_plan) ? plan.changes_from_master_plan : [])
+      .map((c) => [String(c?.session_key ?? ""), c]),
+  );
+
+  const sessions = sesiones.map((sesion) => {
+    const clave = String(sesion.session_key ?? sesion.master_session_code ?? "");
+    const calculado = porClave.get(clave);
+    if (!calculado) return sesion;
+    return { ...sesion, change_from_master: { ...sesion.change_from_master, type: calculado.type } };
+  });
+
+  const cambios = calculados
+    .filter((c) => c.type !== "unchanged")
+    .map((c) => {
+      const declarado = declarados.get(String(c.session_key));
+      const sesion = sessions.find((x) => String(x.session_key ?? "") === String(c.session_key));
+      return {
+        type: c.type,
+        session_key: c.session_key,
+        before: c.before ?? null,
+        after: c.after ?? null,
+        /* Del modelo si lo escribió; si no, de lo que él mismo dijo de esa
+           sesión. Nunca un texto inventado aquí. */
+        reason: declarado?.reason || sesion?.public_reason || "Ajuste calculado sobre el plan activo.",
+        evidence_ids: (declarado?.evidence_ids?.length ? declarado.evidence_ids : sesion?.evidence_ids) || [],
+      };
+    });
+
+  return { ...plan, sessions, changes_from_master_plan: cambios };
+}
+
 function validarSalida(bruto, contexto, analytics, evidence, guardrailConfig) {
   const parsed = parsearPlanSemanal(bruto);
   if (!parsed.ok) return { ok: false, output: null, schema: parsed, guardrails: null, errors: parsed.errors };
@@ -129,10 +179,11 @@ function validarSalida(bruto, contexto, analytics, evidence, guardrailConfig) {
     today: iso(contexto.now || new Date()),
   });
   if (!schema.ok) return { ok: false, output: null, schema, guardrails: null, errors: schema.errors };
-  const guardrails = evaluarGuardrailsPlan(schema.value, contexto, analytics, guardrailConfig);
+  const normalizado = normalizarCambiosDerivados(schema.value, contexto);
+  const guardrails = evaluarGuardrailsPlan(normalizado, contexto, analytics, guardrailConfig);
   return {
     ok: guardrails.valid,
-    output: guardrails.valid ? schema.value : null,
+    output: guardrails.valid ? normalizado : null,
     schema,
     guardrails,
     errors: guardrails.hard.map((e) => ({ path: e.path, code: e.code, message: e.message })),

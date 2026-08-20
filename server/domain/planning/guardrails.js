@@ -37,7 +37,11 @@ function redFlags(contexto, analitica) {
     .map(String).filter((flag) => flag && !/^ninguna$/i.test(flag.trim()));
 }
 
-function sesionesBaseActivas(contexto) {
+/* Se exporta para que el reparto determinista parta de la MISMA base que el
+   diff. Si el solucionador repartiera las sesiones del plan maestro mientras
+   el validador compara contra la revisión aceptada, propondríamos un reparto
+   sobre sesiones que no son las que se van a juzgar. */
+export function sesionesBaseActivas(contexto) {
   if (contexto.acceptedRevision) {
     return contexto.acceptedRevision.sessions
       || contexto.acceptedRevision.sesiones

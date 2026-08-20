@@ -1,8 +1,8 @@
 import { WEEKLY_PLAN_SCHEMA_VERSION, MODALIDADES, TIPOS_SESION, PRIORIDADES, TIPOS_CAMBIO, diaDeFecha } from "./schema.js";
-import { DEFAULT_GUARDRAIL_CONFIG, derivarCambiosPlan } from "./guardrails.js";
+import { DEFAULT_GUARDRAIL_CONFIG, derivarCambiosPlan, sesionesBaseActivas } from "./guardrails.js";
 import { distribuirSesiones } from "./distribucion.js";
 
-export const PLANNER_PROMPT_VERSION = "weekly-planner.6";
+export const PLANNER_PROMPT_VERSION = "weekly-planner.7";
 
 export const SYSTEM_PROMPT_PLANIFICADOR = `Eres el motor táctico semanal de Hybrid Coach. Adaptas una semana de un plan maestro de carrera y fuerza; nunca inventas un plan maestro nuevo.
 
@@ -244,7 +244,10 @@ function bloqueLimites(cfg, calendario) {
    reparto también cumpla. Lo que se elimina es tener que adivinarlo. */
 function bloqueDistribucion(contexto, bloque, cfg) {
   if (!bloque?.calendario?.length) return null;
-  const sesiones = contexto.week?.sessions || contexto.week?.sesiones || contexto.plannedSessions || [];
+  /* La MISMA base que usa el diff: con una semana ya aceptada, repartir las
+     sesiones del plan maestro mientras el validador compara contra la revisión
+     aceptada proponía un reparto sobre sesiones que no son las que se juzgan. */
+  const sesiones = sesionesBaseActivas(contexto);
   if (!sesiones.length) return null;
   const disponibles = bloque.calendario.filter((d) => d.disponible).map((d) => d.day_of_week);
   const reparto = distribuirSesiones({ sesiones, diasDisponibles: disponibles, config: cfg });

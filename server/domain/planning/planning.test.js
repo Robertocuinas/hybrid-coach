@@ -602,3 +602,48 @@ test("con una revisión aceptada el movimiento se mide por fecha", async () => {
   /* Sin nada comparable no se inventa un movimiento. */
   assert.equal(seHaMovido({}, { date: "2026-08-17" }), false);
 });
+
+/* En producción, SESSION_CHANGE_MISMATCH y MISSING_OR_INCORRECT_CHANGE salían en
+   casi todas las generaciones: el modelo movía sesiones y las etiquetaba
+   "unchanged". Perder la semana entera por eso es castigar al atleta por un dato
+   DERIVADO —el diff lo calcula el código, no el modelo— así que ahora se
+   normaliza antes de validar en vez de rechazar. */
+test("una etiqueta de cambio equivocada se corrige, no tumba la propuesta", async () => {
+  /* El modelo intercambia los días de dos sesiones y jura que no ha tocado nada. */
+  const sesiones = outputFor().sessions.map((s) => {
+    if (s.session_key === "easy") return { ...s, date: "2026-08-18", day_of_week: 1 };
+    if (s.session_key === "strength") return { ...s, date: "2026-08-17", day_of_week: 0 };
+    return s;
+  });
+  const { deps, calls } = depsFor(outputFor(sesiones, { changes_from_master_plan: [] }));
+  const result = await planificarSemana(context(), deps);
+
+  assert.equal(result.status, "proposal", "antes se rechazaba entera por una etiqueta");
+  assert.equal(calls(), 1, "y sin gastar una segunda llamada de reparación");
+
+  const porClave = Object.fromEntries(result.output.sessions.map((s) => [s.session_key, s.change_from_master.type]));
+  assert.equal(porClave.easy, "moved", "la etiqueta pasa a ser la que calcula el código");
+  assert.equal(porClave.strength, "moved");
+  assert.equal(porClave.quality, "unchanged", "lo que no se movió se queda como estaba");
+
+  const cambios = result.output.changes_from_master_plan;
+  assert.deepEqual(cambios.map((c) => c.session_key).sort(), ["easy", "strength"],
+    "los cambios que el modelo omitió se reconstruyen");
+  for (const cambio of cambios) {
+    assert.ok(cambio.evidence_ids.length, "con la evidencia de su propia sesión, no inventada");
+    assert.ok(cambio.reason, "y con un motivo tomado de lo que el modelo escribió");
+  }
+});
+
+/* La normalización NO puede convertirse en una puerta trasera: lo que toca son
+   datos derivados, y todo lo demás sigue validándose igual. */
+test("normalizar el diff no relaja ningún límite clínico", async () => {
+  const sesiones = outputFor().sessions.map((s) => (s.session_key === "easy"
+    ? { ...s, date: "2026-08-18", day_of_week: 1 } : s));
+  const { deps } = depsFor(outputFor(sesiones, { changes_from_master_plan: [] }));
+  const conDolor = context({ checkins: [{ fecha: "2026-08-16", dolor: 7 }] });
+  const result = await planificarSemana(conDolor, deps);
+
+  assert.notEqual(result.status, "proposal", "con dolor 7/10 y carrera no puede salir propuesta");
+  assert.ok(result.validation.guardrails.hard.some((x) => x.code === "PAIN_HIGH_IMPACT"));
+});
