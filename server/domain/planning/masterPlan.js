@@ -132,10 +132,38 @@ function evaluarGuardarrailesMaestro(plan, contexto = {}, analytics = {}) {
   return { valid: hard.length === 0, hard, soft: [] };
 }
 
+function normalizarPlanMaestroBruto(valor) {
+  if (!valor || typeof valor !== "object") return valor;
+  if (Array.isArray(valor.semanas)) {
+    valor.semanas = valor.semanas.map((s) => {
+      if (!s || typeof s !== "object") return s;
+      const norm = { ...s };
+      // El modelo a veces omite campos en semanas lejanas: se completan con
+      // valores neutros para no rechazar todo el plan por un campo faltante.
+      if (norm.checkpoint === undefined) norm.checkpoint = "";
+      if (norm.nota === undefined) norm.nota = "";
+      if (norm.gym === undefined) norm.gym = "carga";
+      if (norm.deload === undefined) norm.deload = false;
+      if (norm.taper === undefined) norm.taper = false;
+      if (!Array.isArray(norm.sesiones)) norm.sesiones = [];
+      norm.sesiones = norm.sesiones.map((x) => {
+        if (!x || typeof x !== "object") return x;
+        const n = { ...x };
+        if (n.titulo === undefined) n.titulo = "";
+        if (n.objetivo === undefined) n.objetivo = "";
+        return n;
+      });
+      return norm;
+    });
+  }
+  return valor;
+}
+
 function validarSalida(bruto, contexto, analytics, evidence) {
   const parsed = parsearPlanMaestro(bruto);
   if (!parsed.ok) return { ok: false, output: null, schema: parsed, errors: parsed.errors };
-  const schema = validarPlanMaestro(parsed.value, {});
+  const normalizado = normalizarPlanMaestroBruto(parsed.value);
+  const schema = validarPlanMaestro(normalizado, {});
   if (!schema.ok) return { ok: false, output: null, schema, errors: schema.errors };
   const guardrails = evaluarGuardarrailesMaestro(schema.value, contexto, analytics);
   return {
