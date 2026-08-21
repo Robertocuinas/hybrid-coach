@@ -58,6 +58,23 @@ const sumarDias = (value, days) => {
   return parsed.toISOString().slice(0, 10);
 };
 
+/* Inicio (lunes) de la semana N de un plan maestro, contando hacia atrás desde
+   la semana de la carrera. La semana `totalSemanas` es la de la carrera; la 1 es
+   la más lejana. Devuelve null si faltan datos. */
+function calcularInicioSemana(fechaCarrera, totalSemanas, numeroSemana) {
+  const fc = fecha(fechaCarrera);
+  const total = Number(totalSemanas);
+  const n = Number(numeroSemana);
+  if (!fc || !Number.isInteger(total) || !Number.isInteger(n) || n < 1 || n > total) return null;
+  // Lunes de la semana de la carrera.
+  const carrera = new Date(`${fc}T12:00:00Z`);
+  const diaSemana = (carrera.getUTCDay() + 6) % 7; // 0=lunes
+  const lunesCarrera = sumarDias(fc, -diaSemana);
+  if (!lunesCarrera) return null;
+  const semanasAtras = total - n;
+  return sumarDias(lunesCarrera, -semanasAtras * 7);
+}
+
 const numeroONull = (value) => {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
@@ -210,7 +227,14 @@ export function buildCanonicalPlannerContext(canonical, input, { now = new Date(
   if (!plan) throw new PlanningRequestError("No existe un plan maestro activo.", { code: "MASTER_PLAN_REQUIRED", status: 409 });
   const sourceWeek = (canonical.masterWeeks || []).find((item) => Number(item.numero_semana) === input.weekNumber);
   if (!sourceWeek) throw new PlanningRequestError("La semana solicitada no existe en el plan maestro.", { code: "MASTER_WEEK_NOT_FOUND", status: 409 });
-  const weekStart = fecha(sourceWeek.inicio);
+  /* Fecha canónica de la semana: la prioriza el valor persistido (training_weeks.inicio);
+     si está vacío (p.ej. plan maestro previo a la columna), se calcula desde la fecha de
+     carrera contando hacia atrás. Evita depender de una migración para que el planner
+     semanal siempre tenga una semana natural válida. */
+  let weekStart = fecha(sourceWeek.inicio);
+  if (!weekStart) {
+    weekStart = fecha(calcularInicioSemana(plan?.fecha_carrera, plan?.total_semanas, sourceWeek.numero_semana));
+  }
   if (!weekStart) {
     throw new PlanningRequestError("La semana todavía no tiene fecha canónica. Sincroniza el plan antes de generar una propuesta.", {
       code: "MASTER_WEEK_DATE_REQUIRED", status: 409,

@@ -1,24 +1,5 @@
 import { pool, insertRow } from "._helpers.js";
 
-/* Calcula las fechas canónicas (inicio=lunes, fin=domingo) de la semana N de un
-   plan maestro, contando hacia atrás desde la semana de la carrera. La semana
-   `totalSemanas` es la de la carrera; la semana 1 es la más lejana. Devuelve
-   nulls si no hay fecha de carrera. Aritmética sobre strings ISO (sin zonas
-   horarias) para evitar desfases de día por UTC. */
-function calcularFechasSemana(fechaCarreraISO, totalSemanas, numeroSemana) {
-  if (!fechaCarreraISO || !/^\d{4}-\d{2}-\d{2}$/.test(fechaCarreraISO)) return { inicio: null, fin: null };
-  const [y, m, d] = fechaCarreraISO.split("-").map(Number);
-  const carrera = new Date(Date.UTC(y, m - 1, d));
-  // Lunes de la semana de la carrera (getUTCDay: 0=domingo..1=lunes..6=sábado).
-  const diaSemanaCarrera = (carrera.getUTCDay() + 6) % 7; // 0=lunes
-  const lunesCarrera = carrera.getTime() - diaSemanaCarrera * 86400000;
-  const semanasAtras = Math.max(0, totalSemanas - numeroSemana);
-  const inicioMs = lunesCarrera - semanasAtras * 7 * 86400000;
-  const finMs = inicioMs + 6 * 86400000;
-  const aISO = (ms) => new Date(ms).toISOString().slice(0, 10);
-  return { inicio: aISO(inicioMs), fin: aISO(finMs) };
-}
-
 export function createPlanVersion(profileId, datos = {}) {
   return insertRow("training_plans", {
     athlete_profile_id: profileId,
@@ -218,17 +199,13 @@ export async function saveMasterPlan(profileId, plan, { estructuraHash = null } 
         JSON.stringify(plan.riesgo?.causas ?? []), estructuraHash]
     );
     const planDb = planRows[0];
-    const fechaCarrera = plan.fecha_carrera ? String(plan.fecha_carrera).slice(0, 10) : null;
-    const totalSemanas = Number(plan.total_semanas) || (plan.semanas || []).length;
     for (const semana of plan.semanas || []) {
-      const n = Number(semana.numero) || 0;
-      const { inicio, fin } = calcularFechasSemana(fechaCarrera, totalSemanas, n);
       const { rows: weekRows } = await client.query(
         `INSERT INTO training_weeks
-          (training_plan_id, numero_semana, fase, techo_tirada_larga_min, es_deload, es_taper, checkpoint, inicio, fin)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *;`,
+          (training_plan_id, numero_semana, fase, techo_tirada_larga_min, es_deload, es_taper, checkpoint)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *;`,
         [planDb.id, semana.numero, semana.fase, plan.techo_tirada_larga_min ?? null,
-          !!semana.deload, !!semana.taper, semana.checkpoint ?? null, inicio, fin]
+          !!semana.deload, !!semana.taper, semana.checkpoint ?? null]
       );
       const weekDb = weekRows[0];
       for (const sesion of semana.sesiones || []) {
