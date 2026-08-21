@@ -149,8 +149,11 @@ function normalizarPlanMaestroBruto(valor) {
       norm.sesiones = norm.sesiones.map((x) => {
         if (!x || typeof x !== "object") return x;
         const n = { ...x };
-        if (n.titulo === undefined) n.titulo = "";
-        if (n.objetivo === undefined) n.objetivo = "";
+        // titulo/objetivo son opcionales; si el modelo los puso pero con un tipo
+        // inválido (numero, null, cadena vacia), se eliminan en vez de rechazar.
+        if (n.titulo !== undefined && (typeof n.titulo !== "string" || n.titulo.length < 1 || n.titulo.length > 120)) delete n.titulo;
+        if (n.objetivo !== undefined && (typeof n.objetivo !== "string" || n.objetivo.length > 300)) delete n.objetivo;
+        if (n.dia !== undefined && (!Number.isInteger(n.dia) || n.dia < 1 || n.dia > 7)) delete n.dia;
         return n;
       });
       return norm;
