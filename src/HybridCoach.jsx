@@ -765,14 +765,6 @@ function gymSession(plan, perfil, w, code, P) {
   return { code, foco: base.foco, pesado: base.pesado, ej: detalle, dur: duracion, mod: mods[sp.gym], fase: sp.gym, editada: !!propia, avisos };
 }
 
-/* Rutina base editable: la plantilla generada, ya con el nombre resuelto según
-   tu equipamiento, lista para que la modifiques.                             */
-function rutinaBase(plan, perfil, code, P) {
-  const plantilla = PLANTILLAS[clamp(plan.gymDias, 1, 4)] || PLANTILLAS[2];
-  const b = plantilla.find((g) => g.code === code) || plantilla[0];
-  return { code, foco: b.foco, pesado: b.pesado, ej: b.ej.map((e) => ({ ...e })), editada: true, modificada: iso(new Date()) };
-}
-
 function sessionPool(plan, w) {
   const sp = semanaPlan(plan, w);
   const runs = Object.keys(sp.runs).filter((k) => sp.runs[k].t > 0 || w === plan.totalSemanas);
@@ -1146,8 +1138,6 @@ function nutricionDia(st, P, w, dayIdx) {
 /* ============================================================
    CAPA DE IA — LLAMADA, RAZONAMIENTO Y GUARDARRAÍLES
    ============================================================ */
-
-const MODELO = "configurado-en-servidor";
 
 /* Llamada única a la API. Dentro de un artifact de claude.ai esta petición se
    intercepta y no necesita API key; fuera de ahí fallará, y todo lo que la usa
@@ -2394,7 +2384,7 @@ function FichaDelDia({ P, fecha, dia, estado }) {
 }
 
 function RunForm({ st, P, update, notify, curW, today, sug, onTerminado }) {
-  const plan = P.plan, perfil = P.perfil;
+  const plan = P.plan;
   const codes = Object.keys(semanaPlan(plan, curW).runs).concat(["RECOVERY"]);
   const [f, setF] = useState({ code: codes.includes(sug) ? sug : codes[0], km: "", min: "", fcm: "", fcx: "", desnivel: "", cadencia: "", rpe: 4, dolor: 0, notas: "" });
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
