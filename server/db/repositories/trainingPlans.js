@@ -170,6 +170,22 @@ export async function saveMasterPlan(profileId, plan, { estructuraHash = null } 
   const release = typeof client.release === "function" ? () => client.release() : () => {};
   try {
     await client.query("BEGIN");
+    /* Regenerar el plan maestro reemplaza al anterior: se borran los planes
+       previos del perfil (y sus semanas/sesiones/decisiones en cascada) antes
+       de insertar el nuevo, para no chocar con la restricción de un único
+       plan activo ni dejar planes huérfanos. */
+    const { rows: previos } = await client.query(
+      `SELECT id FROM training_plans WHERE athlete_profile_id = $1`,
+      [profileId]
+    );
+    for (const p of previos) {
+      await client.query(`DELETE FROM planned_sessions WHERE training_week_id IN (SELECT id FROM training_weeks WHERE training_plan_id = $1)`, [p.id]);
+      await client.query(`DELETE FROM plan_decisions WHERE training_plan_id = $1`, [p.id]);
+      await client.query(`DELETE FROM training_weeks WHERE training_plan_id = $1`, [p.id]);
+    }
+    if (previos.length) {
+      await client.query(`DELETE FROM training_plans WHERE athlete_profile_id = $1`, [profileId]);
+    }
     const { rows: planRows } = await client.query(
       `INSERT INTO training_plans
         (athlete_profile_id, version, distancia_objetivo, fecha_carrera, total_semanas,
