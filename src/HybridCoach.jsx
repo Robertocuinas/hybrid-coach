@@ -2234,7 +2234,7 @@ function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia,
         <hr /><h3>Por qué así</h3>
         {draft.source === "server" ? <p className="sm" style={{ margin: "8px 0 0" }}>{draft.proposal.summary}</p> : (<ul className="sm" style={{ paddingLeft: 18, margin: "8px 0 0" }}>
           {draft.notes.length ? draft.notes.map((n, i) => <li key={i} style={{ marginBottom: 5 }}>{n}</li>)
-            : <li>Reparto estándar del motor determinista anterior.</li>}
+            : <li>Reparto sugerido por el plan maestro (IA+RAG).</li>}
         </ul>)}
         {draft.violations.length > 0 && (<div style={{ marginTop: 10, border: "1px solid #7A3A36", borderRadius: 9, padding: 10 }}>
           <span className="tag alert">{draft.source === "server" ? "Avisos del planificador" : "Reglas forzadas"}</span>
@@ -3414,7 +3414,7 @@ function Biblioteca({ st, P, update, notify, onClose }) {
             <span className="muted">/10</span>
             <p className="sm" style={{ margin: 0, flex: 1 }}>{P.plan.riesgo.causas.length ? P.plan.riesgo.causas.join("; ") + "." : "Sin factores de riesgo declarados."}</p>
           </div>
-          <p className="xs muted" style={{ margin: "9px 0 0" }}>Esta puntuación es una heurística de planificación construida a partir de tus respuestas, no un diagnóstico ni una predicción validada de lesión. La calcula el motor: la IA no puede modificarla.</p>
+          <p className="xs muted" style={{ margin: "9px 0 0" }}>Esta puntuación es una heurística de planificación construida a partir de tus respuestas, no un diagnóstico ni una predicción validada de lesión. La deriva el plan maestro (IA+RAG) y la validan los guardarraíles clínicos del código: la IA no puede superar los límites de seguridad.</p>
         </div>
         {adaptacionesActivas(P.plan).length > 0 && (<div className="card"><h3>Adaptaciones por tu historial</h3>
           {adaptacionesActivas(P.plan).map((a, i, arr) => (<div key={i} style={{ padding: "9px 0", borderBottom: i < arr.length - 1 ? "1px solid var(--line)" : 0 }}>
