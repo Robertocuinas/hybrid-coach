@@ -79,15 +79,34 @@ test("generarPlanMaestro cae a fallback si no hay evidencia", async () => {
   assert.ok(result.fallback);
 });
 
-test("generarPlanMaestro rechaza propuesta que viola guardarraíles de estructura", async () => {
+test("generarPlanMaestro rechaza propuesta que viola guardarraíles no corregibles", async () => {
   const malo = planMaestroValido();
-  // Salto de tirada larga >25% entre semanas 1 y 2.
-  malo.semanas[1].sesiones[0].duracion_min = 80;
+  // Más de 4 sesiones de carrera en una semana (TOO_MANY_RUN_SESSIONS): el
+  // guardarraíl es duro y no se auto-corrige, así que se rechaza.
+  malo.semanas[0].sesiones = [
+    { codigo: "RUN A", modalidad: "running", tipo: "long_run", duracion_min: 50 },
+    { codigo: "RUN B", modalidad: "running", tipo: "easy_run", duracion_min: 40 },
+    { codigo: "RUN C", modalidad: "running", tipo: "intervals", duracion_min: 45 },
+    { codigo: "RUN D", modalidad: "running", tipo: "tempo", duracion_min: 40 },
+    { codigo: "RUN D2", modalidad: "running", tipo: "recovery_run", duracion_min: 30 },
+  ];
   const llm = async () => JSON.stringify(malo);
   const retrieve = async () => ({ chunks: EVIDENCE, hayEvidencia: true });
   const result = await generarPlanMaestro(contextoBase(), { llmProvider: llm, retrieve });
   assert.equal(result.status, "invalid");
   assert.equal(result.output, null);
+});
+
+test("generarPlanMaestro corrige deterministicamente la progresión de tirada larga (>25%)", async () => {
+  const plan = planMaestroValido();
+  // Salto de tirada larga >25% entre semanas 0 y 1: el código lo limita a +25%.
+  plan.semanas[1].sesiones[0].duracion_min = 80;
+  const llm = async () => JSON.stringify(plan);
+  const retrieve = async () => ({ chunks: EVIDENCE, hayEvidencia: true });
+  const result = await generarPlanMaestro(contextoBase(), { llmProvider: llm, retrieve });
+  assert.equal(result.status, "proposal");
+  // La corrección debe haber limitado la semana 1 a <= 1.25x la semana 0.
+  assert.ok(result.output.semanas[1].sesiones[0].duracion_min <= Math.floor(plan.semanas[0].sesiones[0].duracion_min * 1.25));
 });
 
 test("generarPlanMaestro exige contexto y retrieve", async () => {

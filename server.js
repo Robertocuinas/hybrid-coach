@@ -440,7 +440,7 @@ app.use((error, req, res, _next) => {
      búsqueda de alimentos y no tienen por qué acabar en un log. */
   if (status === 500) {
     const ruta = String(req.originalUrl || req.url || "").split("?")[0].slice(0, 120);
-    console.error("Error interno de API:", req.method, ruta, error.name, error.code || "", error.message || "", "\n", (error.stack || "").slice(0, 800));
+    console.error("Error interno de API:", req.method, ruta, error.name, error.code || "");
   }
   const postgresError = /^[0-9A-Z]{5}$/.test(String(error.code || ""));
   const safeMessage = error.publicMessage

@@ -82,10 +82,6 @@ export async function generateMasterPlanProposal(profileId, rawInput, deps = {})
   if (result.status !== "proposal" || !result.output) {
     const code = String(result.fallback?.code || result.status || "master_not_generated").toUpperCase();
     const status = ["llm_failed", "retrieval_failed", "no_evidence"].includes(result.fallback?.code) ? 503 : 422;
-    // DIAGNÓSTICO TEMPORAL (auditoría): registrar por qué no se generó el plan.
-    console.error("[master-plan] NO PROPUESTA:", code, "fallback:", JSON.stringify(result.fallback || null).slice(0, 800),
-      "evidence:", (result.evidence || []).length, "validation:", JSON.stringify(result.validation?.errors || null).slice(0, 800),
-      "guardrails:", JSON.stringify(result.validation?.guardrails?.hard || null).slice(0, 600));
     const mensaje = result.fallback?.message
       || "No se ha podido generar un plan maestro basado en evidencia. Se mantiene el plan previo si existía.";
     const err = new MasterPlanRequestError(mensaje, { code, status });

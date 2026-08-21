@@ -144,7 +144,7 @@ function corregirProgresionTiradaLarga(plan) {
     if (!larga) continue;
     const propuesta = Number(larga.duracion_min ?? larga.duracionMin ?? 0);
     if (prevLarga > 0 && propuesta > prevLarga * 1.25) {
-      const ajustada = Math.round(prevLarga * 1.25);
+      const ajustada = Math.floor(prevLarga * 1.25);
       // Se escribe en duracion_min (lo que lee el guardarraíl) y se elimina la
       // forma camelCase para evitar discrepancias de lectura.
       delete larga.duracionMin;
