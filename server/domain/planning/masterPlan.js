@@ -191,10 +191,13 @@ function validarSalida(bruto, contexto, analytics, evidence) {
   const normalizado = normalizarPlanMaestroBruto(parsed.value);
   const schema = validarPlanMaestro(normalizado, {});
   if (!schema.ok) return { ok: false, output: null, schema, errors: schema.errors };
+  /* Aunque fallen guardarraíles, devolvemos el plan validado de esquema en
+     `output`: el orquestador puede corregir límites corregibles por código
+     (p.ej. progresión de tirada larga) y re-validar, sin perder la estructura. */
   const guardrails = evaluarGuardarrailesMaestro(schema.value, contexto, analytics);
   return {
     ok: guardrails.valid,
-    output: guardrails.valid ? schema.value : null,
+    output: schema.value,
     schema,
     guardrails,
     errors: guardrails.hard.map((e) => ({ path: e.path, code: e.code, message: e.message })),
