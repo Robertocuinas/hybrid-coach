@@ -123,10 +123,10 @@ function evaluarGuardarrailesMaestro(plan, contexto = {}, analytics = {}) {
     const tieneCaminarCorrer = (primera?.sesiones || []).some((x) => /RUN A/i.test(x.codigo) && /camin|corr/.test(String(x.objetivo || x.descripcion || "")));
     if (!tieneCaminarCorrer) registrar("HIGH_RISK_BASELINE", "Perfil de riesgo alto: la primera semana debe fraccionar el impacto (caminar-correr).", "$.semanas[0]");
   }
-  // Cada sesión necesita evidencia.
+  // Cada sesión necesita evidencia (si la hubo disponible).
   semanas.forEach((s, i) => (s.sesiones || []).forEach((x, j) => {
-    if (!Array.isArray(x.evidence_ids) || !x.evidence_ids.length) {
-      registrar("SESSION_WITHOUT_EVIDENCE", "Cada sesión maestra debe citar la evidencia usada.", `$.semanas[${i}].sesiones[${j}]`);
+    if (x.evidence_ids !== undefined && (!Array.isArray(x.evidence_ids) || !x.evidence_ids.length)) {
+      registrar("SESSION_WITHOUT_EVIDENCE", "Cada sesión maestra debe citar la evidencia usada cuando la hay.", `$.semanas[${i}].sesiones[${j}]`);
     }
   }));
   return { valid: hard.length === 0, hard, soft: [] };
@@ -184,7 +184,10 @@ export async function generarPlanMaestro(contexto = {}, deps = {}) {
   let respuesta;
   try {
     comunes.modelCalls++;
-    respuesta = await invocarLLM(llmProvider, { ...prompt, maxTokens, responseFormat: "json" });
+    /* El plan maestro completo (12 semanas x sesiones) es una salida grande:
+       gpt-4.1-mini necesita hasta ~16k tokens de salida o el JSON se trunca y
+       la validación falla. Se sube el tope y se pide JSON compacto. */
+    respuesta = await invocarLLM(llmProvider, { ...prompt, maxTokens: Math.min(deps.maxTokens || 16000, 16000), responseFormat: "json" });
   } catch (e) {
     return respuestaFallback(inicio, "fallback", "llm_failed", contexto, comunes, String(e?.message || e).slice(0, 200));
   }

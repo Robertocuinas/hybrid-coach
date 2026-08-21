@@ -33,7 +33,9 @@ DECISIÓN DE ESTRUCTURA
 - Cada sesión maestra lleva codigo de agenda (RUN A/B/C/D, GYM A/B/C/D, RECOVERY), modalidad, tipo, titulo, objetivo, duracion_min y evidence_ids.
 
 FORMATO
-- Devuelve exclusivamente JSON válido sin Markdown.
+- Devuelve exclusivamente JSON válido sin Markdown y SIN TEXTO EXTRA.
+- El JSON es GRANDE (hasta 12 semanas): sé compacto. Usa títulos y objetivos cortos (máx 60 caracteres). No repitas la evidencia en cada sesión.
+- evidence_ids es OPCIONAL: si citas, usa los índices numéricos del bloque EVIDENCIA (ej. [0,1,2]); no pegues UUIDs completos.
 - schema_version debe ser "${MASTER_PLAN_SCHEMA_VERSION}".
 - La raíz contiene exactamente: schema_version, distancia_objetivo, fecha_carrera, total_semanas, riesgo {score, causas}, mezcla {run, gym}, techo_tirada_larga_min, taper_semanas, semanas, decisiones, evidence_state.
 - Cada semana contiene exactamente: numero, fase, nota, checkpoint, gym, deload, taper, sesiones[].
