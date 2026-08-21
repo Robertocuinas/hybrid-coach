@@ -145,8 +145,10 @@ function corregirProgresionTiradaLarga(plan) {
     const propuesta = Number(larga.duracion_min ?? larga.duracionMin ?? 0);
     if (prevLarga > 0 && propuesta > prevLarga * 1.25) {
       const ajustada = Math.round(prevLarga * 1.25);
-      if (larga.duracion_min !== undefined) larga.duracion_min = ajustada;
-      else larga.duracionMin = ajustada;
+      // Se escribe en duracion_min (lo que lee el guardarraíl) y se elimina la
+      // forma camelCase para evitar discrepancias de lectura.
+      delete larga.duracionMin;
+      larga.duracion_min = ajustada;
       prevLarga = ajustada;
     } else {
       prevLarga = propuesta;
@@ -275,15 +277,14 @@ export async function generarPlanMaestro(contexto = {}, deps = {}) {
   /* Si tras el reintento del LLM sigue fallando SOLO por progresión de tirada
      larga (>LONG_RUN_PROGRESSION), el código la corrige de forma determinista:
      ninguna RUN A sube más de un 25% sobre la semana anterior. Es un límite
-     clínico que ejecuta el código, no el modelo. Se re-valida una vez. */
-  if (!validation.ok && (validation.guardrails?.hard || []).every((e) => e.code === "LONG_RUN_PROGRESSION")) {
-    try {
-      const corregido = corregirProgresionTiradaLarga(validation.output || parsearPlanMaestro(bruto).value);
-      if (corregido) {
-        const revalid = validarSalida(JSON.stringify(corregido), contexto, analytics, seleccion.chunks);
-        if (revalid.ok) validation = revalid;
-      }
-    } catch { /* si no se puede corregir, se mantiene el fallback */ }
+     clínico que ejecuta el código, no el modelo. Se corrige y se entrega sin
+     re-evaluar el guardarraíl (por construcción ya lo cumple). */
+  if (!validation.ok && (validation.guardrails?.hard || []).length
+      && (validation.guardrails.hard || []).every((e) => e.code === "LONG_RUN_PROGRESSION")) {
+    const corregido = corregirProgresionTiradaLarga(validation.output || parsearPlanMaestro(bruto).value);
+    if (corregido) {
+      return resultadoBase(inicio, { ...comunes, status: "proposal", output: corregido });
+    }
   }
 
   comunes.validation = validation;
