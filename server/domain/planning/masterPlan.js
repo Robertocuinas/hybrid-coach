@@ -132,6 +132,29 @@ function evaluarGuardarrailesMaestro(plan, contexto = {}, analytics = {}) {
   return { valid: hard.length === 0, hard, soft: [] };
 }
 
+/* Corrige la progresión de tirada larga de forma determinista: ninguna RUN A
+   sube más de un 25% sobre la semana anterior. Si la semana anterior no tenía
+   RUN A (0 min), respeta el valor propuesto. Devuelve un nuevo plan o null. */
+function corregirProgresionTiradaLarga(plan) {
+  if (!plan || !Array.isArray(plan.semanas) || !plan.semanas.length) return null;
+  const copia = JSON.parse(JSON.stringify(plan));
+  let prevLarga = 0;
+  for (const s of copia.semanas) {
+    const larga = (s.sesiones || []).find((x) => /RUN A/i.test(x.codigo));
+    if (!larga) continue;
+    const propuesta = Number(larga.duracion_min ?? larga.duracionMin ?? 0);
+    if (prevLarga > 0 && propuesta > prevLarga * 1.25) {
+      const ajustada = Math.round(prevLarga * 1.25);
+      if (larga.duracion_min !== undefined) larga.duracion_min = ajustada;
+      else larga.duracionMin = ajustada;
+      prevLarga = ajustada;
+    } else {
+      prevLarga = propuesta;
+    }
+  }
+  return copia;
+}
+
 function normalizarPlanMaestroBruto(valor) {
   if (!valor || typeof valor !== "object") return valor;
   if (Array.isArray(valor.semanas)) {
@@ -244,6 +267,20 @@ export async function generarPlanMaestro(contexto = {}, deps = {}) {
       comunes.validation = validation;
       return respuestaFallback(inicio, "fallback", "llm_failed", contexto, comunes, String(e?.message || e).slice(0, 200));
     }
+  }
+
+  /* Si tras el reintento del LLM sigue fallando SOLO por progresión de tirada
+     larga (>LONG_RUN_PROGRESSION), el código la corrige de forma determinista:
+     ninguna RUN A sube más de un 25% sobre la semana anterior. Es un límite
+     clínico que ejecuta el código, no el modelo. Se re-valida una vez. */
+  if (!validation.ok && (validation.guardrails?.hard || []).every((e) => e.code === "LONG_RUN_PROGRESSION")) {
+    try {
+      const corregido = corregirProgresionTiradaLarga(validation.output || parsearPlanMaestro(bruto).value);
+      if (corregido) {
+        const revalid = validarSalida(JSON.stringify(corregido), contexto, analytics, seleccion.chunks);
+        if (revalid.ok) validation = revalid;
+      }
+    } catch { /* si no se puede corregir, se mantiene el fallback */ }
   }
 
   comunes.validation = validation;
