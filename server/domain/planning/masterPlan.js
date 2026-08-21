@@ -246,7 +246,7 @@ export async function generarPlanMaestro(contexto = {}, deps = {}) {
     /* El plan maestro completo (12 semanas x sesiones) es una salida grande:
        gpt-4.1-mini necesita hasta ~16k tokens de salida o el JSON se trunca y
        la validación falla. Se sube el tope y se pide JSON compacto. */
-    respuesta = await invocarLLM(llmProvider, { ...prompt, maxTokens: Math.min(deps.maxTokens || 16000, 16000), responseFormat: "json" });
+    respuesta = await invocarLLM(llmProvider, { ...prompt, maxTokens: Math.min(deps.maxTokens || 32000, 32000), responseFormat: "json" });
   } catch (e) {
     return respuestaFallback(inicio, "fallback", "llm_failed", contexto, comunes, String(e?.message || e).slice(0, 200));
   }
