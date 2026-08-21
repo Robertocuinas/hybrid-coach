@@ -10,8 +10,9 @@ import { ejecutarAccion } from "./acciones.js";
 import { BIBLIO_SEED } from "./data/biblioSeed.js";
 import { documentoDesdeAPI, documentoParaAPI } from "./data/documentAdapter.js";
 import {
-  acceptPlanningProposal, acceptedProposalToLocalWeek, createWeekProposal, formatPlanningIntensity,
-  getAcceptedWeekPlan, normalizeProposal, proposalSessionsToAssignments, rejectPlanningProposal,
+  acceptPlanningProposal, acceptedProposalToLocalWeek, createMasterPlan, createWeekProposal,
+  fetchActiveMasterPlan, formatPlanningIntensity, getAcceptedWeekPlan, masterPlanToClientShape,
+  normalizeProposal, proposalSessionsToAssignments, rejectPlanningProposal,
 } from "./planningApi.js";
 
 /* ============================================================
@@ -1409,6 +1410,23 @@ export default function HybridCoach({ user, activeProfile, onLogout }) {
       } catch {
         // Sin sesión, sin red o antes del seed: se conserva la copia local intacta.
       }
+      // Si el plan se generó con IA+RAG en el servidor, lo rehidratamos desde
+      // allí tras recargar para no desincronizar la estructura local.
+      try {
+        const master = await fetchActiveMasterPlan();
+        if (active && master?.ok && master.plan && Array.isArray(master.weeks) && master.weeks.length) {
+          setSt((current) => {
+            if (!current) return current;
+            const id = activeProfile?.id || current.activo;
+            const p = current.perfiles?.[id];
+            if (!p || p.planSource !== "ia-rag") return current;
+            const shaped = masterPlanToClientShape(master.plan, master.weeks, new Date().toISOString().slice(0, 10));
+            return { ...current, perfiles: { ...current.perfiles, [id]: { ...p, plan: shaped } } };
+          });
+        }
+      } catch {
+        // Sin backend o sin red: se conserva el plan local tal cual.
+      }
     });
     return () => { active = false; };
   }, [stateKey, activeProfile?.id]);
@@ -1687,11 +1705,24 @@ function Wizard({ st, P, update, notify, today, onClose, setTab, onLogout }) {
   const ultimo = paso === WIZARD.length - 1;
   const banderas = (f.banderas || []).filter((b) => b !== "Ninguna");
 
-  const guardar = () => {
+  const guardar = async () => {
     if (comp.pct < 100) return notify("Faltan " + comp.faltan.length + " respuestas necesarias: " + comp.faltan.slice(0, 3).map((q) => q.l).join(", "));
-    const plan = buildPlan(f, today);
-    update((s) => { const p = s.perfiles[P.id]; p.perfil = f; p.nombre = f.nombre || "Perfil"; p.plan = plan; p.weeks = {}; 
-      p.changes.push({ fecha: today, semana: 0, plan_original: "—", cambio: "Plan generado: " + plan.totalSemanas + " semanas hasta " + f.distancia, motivo: "Perfil completado", datos: "riesgo " + plan.riesgo.score + "/10" }); return s; });
+    let plan, fuente;
+    try {
+      const res = await createMasterPlan();
+      if (res?.ok && res.plan && Array.isArray(res.weeks)) {
+        plan = masterPlanToClientShape(res.plan, res.weeks, today);
+        fuente = "ia-rag";
+      } else throw new Error("sin plan del servidor");
+    } catch (e) {
+      // Fallback offline: el motor determinista local genera la estructura
+      // cuando no hay backend/RAG/IA disponibles. No es la ruta principal.
+      plan = buildPlan(f, today);
+      fuente = "offline";
+      notify("Servidor de IA no disponible: se generó un plan de respaldo sin RAG.");
+    }
+    update((s) => { const p = s.perfiles[P.id]; p.perfil = f; p.nombre = f.nombre || "Perfil"; p.plan = plan; p.weeks = {}; p.planSource = fuente;
+      p.changes.push({ fecha: today, semana: 0, plan_original: "—", cambio: "Plan generado (" + fuente + "): " + plan.totalSemanas + " semanas hasta " + f.distancia, motivo: "Perfil completado", datos: "riesgo " + (plan.riesgo?.score ?? 0) + "/10" }); return s; });
     notify("Plan generado: " + plan.totalSemanas + " semanas.");
     onClose && onClose(); setTab && setTab("hoy");
   };
@@ -4838,9 +4869,21 @@ function Ajustes({ st, P, update, notify, onClose, setPantalla, today, onLogout,
     } catch (error) { notify(error.message); setAccountBusy(false); }
   };
   const [confReg, setConfReg] = useState(false);
-  const regenerar = () => { if (!confReg) { setConfReg(true); return; }
-    update((s) => { const p = s.perfiles[P.id]; p.plan = buildPlan(p.perfil, today); p.weeks = {};
-      p.changes.push({ fecha: today, semana: 0, plan_original: "—", cambio: "Plan regenerado", motivo: "Cambios en el perfil", datos: "riesgo " + p.plan.riesgo.score + "/10" }); return s; });
+  const regenerar = async () => { if (!confReg) { setConfReg(true); return; }
+    let plan, fuente;
+    try {
+      const res = await createMasterPlan();
+      if (res?.ok && res.plan && Array.isArray(res.weeks)) {
+        plan = masterPlanToClientShape(res.plan, res.weeks, today);
+        fuente = "ia-rag";
+      } else throw new Error("sin plan del servidor");
+    } catch (e) {
+      plan = buildPlan(P.perfil, today);
+      fuente = "offline";
+      notify("Servidor de IA no disponible: plan de respaldo sin RAG.");
+    }
+    update((s) => { const p = s.perfiles[P.id]; p.plan = plan; p.weeks = {}; p.planSource = fuente;
+      p.changes.push({ fecha: today, semana: 0, plan_original: "—", cambio: "Plan regenerado (" + fuente + ")", motivo: "Cambios en el perfil", datos: "riesgo " + (plan.riesgo?.score ?? 0) + "/10" }); return s; });
     notify("Plan regenerado."); onClose();
   };
 

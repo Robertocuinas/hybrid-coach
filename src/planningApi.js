@@ -229,3 +229,68 @@ export function acceptedProposalToLocalWeek(proposalValue, weekStart, previous =
     sessions: proposal.sessions,
   };
 }
+
+/* ===== Plan maestro generado por IA+RAG (sustituye a buildPlan en el servidor) ===== */
+
+export async function createMasterPlan(body = {}, fetchImpl = globalThis.fetch) {
+  const data = await requestPlanning("/api/planning/master", { method: "POST", body: JSON.stringify(body) }, fetchImpl);
+  return data;
+}
+
+export async function fetchActiveMasterPlan(fetchImpl = globalThis.fetch) {
+  return requestPlanning("/api/planning/master", { method: "GET" }, fetchImpl);
+}
+
+const lunesDeHoy = (hoy) => {
+  const d = new Date(`${hoy}T12:00:00Z`);
+  const dow = (d.getUTCDay() + 6) % 7; // 0 = lunes
+  d.setUTCDate(d.getUTCDate() - dow);
+  return d.toISOString().slice(0, 10);
+};
+
+const addDaysISO = (fecha, n) => {
+  const d = new Date(`${fecha}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+
+/* Mapea el plan maestro del servidor (training_plans + training_weeks +
+   planned_sessions) a la forma P.plan que consume el resto de la UI
+   (agenda.js: semanaPlan lee semanas[].w/.runs/.inicio/.fase/.nota/.cp/.gym/.deload/.taper).
+   Así el resto de la app no necesita reescribirse. */
+export function masterPlanToClientShape(serverPlan, serverWeeks, hoy) {
+  const semanas = (serverWeeks || []).map((w) => {
+    const runs = {};
+    for (const s of w.sesiones || []) {
+      runs[s.codigo] = { t: s.duracion_min ?? 0, d: s.titulo || "" };
+    }
+    return {
+      w: w.numero_semana,
+      fase: w.fase,
+      nota: "",
+      cp: w.checkpoint || "",
+      gym: "carga",
+      deload: !!w.es_deload,
+      taper: !!w.es_taper,
+      runs,
+      inicio: null,
+    };
+  });
+  semanas.forEach((s, i) => { s.inicio = addDaysISO(lunesDeHoy(hoy), (i) * 7); });
+  const riesgoScore = Number(serverPlan.riesgo_score ?? 0);
+  return {
+    generado: hoy,
+    semanas,
+    totalSemanas: serverPlan.total_semanas ?? semanas.length,
+    riesgo: { score: riesgoScore, causas: serverPlan.riesgo_causas ?? [] },
+    mezcla: { run: serverPlan.run_dias ?? 0, gym: serverPlan.gym_dias ?? 0 },
+    techo: serverPlan.techo_tirada_larga_min ?? 0,
+    taper: serverPlan.taper_semanas ?? 0,
+    gymCodes: [],
+    gymDias: serverPlan.gym_dias ?? 0,
+    runDias: serverPlan.run_dias ?? 0,
+    decisiones: [],
+    adaptaciones: [],
+    source: "ai-rag-master",
+  };
+}

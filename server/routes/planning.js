@@ -3,6 +3,7 @@
    control optimista de revisión en el repositorio. */
 import express from "express";
 import { resolveRAGRuntime } from "../ai/runtime.js";
+import { pool } from "../db/repositories/_helpers.js";
 import {
   acceptWeeklyPlanRevision,
   getAcceptedWeeklyPlanRevision,
@@ -14,11 +15,16 @@ import {
   PlanningRequestError,
   publicWeeklyProposal,
 } from "../domain/planning/application.js";
+import {
+  generateMasterPlanProposal,
+  getActiveMasterPlan,
+  MasterPlanRequestError,
+} from "../domain/planning/masterPlanApplication.js";
 import { aiRateLimiter, requireAuth } from "../middleware/auth.js";
 import { requireActiveProfile } from "../middleware/authorization.js";
 
 const router = express.Router();
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 router.use(requireAuth, requireActiveProfile);
 
@@ -37,6 +43,33 @@ const expectedRevision = (req) => {
   }
   return value;
 };
+
+/* Plan maestro activo (estructura generada por IA+RAG). */
+router.get("/master", async (req, res, next) => {
+  try {
+    const result = await getActiveMasterPlan(profileId(req), { db: pool });
+    if (!result) return res.json({ ok: true, plan: null });
+    res.json(result);
+  } catch (error) { next(error); }
+});
+
+/* Genera el PLAN MAESTRO completo con IA+RAG. Sustituye al motor determinista
+   del frontend como fuente de verdad de la estructura del plan. */
+router.post("/master", aiRateLimiter, async (req, res, next) => {
+  try {
+    const runtime = await resolveRAGRuntime(req.auth.userId);
+    if (!runtime.llmProvider) {
+      return res.status(503).json({ ok: false, code: "PLANNING_LLM_UNAVAILABLE", message: "Este servidor no tiene proveedor de IA configurado. Se mantiene el plan previo si existía." });
+    }
+    const { rows } = await runtime.db.query(
+      `SELECT * FROM athlete_profiles WHERE id = $1 AND user_id = $2;`,
+      [profileId(req), req.auth.userId],
+    );
+    if (!rows[0]) throw new MasterPlanRequestError("Perfil de atleta no encontrado.", { status: 409, code: "PROFILE_REQUIRED" });
+    const result = await generateMasterPlanProposal(profileId(req), { profile: rows[0] }, { ...runtime });
+    res.status(201).json(result);
+  } catch (error) { next(error); }
+});
 
 /* El límite va SOLO aquí, que es lo único de este router que gasta una llamada
    al modelo. Estaba montado sobre el router entero, así que leer la semana

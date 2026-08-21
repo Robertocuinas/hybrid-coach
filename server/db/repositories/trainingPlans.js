@@ -162,6 +162,67 @@ export async function listarDecisionesConCitas(planId, db = pool) {
   return rows;
 }
 
+/* Persiste un plan maestro completo (plan + semanas + sesiones maestras +
+   decisiones) en una transacción y lo activa. `plan` es la salida validada del
+   orquestador de IA+RAG (masterPlanSchema). Devuelve el plan activo. */
+export async function saveMasterPlan(profileId, plan, { estructuraHash = null } = {}, db = pool) {
+  const client = typeof db.connect === "function" ? await db.connect() : db;
+  const release = typeof client.release === "function" ? () => client.release() : () => {};
+  try {
+    await client.query("BEGIN");
+    const { rows: planRows } = await client.query(
+      `INSERT INTO training_plans
+        (athlete_profile_id, version, distancia_objetivo, fecha_carrera, total_semanas,
+         taper_semanas, run_dias, gym_dias, techo_tirada_larga_min, riesgo_score, riesgo_causas,
+         structure_hash, activo)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,false)
+       RETURNING *;`,
+      [profileId, 1, plan.distancia_objetivo ?? null, plan.fecha_carrera ?? null, plan.total_semanas ?? null,
+        plan.taper_semanas ?? null, plan.mezcla?.run ?? null, plan.mezcla?.gym ?? null,
+        plan.techo_tirada_larga_min ?? null, plan.riesgo?.score ?? null,
+        JSON.stringify(plan.riesgo?.causas ?? []), estructuraHash]
+    );
+    const planDb = planRows[0];
+    for (const semana of plan.semanas || []) {
+      const { rows: weekRows } = await client.query(
+        `INSERT INTO training_weeks
+          (training_plan_id, numero_semana, fase, techo_tirada_larga_min, es_deload, es_taper, checkpoint)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *;`,
+        [planDb.id, semana.numero, semana.fase, plan.techo_tirada_larga_min ?? null,
+          !!semana.deload, !!semana.taper, semana.checkpoint ?? null]
+      );
+      const weekDb = weekRows[0];
+      for (const sesion of semana.sesiones || []) {
+        await client.query(
+          `INSERT INTO planned_sessions
+            (training_week_id, dia_semana, codigo_sesion, tipo, descripcion, duracion_min, intensidad)
+           VALUES ($1,$2,$3,$4,$5,$6,$7);`,
+          [weekDb.id, null, sesion.codigo, sesion.tipo, sesion.titulo ?? sesion.objetivo ?? null,
+            sesion.duracion_min ?? sesion.duracionMin ?? null, null]
+        );
+      }
+    }
+    for (const decision of plan.decisiones || []) {
+      await client.query(
+        `INSERT INTO plan_decisions (training_plan_id, titulo, justificacion, fuente, confianza, estado, invade_estructura)
+         VALUES ($1,$2,$3,'ia',$4,$5,$6);`,
+        [planDb.id, decision.t, decision.p, decision.confianza ?? null, decision.estado || "pendiente", !!decision.invade]
+      );
+    }
+    const { rows: activado } = await client.query(
+      `UPDATE training_plans SET activo = true WHERE id = $1 RETURNING *;`,
+      [planDb.id]
+    );
+    await client.query("COMMIT");
+    return activado[0] || planDb;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    release();
+  }
+}
+
 export function addModification(profileId, { fecha, semana, planOriginal, cambio, motivo, origen }) {
   return insertRow("plan_modifications", {
     athlete_profile_id: profileId,
