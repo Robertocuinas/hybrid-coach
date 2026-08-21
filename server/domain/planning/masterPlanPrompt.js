@@ -32,6 +32,18 @@ DECISIÓN DE ESTRUCTURA
 - RIR 1-3 en fuerza; sin fallo muscular. Sin pliometría si riesgo alto.
 - Cada sesión maestra lleva: codigo de agenda (RUN A/B/C/D, GYM A/B/C/D, RECOVERY), dia (1-7 sugerido), modalidad, tipo y duracion_min. ESO ES TODO: sin titulo, sin objetivo, sin evidence_ids en la salida del maestro (el planner semanal añade el detalle y cita la evidencia por semana).
 
+VALORES EXACTOS (úsALOS LITERALMENTE, en inglés, sin traducciones)
+- modalidad debe ser UNO de: "running", "strength", "recovery", "cross_training"
+- tipo debe ser UNO de: "long_run", "intervals", "tempo", "easy_run", "recovery_run", "race", "heavy_strength", "strength", "mobility", "cross_training"
+- combinaciones válidas modalidad->tipo:
+  running -> long_run | intervals | tempo | easy_run | recovery_run | race
+  strength -> heavy_strength | strength
+  recovery -> mobility
+  cross_training -> cross_training
+- fase debe ser UNO de: "adaptacion", "base", "construccion", "especifica", "descarga", "taper", "competicion"
+- codigo de agenda debe ser UNO de: "RUN A", "RUN B", "RUN C", "RUN D", "GYM A", "GYM B", "GYM C", "GYM D", "RECOVERY"
+No uses sinónimos en español (ej. usa "running" no "carrera"; "strength" no "fuerza"; "long_run" no "tirada larga").
+
 FORMATO — SALIDA MUY COMPACTA (clave para no truncar)
 - Devuelve exclusivamente JSON válido sin Markdown y SIN TEXTO EXTRA.
 - El JSON debe ser PEQUEÑO: por sesión solo {"codigo","dia","modalidad","tipo","duracion_min"}. Máx 12 semanas. Nada de texto largo.
@@ -73,12 +85,24 @@ export function construirPromptMaestro({ contexto, analytics, evidence }) {
 }
 
 export function construirPromptReparacionMaestro({ errores, intentoAnterior }) {
+  const tieneEnum = (errores || []).some((e) => e.code === "ENUM" || e.code === "MODALITY_MISMATCH");
+  const valores = tieneEnum ? [
+    "",
+    "VALORES PERMITIDOS (úsALOS LITERALMENTE, en inglés):",
+    'modalidad: "running" | "strength" | "recovery" | "cross_training"',
+    'tipo: "long_run" | "intervals" | "tempo" | "easy_run" | "recovery_run" | "race" | "heavy_strength" | "strength" | "mobility" | "cross_training"',
+    'combinaciones: running->long_run|intervals|tempo|easy_run|recovery_run|race ; strength->heavy_strength|strength ; recovery->mobility ; cross_training->cross_training',
+    'fase: "adaptacion" | "base" | "construccion" | "especifica" | "descarga" | "taper" | "competicion"',
+    'codigo: "RUN A" | "RUN B" | "RUN C" | "RUN D" | "GYM A" | "GYM B" | "GYM C" | "GYM D" | "RECOVERY"',
+    "No uses sinónimos en español.",
+  ].join("\n") : "";
   return {
     role: "user",
     content: [
       "La propuesta anterior fue rechazada por validación determinista.",
       "Corrige únicamente los errores enumerados, conserva la estructura y usa solo la evidencia ya entregada.",
       "Devuelve otra vez únicamente JSON completo.",
+      valores,
       JSON.stringify(errores, null, 2),
       "PROPUESTA_RECHAZADA",
       String(intentoAnterior || "").slice(0, 20_000),
