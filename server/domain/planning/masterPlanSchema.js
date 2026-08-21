@@ -96,12 +96,14 @@ function validarSemana(valor, index, path, errores, opciones) {
     if (TIPOS_POR_MODALIDAD[s.modalidad] && !TIPOS_POR_MODALIDAD[s.modalidad].has(s.tipo)) {
       error(errores, `${sp}.tipo`, "MODALITY_MISMATCH", "el tipo no corresponde a la modalidad");
     }
-    if (!esCadena(s.titulo, 1, 120)) error(errores, `${sp}.titulo`, "TEXT", "título obligatorio");
-    if (!esCadena(s.objetivo, 0, 300)) error(errores, `${sp}.objetivo`, "TEXT", "objetivo acotado");
+    /* titulo/objetivo/evidence_ids son opcionales: el maestro entrega solo la
+       estructura (codigo, dia, modalidad, tipo, duracion_min); el detalle y las
+       citas los pone el planner semanal. Así el JSON de salida es pequeño y no
+       se trunca en modelos de salida corta. */
+    if (s.titulo !== undefined && !esCadena(s.titulo, 1, 120)) error(errores, `${sp}.titulo`, "TEXT", "título corto si se incluye");
+    if (s.objetivo !== undefined && !esCadena(s.objetivo, 0, 300)) error(errores, `${sp}.objetivo`, "TEXT", "objetivo acotado si se incluye");
     if (!esNumero(s.duracionMin ?? s.duracion_min, 1, 360)) error(errores, `${sp}.duracion_min`, "RANGE", "entero 1-360");
-    /* evidence_ids es opcional y puede ser índices cortos ([0,1,2]) o ids; no
-       se exige para no inflar el JSON ni forzar un fallo de validación por
-       formato de cita. La evidencia ya viaja en el prompt usado. */
+    if (s.dia !== undefined && !esNumero(s.dia, 1, 7)) error(errores, `${sp}.dia`, "RANGE", "día 1-7 si se incluye");
     if (s.evidence_ids !== undefined && !Array.isArray(s.evidence_ids)) {
       error(errores, `${sp}.evidence_ids`, "TYPE", "debe ser array si se incluye");
     }

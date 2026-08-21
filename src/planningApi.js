@@ -262,7 +262,7 @@ export function masterPlanToClientShape(serverPlan, serverWeeks, hoy) {
   const semanas = (serverWeeks || []).map((w) => {
     const runs = {};
     for (const s of w.sesiones || []) {
-      runs[s.codigo] = { t: s.duracion_min ?? 0, d: s.titulo || "" };
+      runs[s.codigo] = { t: s.duracion_min ?? 0, d: s.titulo || s.tipo || "", dia: s.dia ?? null };
     }
     return {
       w: w.numero_semana,

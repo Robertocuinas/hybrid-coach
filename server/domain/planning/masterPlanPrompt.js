@@ -30,15 +30,15 @@ DECISIÓN DE ESTRUCTURA
 - Tirada larga (RUN A): prescribe por TIEMPO en minutos, con techo seguro; progresión suave, nunca subidas >25% entre semanas.
 - Reparto carrera/fuerza según días disponibles y prioridad del atleta.
 - RIR 1-3 en fuerza; sin fallo muscular. Sin pliometría si riesgo alto.
-- Cada sesión maestra lleva codigo de agenda (RUN A/B/C/D, GYM A/B/C/D, RECOVERY), modalidad, tipo, titulo, objetivo, duracion_min y evidence_ids.
+- Cada sesión maestra lleva: codigo de agenda (RUN A/B/C/D, GYM A/B/C/D, RECOVERY), dia (1-7 sugerido), modalidad, tipo y duracion_min. ESO ES TODO: sin titulo, sin objetivo, sin evidence_ids en la salida del maestro (el planner semanal añade el detalle y cita la evidencia por semana).
 
-FORMATO
+FORMATO — SALIDA MUY COMPACTA (clave para no truncar)
 - Devuelve exclusivamente JSON válido sin Markdown y SIN TEXTO EXTRA.
-- El JSON es GRANDE (hasta 12 semanas): sé compacto. Usa títulos y objetivos cortos (máx 60 caracteres). No repitas la evidencia en cada sesión.
-- evidence_ids es OPCIONAL: si citas, usa los índices numéricos del bloque EVIDENCIA (ej. [0,1,2]); no pegues UUIDs completos.
+- El JSON debe ser PEQUEÑO: por sesión solo {"codigo","dia","modalidad","tipo","duracion_min"}. Máx 12 semanas. Nada de texto largo.
+- Si quieres justificar una decisión de estructura, ponla en el array "decisiones" (textos cortos), no dentro de las semanas.
 - schema_version debe ser "${MASTER_PLAN_SCHEMA_VERSION}".
 - La raíz contiene exactamente: schema_version, distancia_objetivo, fecha_carrera, total_semanas, riesgo {score, causas}, mezcla {run, gym}, techo_tirada_larga_min, taper_semanas, semanas, decisiones, evidence_state.
-- Cada semana contiene exactamente: numero, fase, nota, checkpoint, gym, deload, taper, sesiones[].
+- Cada semana contiene exactamente: numero, fase, nota (corta o ""), checkpoint (corto o ""), gym (bool), deload (bool), taper (bool), sesiones[].
 - evidence_state: sufficient | limited | mixed | none según la cobertura real.`;
 
 function contextoMinimo(contexto) {
