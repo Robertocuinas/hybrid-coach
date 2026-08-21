@@ -7,6 +7,7 @@ import * as documentsRepo from "../../db/repositories/documents.js";
 import { saveMasterPlan } from "../../db/repositories/trainingPlans.js";
 import { recuperar } from "../../rag/retrieval.js";
 import { generarPlanMaestro } from "./masterPlan.js";
+import { createHash } from "node:crypto";
 
 const FECHA = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -30,8 +31,7 @@ function fecha(value) {
 
 function hashEstructura(plan) {
   // Hash estable de la estructura para detectar cambios y versionar.
-  const crypto = require("node:crypto");
-  return crypto.createHash("sha256").update(JSON.stringify({
+  return createHash("sha256").update(JSON.stringify({
     total: plan.total_semanas, mezcla: plan.mezcla, techo: plan.techo_tirada_larga_min,
     semanas: (plan.semanas || []).map((s) => ({ n: s.numero, f: s.fase, d: s.deload, t: s.taper,
       s: (s.sesiones || []).map((x) => [x.codigo, x.tipo, x.duracion_min]) })),
