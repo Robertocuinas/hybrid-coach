@@ -233,7 +233,9 @@ export function buildCanonicalPlannerContext(canonical, input, { now = new Date(
      semanal siempre tenga una semana natural válida. */
   let weekStart = fecha(sourceWeek.inicio);
   if (!weekStart) {
-    weekStart = fecha(calcularInicioSemana(plan?.fecha_carrera, plan?.total_semanas, sourceWeek.numero_semana));
+    const calc = calcularInicioSemana(plan?.fecha_carrera, plan?.total_semanas, sourceWeek.numero_semana);
+    console.error("[week-date] DEBUG inicio=", JSON.stringify(sourceWeek.inicio), "fc=", plan?.fecha_carrera, "total=", plan?.total_semanas, "n=", sourceWeek.numero_semana, "calc=", calc);
+    weekStart = fecha(calc);
   }
   if (!weekStart) {
     throw new PlanningRequestError("La semana todavía no tiene fecha canónica. Sincroniza el plan antes de generar una propuesta.", {
