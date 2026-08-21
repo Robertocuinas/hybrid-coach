@@ -1,5 +1,0 @@
-{
-  "migrationsTable": "pgmigrations",
-  "migrationsDir": "server/db/migrations",
-  "migrationsPattern": "^(\\d+)_"
-}
