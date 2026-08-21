@@ -65,6 +65,11 @@ process.on("unhandledRejection", (reason) => {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
+/* Railway y otros proxies ponen X-Forwarded-For. Sin esto, express-rate-limit
+   no distingue a los usuarios reales y aplica el límite a la IP del proxy o lo
+   rechaza (ERR_ERL_UNEXPECTED_X_FORWARDED_FOR). `1` significa "un proxy de
+   confianza por delante" (el de Railway), así el rate-limit usa la IP real. */
+app.set("trust proxy", 1);
 const legacyStravaConfig = readLegacyStravaConfig(process.env);
 const requireLegacyStravaEnabled = requireLegacyStrava(legacyStravaConfig);
 
