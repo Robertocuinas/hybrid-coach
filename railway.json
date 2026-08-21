@@ -5,6 +5,7 @@
     "buildCommand": "npm run build"
   },
   "deploy": {
+    "preDeployCommand": "npm run migrate",
     "startCommand": "npm start",
     "healthcheckPath": "/health/ready",
     "healthcheckTimeout": 120,

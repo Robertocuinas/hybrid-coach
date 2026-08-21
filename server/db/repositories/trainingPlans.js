@@ -1,4 +1,4 @@
-import { pool, insertRow } from "._helpers.js";
+import { pool, insertRow } from "./_helpers.js";
 
 export function createPlanVersion(profileId, datos = {}) {
   return insertRow("training_plans", {
