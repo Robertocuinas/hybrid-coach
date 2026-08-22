@@ -12,9 +12,24 @@ test("sin configuración el tope de salida es holgado, no el de un modelo peque�
   assert.equal(topeSalida({}), 8000);
   const p = presupuestoSalida({});
   assert.equal(p.planificador, 8000, "el planificador escribe la semana entera: nunca por debajo del tope");
+  assert.ok(p.planMaestro >= 32_000, "el plan maestro son doce semanas en un JSON: necesita mucho más margen");
   assert.ok(p.coach >= 1500);
   assert.ok(p.decisiones >= 2400);
   assert.ok(p.resumen >= 600);
+});
+
+/* El generador del plan maestro pedía 32k para generar pero solo 4k para
+   REPARAR, dos literales distintos en la misma función: si la primera salida
+   no validaba, el reintento se truncaba por diseño y la generación entera se
+   perdía. Ahora los dos toman el mismo presupuesto. */
+test("el plan maestro no puede reparar con menos margen del que usó para generar", () => {
+  const p = presupuestoSalida({});
+  assert.ok(p.planMaestro >= p.planificador, "el maestro nunca por debajo del semanal");
+  assert.equal(presupuestoSalida({ LLM_MAX_TOKENS_PLAN_MAESTRO: "48000" }).planMaestro, 48_000);
+  assert.equal(presupuestoSalida({ LLM_MAX_TOKENS: "64000" }).planMaestro, 64_000,
+    "sube con el tope global cuando este ya es mayor que su suelo");
+  assert.equal(presupuestoSalida({ LLM_MAX_TOKENS_PLAN_MAESTRO: "1" }).planMaestro, 2000,
+    "un valor inservible degrada a algo que al menos produce algo");
 });
 
 test("subir LLM_MAX_TOKENS sube todas las tareas sin tocar seis variables", () => {

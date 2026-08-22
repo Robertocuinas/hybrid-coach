@@ -58,6 +58,17 @@ export function presupuestoSalida(env = process.env) {
        sesiones, prescripción, cambios y avisos. Es también el único donde
        quedarse corto tira a la basura una generación de un minuto. */
     planificador: derivado("LLM_MAX_TOKENS_PLANIFICADOR", 1, 3000),
+    /* El plan maestro es la salida más grande de la aplicación: doce semanas
+       con todas sus sesiones en un único JSON. Necesita bastante más margen que
+       una semana suelta, así que tiene su propio suelo alto y no se queda corto
+       cuando el tope general es modesto. Un JSON truncado aquí tira una
+       generación muy cara. */
+    planMaestro: entero(
+      env.LLM_MAX_TOKENS_PLAN_MAESTRO,
+      Math.max(32_000, tope),
+      2000,
+      200_000,
+    ),
     /* Respuesta conversacional del coach. */
     coach: derivado("LLM_MAX_TOKENS_COACH", 0.5, 1500),
     /* Justificación razonada del plan con citas. */

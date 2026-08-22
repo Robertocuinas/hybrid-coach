@@ -14,6 +14,7 @@ import { construirConsultasMaestro } from "./masterQueries.js";
 import { parsearPlanMaestro, validarPlanMaestro, MASTER_PLAN_SCHEMA_VERSION } from "./masterPlanSchema.js";
 import { construirPromptMaestro, construirPromptReparacionMaestro, MASTER_PLANNER_PROMPT_VERSION } from "./masterPlanPrompt.js";
 import { crearFallbackSeguro } from "./fallback.js";
+import { presupuestoSalida } from "../../ai/limits.js";
 
 const JERARQUIA = Object.freeze({ meta_analysis: 6, systematic_review: 5, rct: 4, observational: 3, position_statement: 2, narrative_review: 1, preprint: 0 });
 const GRADO = Object.freeze({ fuerte: 4, moderada: 3, debil: 2, débil: 2, practica: 1, práctica: 1 });
@@ -212,7 +213,14 @@ function validarSalida(bruto, contexto, analytics, evidence) {
  */
 export async function generarPlanMaestro(contexto = {}, deps = {}) {
   const inicio = Date.now();
-  const { retrieve, llmProvider, maxEvidence = 14, queryConfig = {}, maxTokens = 4000 } = deps;
+  const {
+    retrieve, llmProvider, maxEvidence = 14, queryConfig = {},
+    /* El plan maestro completo (12 semanas x sesiones) es la salida más grande
+       de toda la aplicación. El presupuesto sale de server/ai/limits.js, que es
+       la única fuente de topes: así subir LLM_MAX_TOKENS lo sube también aquí.
+       Antes había dos números literales distintos en esta misma función. */
+    maxTokens = presupuestoSalida().planMaestro,
+  } = deps;
   const comunes = { analytics: null, queries: [], evidence: [], validation: null, provider: null, model: null, modelCalls: 0 };
   if (typeof retrieve !== "function" || !llmProvider || !contexto.profile) {
     return respuestaFallback(inicio, "invalid", "invalid_context", contexto, comunes, "Se requieren profile, retrieve y llmProvider.");
@@ -243,10 +251,7 @@ export async function generarPlanMaestro(contexto = {}, deps = {}) {
   let respuesta;
   try {
     comunes.modelCalls++;
-    /* El plan maestro completo (12 semanas x sesiones) es una salida grande:
-       gpt-4.1-mini necesita hasta ~16k tokens de salida o el JSON se trunca y
-       la validación falla. Se sube el tope y se pide JSON compacto. */
-    respuesta = await invocarLLM(llmProvider, { ...prompt, maxTokens: Math.min(deps.maxTokens || 32000, 32000), responseFormat: "json" });
+    respuesta = await invocarLLM(llmProvider, { ...prompt, maxTokens, responseFormat: "json" });
   } catch (e) {
     return respuestaFallback(inicio, "fallback", "llm_failed", contexto, comunes, String(e?.message || e).slice(0, 200));
   }
