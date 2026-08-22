@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   addDays, contextoDelDia, daysBetween, eligeEstable, estadoDia, etiquetaCodigo, iso, lunesDe,
-  registrosDeFecha, sesionDeFecha, tituloConversacion, ultimaVezEjercicio, weekOf,
+  mejorReparto, registrosDeFecha, sesionDeFecha, tituloConversacion, ultimaVezEjercicio, weekOf,
 } from "./agenda.js";
 
 /* Plan de 3 semanas que arranca el lunes 2026-08-10. */
@@ -148,6 +148,58 @@ test("los códigos de sesión tienen nombre legible y LIBRE existe siempre", () 
   assert.equal(etiquetaCodigo("GYM A"), "Fuerza A");
   assert.equal(etiquetaCodigo("LO QUE SEA"), "LO QUE SEA", "un código desconocido se muestra tal cual");
   assert.equal(etiquetaCodigo(null), "Sesión");
+});
+
+/* ---------- Reparto de sesiones en días ----------
+
+   El caso que motiva estos tests: la permutación se hacía sobre los 6 primeros
+   días cuando había más de 6 sesiones, así que con 7 sesiones y 7 días la
+   condición de corte no se cumplía nunca, no quedaba ningún candidato y la
+   semana salía VACÍA sin ningún error. El atleta pulsaba "generar" y la
+   aplicación le decía después que la semana no estaba programada. */
+
+/* Puntuador de juguete: no sabe de entrenamiento, solo premite comprobar que
+   la búsqueda explora y elige. Las reglas reales (R1-R9) siguen en
+   scoreAssignment, dentro del motor. */
+const puntuadorSimple = (acc) => ({ score: acc.reduce((n, a) => n + a.day, 0), reasons: [], violations: [] });
+
+test("siete sesiones en siete días producen un reparto, no una semana vacía", () => {
+  const sesiones = ["RUN A", "GYM A", "GYM B", "RUN B", "GYM C", "RUN C", "RUN D"];
+  const mejor = mejorReparto(sesiones, [0, 1, 2, 3, 4, 5, 6], puntuadorSimple);
+
+  assert.ok(mejor, "con siete días y siete sesiones TIENE que haber reparto");
+  assert.equal(mejor.assign.length, 7, "se colocan las siete");
+  assert.deepEqual([...new Set(mejor.assign.map((a) => a.day))].sort(), [0, 1, 2, 3, 4, 5, 6],
+    "un día por sesión, sin repetir");
+  assert.deepEqual([...mejor.assign.map((a) => a.code)].sort(), [...sesiones].sort(),
+    "no se pierde ni se inventa ninguna sesión");
+});
+
+test("el reparto elige de verdad la mejor combinación, no la primera que encuentra", () => {
+  /* Puntúa alto solo si la primera sesión cae en el último día disponible:
+     obliga a la búsqueda a mirar más allá de la primera hoja. */
+  const puntuar = (acc) => ({ score: acc[0].day === 4 ? 100 : 0, reasons: [], violations: [] });
+  const mejor = mejorReparto(["A", "B"], [0, 2, 4], puntuar);
+  assert.equal(mejor.score, 100);
+  assert.equal(mejor.assign[0].day, 4);
+});
+
+test("con menos días que sesiones se colocan las que caben, por orden de prioridad", () => {
+  /* El orden de entrada ES la prioridad: lo que se cae es lo último. */
+  const mejor = mejorReparto(["RUN A", "GYM A", "RUN B"], [1, 3], puntuadorSimple);
+  assert.equal(mejor.assign.length, 2);
+  assert.deepEqual(mejor.assign.map((a) => a.code).sort(), ["GYM A", "RUN A"]);
+});
+
+test("sin sesiones o sin días no se inventa un reparto", () => {
+  assert.equal(mejorReparto([], [0, 1, 2], puntuadorSimple), null);
+  assert.equal(mejorReparto(["RUN A"], [], puntuadorSimple), null);
+});
+
+test("un día duplicado en la disponibilidad no coloca dos sesiones el mismo día", () => {
+  const mejor = mejorReparto(["RUN A", "GYM A"], [2, 2, 5], puntuadorSimple);
+  assert.equal(mejor.assign.length, 2);
+  assert.equal(new Set(mejor.assign.map((a) => a.day)).size, 2, "días distintos");
 });
 
 /* ---------- Precarga de pesos ---------- */

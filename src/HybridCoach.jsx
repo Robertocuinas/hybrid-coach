@@ -4,7 +4,7 @@ import { createSyncController } from "./sync.js";
 import {
   CODIGOS_GYM, CODIGOS_RUN, DAYS, DSHORT, MESES, addDays, clamp, colorOf, contextoDelDia,
   daysBetween, eligeEstable, esGym, estadoDia, etiquetaCodigo, iso, lunesDe, parse,
-  semanaPlan, sesionDeFecha, ultimaVezEjercicio, weekOf,
+  mejorReparto, semanaPlan, sesionDeFecha, ultimaVezEjercicio, weekOf,
 } from "./agenda.js";
 import { ejecutarAccion } from "./acciones.js";
 import { BIBLIO_SEED } from "./data/biblioSeed.js";
@@ -811,14 +811,22 @@ function generateWeek(plan, perfil, w, availDays, opts = {}) {
   const chosen = pool.slice(0, Math.min(availDays.length, pool.length));
   if (availDays.length < pool.length) notes.push("Con " + availDays.length + " días mantengo por prioridad: " + chosen.join(" · ") + ".");
 
-  let best = null;
-  const perm = (rem, acc) => {
-    if (acc.length === chosen.length) { const sc = scoreAssignment(acc, plan, perfil, w, availDays); if (!best || sc.score > best.score) best = { assign: [...acc], ...sc }; return; }
-    for (let i = 0; i < rem.length; i++) { acc.push({ day: rem[i], code: chosen[acc.length] }); perm(rem.filter((_, j) => j !== i), acc); acc.pop(); }
-  };
-  if (chosen.length <= 6) perm(availDays, []);
-  else { const a = availDays.slice(0, 6); perm(a, []); }
-  if (!best) return { assign: [], notes, violations: [] };
+  /* La búsqueda del reparto vive en agenda.js y se prueba con node --test. Las
+     REGLAS no se mueven: quien puntúa sigue siendo scoreAssignment, aquí al
+     lado, con R1-R9 intactas. Lo que se corrige es que la búsqueda no
+     encontraba nada cuando había 7 sesiones para 7 días y devolvía la semana
+     vacía sin decir por qué. */
+  const best = mejorReparto(chosen, availDays, (acc) => scoreAssignment(acc, plan, perfil, w, availDays));
+  /* Si aun así no hay reparto, se dice. Devolver `assign: []` en silencio
+     hacía que la aplicación afirmara luego que la semana "no está programada",
+     que es un mensaje falso: sí se intentó, y falló. */
+  if (!best) {
+    return {
+      assign: [],
+      notes: [...notes, "No he encontrado ningún reparto que cumpla las reglas de separación con los días marcados. Prueba a habilitar otro día."],
+      violations: [],
+    };
+  }
   return { assign: best.assign.sort((a, b) => a.day - b.day), notes: [...notes, ...best.reasons], violations: best.violations };
 }
 

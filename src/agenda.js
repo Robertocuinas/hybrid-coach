@@ -167,6 +167,54 @@ export function ultimaVezEjercicio(strength, ejercicio, sesion) {
    las recetas cambiarían al volver a la pestaña y parecerían un sorteo. */
 export const eligeEstable = (lista, semilla) => (lista && lista.length ? lista[Math.abs(semilla) % lista.length] : null);
 
+/* ============================================================
+   REPARTO DE SESIONES EN DÍAS
+
+   Búsqueda combinatoria pura: prueba todas las formas de colocar `sesiones`
+   en `diasDisponibles` y devuelve la mejor según `puntuar`. No sabe NADA de
+   entrenamiento —quién puntúa y con qué reglas es cosa de quien la llama—,
+   así que las reglas R1-R9 del motor determinista siguen intactas donde
+   estaban.
+
+   Vive aquí, y no dentro del JSX, por lo mismo que el resto de este fichero:
+   para poder probarla con `node --test`. Y hacía falta, porque tenía un fallo
+   que solo se veía en un caso concreto y en silencio:
+
+   la permutación se hacía sobre `diasDisponibles.slice(0, 6)` cuando había más
+   de 6 sesiones, de modo que la rama de corte —`acc.length === sesiones.length`—
+   no se alcanzaba NUNCA: con 7 sesiones y 7 días no quedaba ningún reparto
+   candidato, `best` seguía a null y la semana se devolvía vacía. El atleta
+   pulsaba "generar" y la aplicación le decía después que la semana no estaba
+   programada, sin ningún error por medio.
+   Un reparto de 7 sobre 7 son 5.040 combinaciones: se calculan de sobra. El
+   tope era una defensa contra una explosión que no puede darse, porque una
+   semana tiene siete días y nunca se colocan más sesiones que días hay.
+   ============================================================ */
+export function mejorReparto(sesiones, diasDisponibles, puntuar) {
+  const dias = [...new Set(diasDisponibles)].sort((a, b) => a - b);
+  if (!sesiones.length || !dias.length) return null;
+  /* Nunca más sesiones que días: colocar dos el mismo día no es un reparto
+     que esta agenda sepa representar. */
+  const aColocar = sesiones.slice(0, Math.min(sesiones.length, dias.length));
+
+  let mejor = null;
+  const acc = [];
+  const explorar = (restantes) => {
+    if (acc.length === aColocar.length) {
+      const puntuacion = puntuar(acc);
+      if (!mejor || puntuacion.score > mejor.score) mejor = { assign: [...acc], ...puntuacion };
+      return;
+    }
+    for (let i = 0; i < restantes.length; i++) {
+      acc.push({ day: restantes[i], code: aColocar[acc.length] });
+      explorar(restantes.filter((_, j) => j !== i));
+      acc.pop();
+    }
+  };
+  explorar(dias);
+  return mejor;
+}
+
 /* Título corto de una conversación: lo primero que preguntó el usuario. */
 export const tituloConversacion = (msgs) => {
   const primera = (msgs || []).find((m) => m.role === "user");
