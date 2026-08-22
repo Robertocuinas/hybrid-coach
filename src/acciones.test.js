@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   actualizarPerfil, consultarEntreno, ejecutarAccion, EJECUTORES,
-  registrarRecuperacion, registrarSensaciones,
+  registrarEntreno, registrarRecuperacion, registrarSensaciones,
 } from "./acciones.js";
 
 const PLAN = {
@@ -22,7 +22,7 @@ function entorno(perfilExtra = {}) {
       p1: {
         id: "p1", plan: PLAN, perfil: { distancia: "Media maratón", dias: [0, 2, 4] },
         weeks: { 1: { assign: [{ day: 0, code: "GYM A" }, { day: 3, code: "RUN B" }], done: ["GYM A"] } },
-        recovery: [], checkins: [], ...perfilExtra,
+        recovery: [], checkins: [], running: [], strength: [], ...perfilExtra,
       },
     },
   };
@@ -51,6 +51,65 @@ test("consultar_entreno distingue sesión, descanso, semana sin programar y fuer
   assert.match(consultarEntreno(P, { fecha: "2026-08-11" }, deps).mensaje, /descanso/i);
   assert.match(consultarEntreno(P, { fecha: "2026-08-18" }, deps).mensaje, /no está programada/i);
   assert.match(consultarEntreno(P, { fecha: "2026-09-20" }, deps).mensaje, /fuera de tu plan/i);
+});
+
+/* Preguntar por un día sin sesión prevista pero CON entrenamiento registrado
+   devolvía "descanso" o "fuera de tu plan" a secas, ignorando lo que el atleta
+   había hecho. El plan recomienda; el registro es un hecho y se cuenta. */
+test("consultar_entreno cuenta lo registrado aunque el plan no previera nada", () => {
+  const { P, deps } = entorno({
+    running: [
+      { date: "2026-08-11", session_code: "LIBRE", duracion_min: 45 },
+      { date: "2026-09-20", session_code: "RUN C", duracion_min: 30 },
+    ],
+    strength: [{ date: "2026-08-18", session: "GYM B", set: 1 }],
+  });
+
+  assert.match(consultarEntreno(P, { fecha: "2026-08-11" }, deps).mensaje, /Entrenamiento libre/,
+    "día de descanso con registro");
+  assert.match(consultarEntreno(P, { fecha: "2026-08-18" }, deps).mensaje, /Fuerza B/,
+    "semana sin programar con registro");
+  assert.match(consultarEntreno(P, { fecha: "2026-09-20" }, deps).mensaje, /Rodaje suave/,
+    "fuera del plan con registro");
+});
+
+test("registrar_entreno anota una carrera cualquier día, esté planificado o no", () => {
+  const { estado, P, deps } = entorno();
+  /* Martes de la semana 1: el plan no propone nada ese día. */
+  const r = registrarEntreno(P, { fecha: "2026-08-11", tipo: "run", codigo: "LIBRE", minutos: 45, km: 8 }, deps);
+
+  assert.equal(r.ok, true);
+  assert.match(r.mensaje, /Entrenamiento libre/);
+  const guardado = estado.perfiles.p1.running;
+  assert.equal(guardado.length, 1);
+  assert.equal(guardado[0].date, "2026-08-11");
+  assert.equal(guardado[0].session_code, "LIBRE");
+  assert.equal(guardado[0].duracion_min, 45);
+  assert.equal(guardado[0].semana, 1, "se guarda en la semana del plan que le corresponde");
+  assert.equal(guardado[0].ritmo, "5:38", "el ritmo se calcula si hay distancia y tiempo");
+  assert.ok(estado.perfiles.p1.weeks[1].done.includes("LIBRE"), "el día queda marcado como hecho");
+});
+
+test("registrar_entreno anota fuerza sin inventar series que el atleta no ha dicho", () => {
+  const { estado, P, deps } = entorno();
+  const r = registrarEntreno(P, { fecha: "2026-08-12", tipo: "gym", codigo: "GYM B", minutos: 50 }, deps);
+
+  assert.equal(r.ok, true);
+  const filas = estado.perfiles.p1.strength;
+  assert.equal(filas.length, 1);
+  assert.equal(filas[0].session, "GYM B");
+  assert.equal(filas[0].weight, 0, "no se inventa un peso");
+  assert.equal(filas[0].reps, 0, "ni unas repeticiones");
+  assert.match(filas[0].notes, /sin detalle/i, "y queda dicho que el detalle no está");
+});
+
+test("registrar_entreno funciona en una semana que ni siquiera está programada", () => {
+  const { estado, P, deps } = entorno();
+  registrarEntreno(P, { fecha: "2026-08-19", tipo: "run", codigo: "RUN C", minutos: 30 }, deps);
+
+  assert.equal(estado.perfiles.p1.running[0].semana, 2);
+  assert.deepEqual(estado.perfiles.p1.weeks[2].assign, [], "se crea la semana vacía, sin inventar plan");
+  assert.deepEqual(estado.perfiles.p1.weeks[2].done, ["RUN C"]);
 });
 
 /* ---------- Escritura ---------- */

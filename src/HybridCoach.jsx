@@ -2,9 +2,9 @@ import { Component, useState, useEffect, useMemo, useRef, useCallback } from "re
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { createSyncController } from "./sync.js";
 import {
-  DAYS, DSHORT, MESES, addDays, clamp, colorOf, contextoDelDia, daysBetween, eligeEstable,
-  esGym, estadoDia, iso, lunesDe, parse, semanaPlan, sesionDeFecha,
-  ultimaVezEjercicio, weekOf,
+  CODIGOS_GYM, CODIGOS_RUN, DAYS, DSHORT, MESES, addDays, clamp, colorOf, contextoDelDia,
+  daysBetween, eligeEstable, esGym, estadoDia, etiquetaCodigo, iso, lunesDe, parse,
+  semanaPlan, sesionDeFecha, ultimaVezEjercicio, weekOf,
 } from "./agenda.js";
 import { ejecutarAccion } from "./acciones.js";
 import { BIBLIO_SEED } from "./data/biblioSeed.js";
@@ -158,6 +158,7 @@ const CSS = `
 .hc .daystrip .dot{width:5px;height:5px;border-radius:50%;background:var(--rest)}
 .hc .daystrip .dot.run{background:var(--run)} .hc .daystrip .dot.gym{background:var(--gym)}
 .hc .daystrip .dot.done{background:var(--ok)}
+.hc .daystrip .dot.libre{background:var(--evid)}
 .hc .daystrip button.on .dot{background:#12202C}
 
 /* ===== Calendario mensual (§3) ===== */
@@ -177,6 +178,12 @@ const CSS = `
 .hc .calcell.hecha{background:#16281E;border-color:#3E6B3A}
 .hc .calcell.omitida{opacity:.55}
 .hc .calcell.descanso .ic{opacity:.5}
+/* Un entrenamiento registrado que el plan no preveía. Tiene color propio —el
+   violeta de la evidencia, que no compite con carrera ni fuerza— porque no es
+   ni un fallo ni una sesión programada: es algo que el atleta decidió hacer y
+   la aplicación reconoce. Sin esto se pintaba igual que un día vacío. */
+.hc .calcell.libre{background:#1B1B2E;border-color:#4E4483}
+.hc .calcell.libre .ic{opacity:1}
 @media (max-width:380px){.hc .calcell{min-height:54px}.hc .calcell .et{display:none}}
 
 /* ===== Coach: tres columnas solo en escritorio (§9) ===== */
@@ -659,9 +666,13 @@ function NavFecha({ fecha, onCambio, hoy, P, conTira = true }) {
       {dias.map((d, i) => {
         const est = P ? estadoDia(P, d, hoy) : "sinplan";
         const info = P ? sesionDeFecha(P, d) : {};
-        const clase = est === "hecha" ? "done" : info.code ? colorOf(info.code) : "";
+        /* Un registro libre tiene su propio punto: ni verde de "completado
+           según el plan" ni gris de "aquí no hubo nada". */
+        const clase = est === "hecha" ? "done" : est === "libre" ? "libre" : info.code ? colorOf(info.code) : "";
         return (<button key={d} className={(d === fecha ? "on " : "") + (d === hoy ? "hoy" : "")}
-          onClick={() => onCambio(d)} aria-label={DAYS[i] + " " + parse(d).getDate()} aria-current={d === fecha ? "date" : undefined}>
+          onClick={() => onCambio(d)}
+          aria-label={`${DAYS[i]} ${parse(d).getDate()}${est === "libre" ? ", entrenamiento registrado" : est === "hecha" ? ", completado" : ""}`}
+          aria-current={d === fecha ? "date" : undefined}>
           <span>{DSHORT[i]}</span>
           <span className="n">{parse(d).getDate()}</span>
           <span className={"dot " + clase} />
@@ -1888,6 +1899,10 @@ function Today({ st, P, curW, today, wk, setTab, setPantalla }) {
   const lastCk = P.checkins[P.checkins.length - 1];
   const dolorReciente = P.checkins.slice(-5).some((c) => c.dolor >= 3);
   const done = wdata?.done || [];
+  /* Lo que se haya registrado hoy, esté o no en el plan. Es lo que permite que
+     Hoy reconozca un entrenamiento libre en vez de seguir diciendo "no toca
+     entrenar" a alguien que acaba de volver de correr. */
+  const registrosHoy = sesionDeFecha(P, today).registros;
 
   return (<div>
     <div className="between" style={{ alignItems: "flex-start", marginTop: 8 }}>
@@ -1903,10 +1918,27 @@ function Today({ st, P, curW, today, wk, setTab, setPantalla }) {
 
     {!wdata && (<div className="card"><h3>Sin semana generada</h3>
       <p className="sm muted">Dime qué días puedes entrenar y reparto las sesiones respetando las reglas de separación entre fuerza y carrera.</p>
-      <button className="btn primary" onClick={() => setTab("semana")}>Planificar la semana {curW}</button></div>)}
+      <button className="btn primary" onClick={() => setTab("semana")}>Planificar la semana {curW}</button>
+      {/* Planificar es la vía recomendada, no un peaje: se puede registrar
+          igualmente lo que se haya hecho hoy. */}
+      <div style={{ height: 8 }} />
+      <button className="btn ghost" onClick={() => setTab("entrenar")}>Registrar lo que he hecho hoy</button></div>)}
 
-    {wdata && !todaySes && (<div className="card"><span className="tag">Descanso</span>
-      <p style={{ margin: "8px 0 0" }}>Hoy no toca entrenar. El descanso es parte del plan: es cuando se produce la adaptación.</p></div>)}
+    {wdata && !todaySes && (<div className="card"><span className="tag">Descanso recomendado</span>
+      <p style={{ margin: "8px 0 10px" }}>Hoy el plan no propone entrenar: el descanso es cuando se produce la adaptación.</p>
+      <button className="btn ghost" onClick={() => setTab("entrenar")}>He entrenado igualmente, registrarlo</button></div>)}
+
+    {/* Confirmación de lo registrado hoy fuera del plan. Sin esto, un
+        entrenamiento libre se guardaba pero la pantalla principal seguía sin
+        dar señal de que existiera. */}
+    {!!registrosHoy.length && !todaySes && (<div className="card" style={{ borderColor: "#3E6B3A" }}>
+      <div className="between"><span className="tag ok">Registrado hoy</span>
+        <button className="btn sm ghost" onClick={() => setTab("entrenar")}>Ver o añadir</button></div>
+      {registrosHoy.map((r, i) => (<p key={i} className="sm" style={{ margin: "8px 0 0" }}>
+        {r.tipo === "gym" ? "💪" : "🏃"} {etiquetaCodigo(r.code)}
+        <span className="muted"> · {r.tipo === "gym" ? `${r.series.length} series` : [r.ref.duracion_min ? `${r.ref.duracion_min}′` : null, r.ref.distancia_km ? `${r.ref.distancia_km} km` : null].filter(Boolean).join(" · ")}</span>
+      </p>))}
+    </div>)}
 
     {todaySes && (<div className="card" style={{ borderColor: colorOf(todaySes.code) === "run" ? "#2F6A66" : "#7A5730" }}>
       <SessionCard P={P} plan={plan} perfil={perfil} code={todaySes.code} w={curW} />
@@ -2056,11 +2088,29 @@ function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia,
     if (!sel.length) return notify("Marca al menos un día disponible.");
     const banderas = (perfil.banderas || []).filter((v) => v && !/^ninguna$/i.test(String(v).trim()));
     const dolorReposo = (perfil.currentComplaints || perfil.current_complaints || perfil.molestiasActuales || perfil.molestias || []).some((m) => m?.activa !== false && /reposo/i.test(String(m?.cuando || m?.cuando_aparece || "")));
+    /* Corte clínico: se mantiene tal cual, es un `if` de código y no se
+       negocia. Lo que cambia es que deja de ser un callejón sin salida.
+
+       Una bandera del cuestionario es un dato PERMANENTE del perfil: quien la
+       marcó una vez se quedaba sin plan base para siempre y sin ninguna pista
+       de qué hacer al respecto. El bloqueo sigue, pero el mensaje dice cuál de
+       las tres condiciones se ha activado y por dónde se resuelve. */
     if (dolor >= 5 || dolorReposo || banderas.length) {
-      return notify("No se puede activar un plan base con dolor alto, dolor en reposo o señales de alarma. Consulta con un profesional sanitario.");
+      const motivo = dolor >= 5 ? `el dolor declarado es ${dolor}/10`
+        : dolorReposo ? "hay dolor en reposo registrado"
+          : `hay una señal de alarma en tu perfil (${banderas[0]})`;
+      return notify(`No activo un plan de impacto porque ${motivo}. Consúltalo con un profesional sanitario; cuando te dé el alta, actualiza ese dato en tu perfil y podrás volver a generar la semana. Mientras tanto puedes seguir registrando lo que hagas.`);
     }
     const generated = generateWeek(plan, perfil, w, [...sel].sort((a, b) => a - b), { gym, correr, dolor, fatiga });
-    if (generated.violations?.length) return notify("El plan base no supera las reglas de seguridad y no puede activarse.");
+    /* Decir QUÉ regla se incumple: "no supera las reglas de seguridad" sin más
+       deja al atleta sin saber si le sobra un día, le faltan descansos o el
+       problema es otro, y por tanto sin nada que pueda cambiar. */
+    if (generated.violations?.length) {
+      const detalle = generated.violations.map((v) => (typeof v === "string" ? v : v?.message || v?.code)).filter(Boolean);
+      return notify(detalle.length
+        ? `El plan base no cabe en esos días: ${detalle[0]}${detalle.length > 1 ? ` (y ${detalle.length - 1} más)` : ""}. Prueba a marcar otro día disponible.`
+        : "El plan base no cabe en los días marcados. Prueba a habilitar algún día más.");
+    }
     setDraft({ ...generated, source: "baseline", proposal: null });
     setPlanningError(""); setPlanningErrorCode("");
   };
@@ -2291,25 +2341,32 @@ function CalendarioMes({ P, today, abrirDia, fechaSel }) {
       {celdas.map((fecha, i) => {
         if (!fecha) return <div className="calcell vacia" key={"v" + i} />;
         const est = estadoDia(P, fecha, today);
-        const { code } = sesionDeFecha(P, fecha);
+        const { code, registros } = sesionDeFecha(P, fecha);
         const num = parse(fecha).getDate();
         const clases = ["calcell", est === "hecha" ? "hecha" : "", est === "omitida" ? "omitida" : "",
-          est === "descanso" ? "descanso" : "", fecha === today ? "hoy" : "", fecha === fechaSel ? "sel" : ""].filter(Boolean).join(" ");
+          est === "descanso" ? "descanso" : "", est === "libre" ? "libre" : "",
+          fecha === today ? "hoy" : "", fecha === fechaSel ? "sel" : ""].filter(Boolean).join(" ");
+        /* Un día sin sesión prevista pero con algo registrado enseña lo que se
+           hizo, no un punto de "aquí no había nada". */
+        const icono = code ? (esGym(code) ? "💪" : code === "RECOVERY" ? "🚶" : "🏃")
+          : est === "libre" ? (registros[0]?.tipo === "gym" ? "💪" : "🏃")
+            : est === "descanso" ? "🛌" : "·";
         return (<button className={clases} key={fecha} onClick={() => abrirDia(fecha)}
-          aria-label={`${num} de ${MESES[mes]}: ${code ? etiquetaSesion(P, fecha) : est === "descanso" ? "descanso" : "sin plan"}`}>
+          aria-label={`${num} de ${MESES[mes]}: ${code ? etiquetaSesion(P, fecha) : est === "libre" ? `entrenamiento libre registrado (${etiquetaCodigo(registros[0]?.code)})` : est === "descanso" ? "descanso" : "sin plan"}`}>
           <span style={{ color: fecha === today ? "var(--gym)" : "var(--mut)" }}>{num}</span>
-          <span className="ic">{code ? (esGym(code) ? "💪" : code === "RECOVERY" ? "🚶" : "🏃") : est === "descanso" ? "🛌" : "·"}</span>
+          <span className="ic">{icono}</span>
           {est === "hecha" && <span className="et" style={{ color: "var(--ok)" }}>✓</span>}
-          {est !== "hecha" && code && <span className="et">{code}</span>}
+          {est === "libre" && <span className="et" style={{ color: "var(--evid)" }}>LIBRE</span>}
+          {est !== "hecha" && est !== "libre" && code && <span className="et">{code}</span>}
         </button>);
       })}
     </div>
 
     <div className="row" style={{ gap: 12, flexWrap: "wrap", marginTop: 12 }}>
-      {[["🏃", "Carrera"], ["💪", "Fuerza"], ["🛌", "Descanso"], ["✓", "Completado"]].map(([ic, l]) =>
+      {[["🏃", "Carrera"], ["💪", "Fuerza"], ["🛌", "Descanso"], ["✓", "Completado"], ["◆", "Libre"]].map(([ic, l]) =>
         <span key={l} className="xs muted"><span style={{ marginRight: 4 }}>{ic}</span>{l}</span>)}
     </div>
-    <p className="xs muted" style={{ marginTop: 8 }}>Toca cualquier día para abrir su entrenamiento.</p>
+    <p className="xs muted" style={{ marginTop: 8 }}>Toca cualquier día para ver o registrar su entrenamiento, esté planificado o no.</p>
   </div>);
 }
 
@@ -2336,7 +2393,11 @@ function Entrenar(ctx) {
      usuario tenga que buscar otra pestaña (§6). */
   const [etapa, setEtapa] = useState("ficha");
   const [resumen, setResumen] = useState(null);
-  useEffect(() => { setEtapa("ficha"); setResumen(null); }, [fecha]);
+  /* Qué modalidad se está registrando. Arranca en lo que el plan sugiere para
+     ese día, pero el atleta la cambia cuando quiera: el plan RECOMIENDA, no
+     decide qué se puede anotar. */
+  const [modo, setModo] = useState(null);
+  useEffect(() => { setEtapa("ficha"); setResumen(null); setModo(null); }, [fecha]);
 
   /* La semana del día que se está mirando, no la de hoy: registrar el sábado
      desde el lunes tiene que guardar en la semana correcta. */
@@ -2348,6 +2409,40 @@ function Entrenar(ctx) {
     setEtapa("hecho");
     notify("✓ Entrenamiento y sensaciones guardados.");
   };
+
+  /* La modalidad efectiva: la elegida a mano, o la del plan, o carrera por
+     defecto. Nunca "ninguna": siempre hay un formulario disponible. */
+  const modalidad = modo || (dia.code ? (esGym(dia.code) ? "gym" : "run") : "run");
+  const cambiarModo = (siguiente) => { setModo(siguiente); setEtapa("ficha"); };
+
+  /* Selector de qué se está registrando. Es lo que convierte cualquier día
+     —descanso, sin plan, fuera de plan— en un día registrable. */
+  const selectorModalidad = (<div className="card flat" style={{ padding: 0, marginBottom: 12 }}>
+    <div className="grid3" role="group" aria-label="Qué quieres registrar">
+      {[["run", "🏃", "Carrera"], ["gym", "💪", "Fuerza"], ["sensaciones", "📝", "Solo sensaciones"]].map(([valor, icono, texto]) => (
+        <button key={valor}
+          className={"chip" + (valor === "sensaciones" ? (etapa === "sensaciones" ? " on" : "") : (etapa !== "sensaciones" && modalidad === valor ? " on" + (valor === "run" ? " run" : "") : ""))}
+          onClick={() => (valor === "sensaciones" ? setEtapa("sensaciones") : cambiarModo(valor))}>
+          <span style={{ display: "block", fontSize: 16 }}>{icono}</span>{texto}
+        </button>))}
+    </div>
+  </div>);
+
+  /* Lo que ya está registrado ese día. Se enseña siempre que haya algo, aunque
+     el plan no contemplara nada: es la confirmación de que lo anotado cuenta. */
+  const yaRegistrado = dia.registros.length ? (<div className="card" style={{ borderColor: "#3E6B3A" }}>
+    <div className="between"><h3 style={{ color: "var(--ok)" }}>Registrado este día</h3>
+      <span className="tag ok">{dia.registros.length}</span></div>
+    {dia.registros.map((r, i) => (<div key={i} className="row xs" style={{ marginTop: 6 }}>
+      <span>{r.tipo === "gym" ? "💪" : "🏃"}</span>
+      <span className="mono">{etiquetaCodigo(r.code)}</span>
+      <span className="muted" style={{ marginLeft: "auto" }}>
+        {r.tipo === "gym"
+          ? `${r.series.length} series`
+          : [r.ref.duracion_min ? `${r.ref.duracion_min}′` : null, r.ref.distancia_km ? `${r.ref.distancia_km} km` : null].filter(Boolean).join(" · ") || "registrada"}
+      </span>
+    </div>))}
+  </div>) : null;
 
   return (<div>
     <p className="eyebrow" style={{ marginTop: 8 }}>Entrenar</p>
@@ -2365,32 +2460,42 @@ function Entrenar(ctx) {
       <h3 style={{ color: "var(--ok)" }}>Sesión completada</h3>
       <p className="sm muted" style={{ margin: "8px 0 14px" }}>{resumen || "Registrada correctamente."}</p>
       <button className="btn ghost" onClick={() => setEtapa("ficha")}>Ver el día</button>
-    </div>) : est === "fuera" ? (<div className="card vacio">
-      <span className="ic">◷</span>
-      <p className="sm muted" style={{ margin: 0 }}>Esa fecha queda fuera de tu plan.</p>
-    </div>) : !dia.planificada ? (<div className="card vacio">
-      <span className="ic">▤</span>
-      <p className="sm muted" style={{ margin: "0 0 12px" }}>La semana {wDia} todavía no está programada.</p>
-      <div className="row">
-        <button className="btn primary" style={{ flex: 1 }} onClick={() => ctx.setTab("semana")}>Generar mi semana</button>
-        {/* §23: pedirlo hablando es la vía corta, y además recoge la
-            disponibilidad de esta semana concreta por el camino. */}
-        <button className="btn ghost" style={{ flex: 1 }} onClick={() => ctx.abrirCoach?.()}>Pedírselo al coach</button>
-      </div>
-    </div>) : !dia.code ? (<div className="card vacio">
-      <span className="ic">🛌</span>
-      <h3>Hoy tienes descanso</h3>
-      <p className="sm muted" style={{ margin: "8px 0 0" }}>Descansar también entrena: es cuando el tejido se adapta a la carga de los días anteriores.</p>
     </div>) : (<>
-      <FichaDelDia P={P} fecha={fecha} dia={dia} estado={est} />
-      {esGym(dia.code)
+      {/* El contexto del día va PRIMERO y es informativo: qué recomienda el
+          plan, si es que recomienda algo. Ninguna de estas ramas corta ya el
+          registro; solo cambian lo que se cuenta antes del formulario. */}
+      {dia.code
+        ? <FichaDelDia P={P} fecha={fecha} dia={dia} estado={est} />
+        : est === "fuera" ? (<div className="card">
+          <span className="tag">Fuera del plan</span>
+          <p className="sm muted" style={{ margin: "8px 0 0" }}>
+            Esta fecha cae fuera de las {P.plan.totalSemanas} semanas del plan, pero puedes registrar lo que hayas entrenado.
+          </p>
+        </div>) : !dia.planificada ? (<div className="card">
+          <span className="tag">Semana {wDia} sin programar</span>
+          <p className="sm muted" style={{ margin: "8px 0 12px" }}>
+            Todavía no hay sesiones propuestas para esta semana. Puedes generarlas o registrar directamente lo que hayas hecho.
+          </p>
+          <div className="row">
+            <button className="btn primary sm" style={{ flex: 1 }} onClick={() => ctx.setTab("semana")}>Generar mi semana</button>
+            {/* §23: pedirlo hablando es la vía corta, y además recoge la
+                disponibilidad de esta semana concreta por el camino. */}
+            <button className="btn ghost sm" style={{ flex: 1 }} onClick={() => ctx.abrirCoach?.()}>Pedírselo al coach</button>
+          </div>
+        </div>) : (<div className="card">
+          <span className="tag">Descanso recomendado</span>
+          <p className="sm muted" style={{ margin: "8px 0 0" }}>
+            El plan propone descansar: es cuando el tejido se adapta a la carga de los días anteriores.
+            Si has entrenado igualmente, regístralo aquí abajo y el coach lo tendrá en cuenta.
+          </p>
+        </div>)}
+
+      {yaRegistrado}
+      {selectorModalidad}
+
+      {modalidad === "gym"
         ? <StrengthForm {...propio} codes={gymCodes} sug={dia.code} onTerminado={alTerminar} />
         : <RunForm {...propio} sug={dia.code} onTerminado={alTerminar} />}
-      <details style={{ marginTop: 6 }}>
-        <summary className="btn ghost sm" style={{ width: "100%", textAlign: "center" }}>Registrar otra cosa</summary>
-        <p className="xs muted" style={{ margin: "9px 0" }}>Si hoy has hecho algo distinto a lo planificado, cambia el tipo de sesión dentro del formulario de arriba.</p>
-        <button className="btn ghost sm" style={{ width: "100%" }} onClick={() => setEtapa("sensaciones")}>Solo registrar sensaciones</button>
-      </details>
     </>)}
   </div>);
 }
@@ -2416,26 +2521,40 @@ function FichaDelDia({ P, fecha, dia, estado }) {
 
 function RunForm({ st, P, update, notify, curW, today, sug, onTerminado }) {
   const plan = P.plan;
-  const codes = Object.keys(semanaPlan(plan, curW).runs).concat(["RECOVERY"]);
-  const [f, setF] = useState({ code: codes.includes(sug) ? sug : codes[0], km: "", min: "", fcm: "", fcx: "", desnivel: "", cadencia: "", rpe: 4, dolor: 0, notas: "" });
+  /* Los códigos de la semana van PRIMERO porque son los recomendados, pero la
+     lista no se limita a ellos: el catálogo completo siempre está disponible
+     y LIBRE cubre lo que no encaje en ninguna categoría. Antes solo se podían
+     registrar los códigos que el planificador hubiera puesto en esa semana,
+     así que salir a rodar un día de fuerza no tenía dónde anotarse. */
+  const recomendados = Object.keys(semanaPlan(plan, curW)?.runs || {});
+  const codes = [...new Set([...recomendados, ...CODIGOS_RUN])];
+  const [f, setF] = useState({ code: sug && !esGym(sug) ? sug : (recomendados[0] || "LIBRE"), km: "", min: "", fcm: "", fcx: "", desnivel: "", cadencia: "", rpe: 4, dolor: 0, notas: "" });
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
   const pace = f.km > 0 && f.min > 0 ? (() => { const s = (f.min * 60) / f.km; return Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0"); })() : "—";
   const save = () => {
-    if (!f.min) return notify("Falta la duración.");
-    const row = { id: Date.now(), date: today, source: "manual", external_id: null, session_code: f.code, semana: curW, distancia_km: +f.km || null, duracion_min: +f.min, ritmo: pace, fc_media: +f.fcm || null, fc_max: +f.fcx || null, desnivel: +f.desnivel || null, cadencia: +f.cadencia || null, rpe: f.rpe, dolor: f.dolor, notas: f.notas };
+    /* Duración O distancia, no las dos. Exigir la duración dejaba fuera al que
+       solo mira el GPS de distancia, y el registro de un entrenamiento no debe
+       perderse por un campo que no se apuntó. */
+    if (!f.min && !f.km) return notify("Anota al menos la duración o la distancia.");
+    const row = { id: Date.now() + Math.random(), date: today, source: "manual", external_id: null, session_code: f.code, semana: curW, distancia_km: +f.km || null, duracion_min: +f.min || null, ritmo: pace, fc_media: +f.fcm || null, fc_max: +f.fcx || null, desnivel: +f.desnivel || null, cadencia: +f.cadencia || null, rpe: f.rpe, dolor: f.dolor, notas: f.notas };
     update((s) => { const p = s.perfiles[P.id]; p.running.push(row); if (!p.weeks[curW]) p.weeks[curW] = { assign: [], done: [] };
       p.weeks[curW].done = [...new Set([...(p.weeks[curW].done || []), f.code])]; return s; });
     if (st.config.sheetsUrl) pushToSheets(st.config.sheetsUrl, "Running", [{ ...row, perfil: P.nombre }]);
     setF({ ...f, km: "", min: "", notas: "" });
     /* Encadena con sensaciones en vez de dejar al usuario buscando pestaña (§6).
        Sin callback (uso suelto del formulario) se comporta como antes. */
-    const resumen = `${f.code} · ${f.min}′${f.km ? " · " + f.km + " km · " + pace + "/km" : ""}`;
+    const resumen = [etiquetaCodigo(f.code), f.min ? `${f.min}′` : null, f.km ? `${f.km} km` : null, f.km && f.min ? `${pace}/km` : null].filter(Boolean).join(" · ");
     if (onTerminado) onTerminado(resumen); else notify("✓ Carrera registrada.");
   };
   return (<>
     <div className="card">
       <label>Sesión</label>
-      <select value={f.code} onChange={(e) => set("code", e.target.value)}>{codes.map((c) => <option key={c}>{c}</option>)}</select>
+      <select value={f.code} onChange={(e) => set("code", e.target.value)}>
+        {codes.map((c) => <option key={c} value={c}>{c === etiquetaCodigo(c) ? c : `${c} · ${etiquetaCodigo(c)}`}</option>)}
+      </select>
+      <p className="xs muted" style={{ margin: "5px 0 0" }}>
+        Elige lo que de verdad has hecho, coincida o no con el plan. «LIBRE» vale para cualquier cosa que no encaje.
+      </p>
       <div style={{ height: 10 }} />
       <div className="grid2">
         <div><label>Distancia (km)</label><input inputMode="decimal" value={f.km} onChange={(e) => set("km", e.target.value)} placeholder="6,2" /></div>
@@ -2571,7 +2690,11 @@ function CambiarEjercicio({ ejercicio, P, update, notify }) {
 
 function StrengthForm({ st, P, update, notify, curW, today, sug, codes, setPantalla, onTerminado }) {
   const plan = P.plan, perfil = P.perfil;
-  const [code, setCode] = useState(codes.includes(sug) ? sug : codes[0]);
+  /* Las rutinas de la plantilla van primero, pero el catálogo completo está
+     siempre disponible: hacer una sesión de fuerza que la semana no preveía
+     tiene que poder anotarse. */
+  const disponibles = [...new Set([...(codes || []), ...CODIGOS_GYM])];
+  const [code, setCode] = useState(sug && esGym(sug) ? sug : disponibles[0]);
   const ses = useMemo(() => gymSession(plan, perfil, curW, code, P), [code, curW, P.id, P.rutinas, P.ejercicios]);
   const painFlag = P.checkins.slice(-4).some((c) => c.dolor >= 3) || P.running.slice(-3).some((r) => r.dolor >= 3);
   const [logs, setLogs] = useState({});
@@ -2628,8 +2751,8 @@ function StrengthForm({ st, P, update, notify, curW, today, sug, codes, setPanta
     if (onTerminado) onTerminado(resumen); else notify("✓ " + rows.length + " series guardadas.");
   };
   return (<>
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(" + codes.length + ",1fr)", gap: 8, marginBottom: 12 }}>
-      {codes.map((c) => <button key={c} className={"chip" + (code === c ? " on" : "")} onClick={() => setCode(c)}>{c}</button>)}
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(disponibles.length, 4)},1fr)`, gap: 8, marginBottom: 12 }}>
+      {disponibles.map((c) => <button key={c} className={"chip" + (code === c ? " on" : "")} onClick={() => setCode(c)}>{c}</button>)}
     </div>
     <div className="card">
       <SessionCard P={P} plan={plan} perfil={perfil} code={code} w={curW} />
@@ -2697,7 +2820,24 @@ function CheckIn({ st, P, update, notify, today, curW, onGuardado }) {
   const save = () => {
     const row = { ...c, date: today, semana: curW, feelTxt: feels[c.feel] };
     const rrow = { ...rec, date: today, sueno: +rec.sueno || null, dolor: c.dolor };
-    update((st2) => { const p = st2.perfiles[P.id]; p.checkins.push(row); p.recovery.push(rrow); return st2; });
+    /* Fusionar por fecha en vez de acumular. Registrar dos veces el mismo día
+       —cosa normal si se entrena dos veces, o si se corrige un dato— dejaba dos
+       filas contradictorias para la misma jornada, y el coach leía las dos como
+       si fueran días distintos. El ejecutor de acciones del Coach ya fusionaba
+       (src/acciones.js): esto alinea las dos vías de escritura. */
+    const fusionar = (lista, fila) => {
+      const i = (lista || []).findIndex((x) => x.date === fila.date);
+      if (i < 0) return [...(lista || []), fila];
+      const copia = [...lista];
+      copia[i] = { ...copia[i], ...fila };
+      return copia;
+    };
+    update((st2) => {
+      const p = st2.perfiles[P.id];
+      p.checkins = fusionar(p.checkins, row);
+      p.recovery = fusionar(p.recovery, rrow);
+      return st2;
+    });
     if (st.config.sheetsUrl) { pushToSheets(st.config.sheetsUrl, "Feedback", [{ ...row, perfil: P.nombre }]); pushToSheets(st.config.sheetsUrl, "Recovery", [{ ...rrow, perfil: P.nombre }]); }
     setC({ rpe: 5, feel: 2, dolor: 0, loc: "", tipo: "", cuando: "", energia: 3, comentario: "" });
     /* Cuando viene encadenado desde un entrenamiento, quien avisa y cierra el
@@ -2796,6 +2936,21 @@ function descripcionAccion(accion) {
   }
   if (accion?.accion === "generar_semana") {
     return `Preparar la semana ${p.semana || "actual"} con estos días: ${(p.dias || []).map((d) => DAYS[d]).join(", ")}.`;
+  }
+  if (accion?.accion === "registrar_entreno") {
+    const detalles = [p.minutos ? `${p.minutos} min` : null, p.km ? `${p.km} km` : null,
+      p.rpe ? `RPE ${p.rpe}/10` : null, p.dolor ? `dolor ${p.dolor}/10` : null].filter(Boolean);
+    return `Registrar el ${p.fecha}: ${etiquetaCodigo(p.codigo)}${detalles.length ? ` · ${detalles.join(" · ")}` : ""}.`;
+  }
+  if (accion?.accion === "registrar_sensaciones") {
+    const detalles = [p.rpe ? `RPE ${p.rpe}/10` : null, p.dolor !== undefined ? `dolor ${p.dolor}/10` : null,
+      p.energia ? `energía ${p.energia}/5` : null].filter(Boolean);
+    return `Anotar cómo fue el ${p.fecha}${detalles.length ? `: ${detalles.join(", ")}` : ""}.`;
+  }
+  if (accion?.accion === "registrar_recuperacion") {
+    const detalles = [p.sueno ? `${p.sueno} h de sueño` : null, p.fatiga ? `fatiga ${p.fatiga}/10` : null,
+      p.estres ? `estrés ${p.estres}/10` : null].filter(Boolean);
+    return `Anotar tu recuperación del ${p.fecha}${detalles.length ? `: ${detalles.join(", ")}` : ""}.`;
   }
   return "Aplicar el cambio propuesto.";
 }

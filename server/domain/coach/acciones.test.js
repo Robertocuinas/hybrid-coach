@@ -127,3 +127,62 @@ test("sin bloque, la respuesta pasa intacta", () => {
   assert.equal(texto, "Hoy te toca rodaje suave de 40 minutos.");
   assert.equal(accion, null);
 });
+
+/* ---------- registrar_entreno ----------
+
+   El plan es una recomendación: registrar lo que se ha hecho no puede depender
+   de que ese día hubiera algo programado. Lo que sí se valida es la forma del
+   dato, porque entra en el historial que después lee el planificador. */
+
+test("registrar_entreno acepta una carrera con lo mínimo y normaliza el código", () => {
+  const { accion } = validarAccion({
+    accion: "registrar_entreno",
+    parametros: { fecha: "2026-08-14", tipo: "run", codigo: "libre", minutos: 45, km: 8.2, rpe: 6 },
+  });
+
+  assert.equal(accion.accion, "registrar_entreno");
+  assert.equal(accion.nivel, "confirmacion", "una escritura nunca se aplica sola");
+  assert.equal(accion.parametros.codigo, "LIBRE", "el código se normaliza a mayúsculas");
+  assert.equal(accion.parametros.minutos, 45);
+  assert.equal(accion.parametros.km, 8.2);
+  assert.equal(accion.parametros.rpe, 6);
+});
+
+test("registrar_entreno vale con solo distancia o con solo duración", () => {
+  const soloKm = validarAccion({ accion: "registrar_entreno", parametros: { fecha: "2026-08-14", tipo: "run", km: 10 } });
+  assert.equal(soloKm.accion.parametros.km, 10);
+  assert.equal(soloKm.accion.parametros.minutos, undefined);
+
+  const soloMin = validarAccion({ accion: "registrar_entreno", parametros: { fecha: "2026-08-14", tipo: "run", minutos: 30 } });
+  assert.equal(soloMin.accion.parametros.minutos, 30);
+
+  const nada = validarAccion({ accion: "registrar_entreno", parametros: { fecha: "2026-08-14", tipo: "run" } });
+  assert.equal(nada.accion, null);
+  assert.match(nada.aviso, /minutos o los kilómetros/);
+});
+
+test("registrar_entreno no deja pasar datos que ensuciarían el historial", () => {
+  const sinTipo = validarAccion({ accion: "registrar_entreno", parametros: { fecha: "2026-08-14", minutos: 30 } });
+  assert.equal(sinTipo.accion, null);
+  assert.match(sinTipo.aviso, /"run" o "gym"/);
+
+  const fechaMala = validarAccion({ accion: "registrar_entreno", parametros: { fecha: "14/08/2026", tipo: "run", minutos: 30 } });
+  assert.equal(fechaMala.accion, null);
+
+  const gymSinMinutos = validarAccion({ accion: "registrar_entreno", parametros: { fecha: "2026-08-14", tipo: "gym", km: 5 } });
+  assert.equal(gymSinMinutos.accion, null, "una sesión de fuerza medida en kilómetros no tiene sentido");
+
+  /* Un código inventado no entra: cae al genérico de su modalidad. */
+  const codigoRaro = validarAccion({ accion: "registrar_entreno", parametros: { fecha: "2026-08-14", tipo: "run", codigo: "RUN Z", minutos: 30 } });
+  assert.equal(codigoRaro.accion.parametros.codigo, "LIBRE");
+
+  const exagerado = validarAccion({ accion: "registrar_entreno", parametros: { fecha: "2026-08-14", tipo: "run", minutos: 5000 } });
+  assert.equal(exagerado.accion, null, "1200 km o 83 horas no son un entrenamiento");
+});
+
+test("registrar_entreno se le ofrece al modelo y lo ejecuta el cliente", () => {
+  assert.equal(ejecutorDe("registrar_entreno"), "cliente");
+  assert.equal(nivelDe("registrar_entreno"), "confirmacion");
+  assert.match(catalogoParaPrompt({ planificador: false }), /registrar_entreno/,
+    "no depende del planificador: registrar siempre está disponible");
+});

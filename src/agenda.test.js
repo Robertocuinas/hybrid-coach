@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  addDays, contextoDelDia, daysBetween, eligeEstable, estadoDia, iso, lunesDe,
-  sesionDeFecha, tituloConversacion, ultimaVezEjercicio, weekOf,
+  addDays, contextoDelDia, daysBetween, eligeEstable, estadoDia, etiquetaCodigo, iso, lunesDe,
+  registrosDeFecha, sesionDeFecha, tituloConversacion, ultimaVezEjercicio, weekOf,
 } from "./agenda.js";
 
 /* Plan de 3 semanas que arranca el lunes 2026-08-10. */
@@ -76,6 +76,78 @@ test("omitida solo existe en el pasado: lo de mañana está pendiente", () => {
   assert.equal(estadoDia(P, "2026-08-14", hoy), "pendiente", "viernes todavía no ha llegado");
   assert.equal(estadoDia(P, "2026-08-13", hoy), "descanso", "jueves no tiene sesión asignada");
   assert.equal(estadoDia(P, "2026-09-20", hoy), "fuera", "fuera del plan");
+});
+
+/* ---------- Registro libre: el plan recomienda, no excluye ----------
+
+   Todo lo de aquí abajo protege la misma idea: lo que el atleta ha hecho de
+   verdad se puede anotar SIEMPRE, y una vez anotado la agenda lo reconoce.
+   Antes, entrenar algo no previsto quedaba invisible —o peor, el día seguía
+   marcado como "omitido"— y la aplicación le decía que había fallado a alguien
+   que acababa de entrenar. */
+
+test("registrosDeFecha recoge carreras y agrupa las series de fuerza por sesión", () => {
+  const P = {
+    ...perfilCon({}),
+    running: [
+      { date: "2026-08-11", session_code: "LIBRE", duracion_min: 40 },
+      { date: "2026-08-12", session_code: "RUN C", duracion_min: 30 },
+    ],
+    strength: [
+      { date: "2026-08-11", session: "GYM A", exercise: "Sentadilla", set: 1 },
+      { date: "2026-08-11", session: "GYM A", exercise: "Sentadilla", set: 2 },
+      { date: "2026-08-11", session: "GYM A", exercise: "Press", set: 1 },
+    ],
+  };
+
+  const dia = registrosDeFecha(P, "2026-08-11");
+  assert.equal(dia.length, 2, "una carrera y UNA sesión de fuerza, no tres series sueltas");
+  assert.deepEqual(dia.map((r) => r.tipo), ["run", "gym"]);
+  assert.equal(dia[1].series.length, 3, "las tres series viven dentro de su sesión");
+  assert.equal(registrosDeFecha(P, "2026-08-15").length, 0, "un día sin nada no inventa registros");
+});
+
+test("un entrenamiento libre en día de descanso cuenta y no se marca como omitido", () => {
+  const base = perfilCon({ 1: { assign: [{ day: 0, code: "RUN A" }], done: [] } });
+  const hoy = "2026-08-14";
+  /* Martes: el plan no propone nada. */
+  assert.equal(estadoDia(base, "2026-08-11", hoy), "descanso");
+
+  const conRegistro = { ...base, running: [{ date: "2026-08-11", session_code: "LIBRE", duracion_min: 45 }] };
+  assert.equal(estadoDia(conRegistro, "2026-08-11", hoy), "libre", "lo registrado tiene su propio estado");
+  assert.equal(sesionDeFecha(conRegistro, "2026-08-11").hecha, true, "y cuenta como hecho");
+});
+
+test("registrar fuera del plan o sin semana generada deja de ser un agujero negro", () => {
+  const hoy = "2026-09-25";
+  /* Fecha posterior a la última semana del plan. */
+  const fuera = { ...perfilCon({}), running: [{ date: "2026-09-20", session_code: "LIBRE", duracion_min: 60 }] };
+  assert.equal(estadoDia(fuera, "2026-09-20", hoy), "libre", "fuera del plan pero registrado");
+  assert.equal(estadoDia(fuera, "2026-09-21", hoy), "fuera", "sin registro sigue siendo fuera de plan");
+
+  /* Semana dentro del plan pero sin generar. */
+  const sinPlan = { ...perfilCon({}), strength: [{ date: "2026-08-19", session: "GYM B", set: 1 }] };
+  assert.equal(estadoDia(sinPlan, "2026-08-19", hoy), "libre");
+  assert.equal(estadoDia(sinPlan, "2026-08-20", hoy), "sinplan");
+});
+
+test("un registro no pisa la sesión que el plan sí tenía prevista para ese día", () => {
+  const P = {
+    ...perfilCon({ 1: { assign: [{ day: 0, code: "RUN A" }], done: [] } }),
+    running: [{ date: "2026-08-10", session_code: "RUN A", duracion_min: 70 }],
+  };
+  const dia = sesionDeFecha(P, "2026-08-10");
+  assert.equal(dia.code, "RUN A", "la recomendación del plan se conserva");
+  assert.equal(dia.hecha, true, "y el registro la marca como hecha aunque `done` esté vacío");
+  assert.equal(estadoDia(P, "2026-08-10", "2026-08-14"), "hecha", "no 'libre': el plan la contemplaba");
+});
+
+test("los códigos de sesión tienen nombre legible y LIBRE existe siempre", () => {
+  assert.equal(etiquetaCodigo("RUN A"), "Tirada larga");
+  assert.equal(etiquetaCodigo("LIBRE"), "Entrenamiento libre");
+  assert.equal(etiquetaCodigo("GYM A"), "Fuerza A");
+  assert.equal(etiquetaCodigo("LO QUE SEA"), "LO QUE SEA", "un código desconocido se muestra tal cual");
+  assert.equal(etiquetaCodigo(null), "Sesión");
 });
 
 /* ---------- Precarga de pesos ---------- */

@@ -108,6 +108,56 @@ export const ACCIONES = Object.freeze({
     },
   },
 
+  /* Registrar un entrenamiento hecho. El plan es una recomendación, así que
+     esto NO exige que ese día hubiera nada programado ni que el código
+     coincida con lo previsto: se anota lo que el atleta dice que hizo.
+
+     Nivel "confirmacion" como todas las escrituras: el atleta ve la ficha y
+     acepta antes de que se guarde nada. */
+  registrar_entreno: {
+    ejecutor: "cliente",
+    nivel: "confirmacion",
+    descripcion: "Anotar un entrenamiento realizado (corriendo o fuerza) cualquier día, esté planificado o no.",
+    ejemplo: '{ "fecha": "2026-08-14", "tipo": "run", "codigo": "LIBRE", "minutos": 45, "km": 8.2, "rpe": 6 }',
+    parametros: (p) => {
+      const f = fecha(p.fecha);
+      if (!f) return { ok: false, motivo: "fecha debe ser AAAA-MM-DD" };
+      const tipo = String(p.tipo || "").trim().toLowerCase();
+      if (!["run", "gym"].includes(tipo)) return { ok: false, motivo: 'tipo debe ser "run" o "gym"' };
+      const valor = { fecha: f, tipo };
+
+      /* El código es libre pero acotado: se normaliza a mayúsculas y se
+         comprueba contra la nomenclatura del plan más LIBRE. Un código
+         inventado no entra en el historial. */
+      const CODIGOS = tipo === "run"
+        ? ["RUN A", "RUN B", "RUN C", "RUN D", "RECOVERY", "LIBRE"]
+        : ["GYM A", "GYM B", "GYM C", "GYM D"];
+      const codigo = String(p.codigo || "").trim().toUpperCase();
+      valor.codigo = CODIGOS.includes(codigo) ? codigo : (tipo === "run" ? "LIBRE" : "GYM A");
+
+      const minutos = entero(p.minutos, 1, 600);
+      const km = numero(p.km, 0.1, 300);
+      const rpe = entero(p.rpe, 1, 10);
+      const dolor = entero(p.dolor, 0, 10);
+      const notas = texto(p.notas, 300);
+      if (minutos !== null) valor.minutos = minutos;
+      if (km !== null) valor.km = km;
+      if (rpe !== null) valor.rpe = rpe;
+      if (dolor !== null) valor.dolor = dolor;
+      if (notas) valor.notas = notas;
+
+      /* Igual que en el formulario: duración O distancia. Una sesión de fuerza
+         se sostiene solo con la duración. */
+      if (minutos === null && km === null) {
+        return { ok: false, motivo: "hacen falta los minutos o los kilómetros" };
+      }
+      if (tipo === "gym" && minutos === null) {
+        return { ok: false, motivo: "una sesión de fuerza necesita al menos los minutos" };
+      }
+      return { ok: true, valor };
+    },
+  },
+
   actualizar_perfil: {
     ejecutor: "cliente",
     nivel: "confirmacion",

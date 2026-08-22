@@ -25,6 +25,32 @@ export const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "ju
 export const esGym = (c) => String(c || "").startsWith("GYM");
 export const colorOf = (c) => (esGym(c) ? "gym" : c === "RECOVERY" ? "rest" : "run");
 
+/* Códigos de sesión que la aplicación entiende siempre, haya o no un plan
+   generado. Registrar no depende de que el planificador haya pasado por ahí:
+   el plan es una recomendación y el registro es un hecho.
+
+   LIBRE es la vía de escape deliberada: cubre lo que no encaja en ninguna
+   categoría —una pachanga, una clase, una caminata larga— y evita que el
+   atleta tenga que mentir eligiendo un código que no hizo. */
+export const CODIGOS_RUN = ["RUN A", "RUN B", "RUN C", "RUN D", "RECOVERY", "LIBRE"];
+export const CODIGOS_GYM = ["GYM A", "GYM B", "GYM C", "GYM D"];
+
+/* Etiquetas legibles. El código a secas ("RUN B") no dice nada a quien no se
+   ha leído la nomenclatura del plan. */
+export const NOMBRE_CODIGO = Object.freeze({
+  "RUN A": "Tirada larga",
+  "RUN B": "Calidad / series",
+  "RUN C": "Rodaje suave",
+  "RUN D": "Rodaje regenerativo",
+  RECOVERY: "Movilidad / recuperación",
+  LIBRE: "Entrenamiento libre",
+  "GYM A": "Fuerza A",
+  "GYM B": "Fuerza B",
+  "GYM C": "Fuerza C",
+  "GYM D": "Fuerza D",
+});
+export const etiquetaCodigo = (code) => NOMBRE_CODIGO[code] || code || "Sesión";
+
 /* Lunes de la semana natural que contiene esa fecha. El plan empieza en lunes
    y el calendario mensual también, así que la conversión es siempre la misma. */
 export function lunesDe(fecha) {
@@ -53,18 +79,56 @@ export function sesionDeFecha(P, fecha) {
   const wk = weekOf(P.plan, fecha);
   const semana = P.weeks?.[wk.w];
   const asignada = wk.fuera ? null : (semana?.assign || []).find((a) => a.day === wk.dayIdx) || null;
-  const hecha = !!(asignada && (semana?.done || []).includes(asignada.code));
-  return { ...wk, semana, code: asignada?.code || null, hecha, planificada: !!semana?.assign?.length };
+  const registros = registrosDeFecha(P, fecha);
+  /* Una sesión está hecha si el plan la marcó como hecha O si hay un registro
+     real de ese día. Antes solo contaba lo primero, y eso significaba que
+     entrenar algo distinto a lo previsto dejaba el día marcado como "omitido"
+     por mucho que estuviera registrado: la app llamaba fallo a haber
+     entrenado. */
+  const hecha = !!(asignada && (semana?.done || []).includes(asignada.code)) || registros.length > 0;
+  return {
+    ...wk,
+    semana,
+    code: asignada?.code || null,
+    hecha,
+    planificada: !!semana?.assign?.length,
+    registros,
+  };
+}
+
+/* Todo lo registrado en una fecha, mire o no el plan hacia ese día. Es la
+   pieza que sostiene el registro libre: carreras y sesiones de fuerza se
+   guardan con su fecha, así que se pueden recuperar sin pasar por la agenda
+   del planificador. */
+export function registrosDeFecha(P, fecha) {
+  const carreras = (P?.running || [])
+    .filter((r) => r.date === fecha)
+    .map((r) => ({ tipo: "run", code: r.session_code || "LIBRE", ref: r }));
+  /* Las series de fuerza se agrupan por sesión: cuatro series de sentadilla
+     son UN registro de fuerza, no cuatro entradas en la lista del día. */
+  const fuerza = [];
+  for (const serie of (P?.strength || []).filter((r) => r.date === fecha)) {
+    const code = serie.session || "GYM";
+    const previo = fuerza.find((x) => x.code === code);
+    if (previo) { previo.series.push(serie); continue; }
+    fuerza.push({ tipo: "gym", code, series: [serie] });
+  }
+  return [...carreras, ...fuerza];
 }
 
 /* Estado visible de un día. "Omitida" solo existe en el pasado: una sesión sin
    registrar de mañana está pendiente, no perdida. */
 export function estadoDia(P, fecha, hoy) {
-  const { code, hecha, fuera, planificada } = sesionDeFecha(P, fecha);
+  const { code, hecha, fuera, planificada, registros } = sesionDeFecha(P, fecha);
+  /* Un registro real manda sobre cualquier otra consideración. Un día fuera
+     del plan o sin semana generada en el que SÍ se entrenó no puede seguir
+     mostrándose como vacío: eso es lo que hacía sentir que registrar algo no
+     previsto no contaba. */
+  if (registros.length && !code) return "libre";
+  if (hecha && code) return "hecha";
   if (fuera) return "fuera";
   if (!planificada) return "sinplan";
   if (!code) return "descanso";
-  if (hecha) return "hecha";
   return fecha < hoy ? "omitida" : "pendiente";
 }
 
