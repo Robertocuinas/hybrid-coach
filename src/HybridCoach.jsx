@@ -1897,10 +1897,19 @@ function RefChips({ citas, ids, biblio = [], onOpen }) {
 /* ============================================================
    HOY
    ============================================================ */
-function Today({ st, P, curW, today, wk, setTab, setPantalla }) {
+function Today({ st, P, curW, today, wk, setTab, setPantalla, abrirDia }) {
   const plan = P.plan, perfil = P.perfil;
   const wdata = P.weeks[curW];
-  const assign = (wdata?.assign || []).map((a) => ({ ...a, dur: sessionDetail(plan, perfil, curW, a.code, P).dur }));
+  /* Con try/catch, igual que ya hacía la pantalla Semana. Una sesión que no se
+     puede resolver —un código huérfano de una propuesta antigua, una rutina
+     editada— hacía que sessionDetail lanzara aquí y tumbara la pestaña Hoy
+     entera hasta la barrera de error: el atleta perdía la pantalla principal
+     por un dato viejo de una sola sesión. */
+  const assign = (wdata?.assign || []).map((a) => {
+    let dur = 25;
+    try { dur = sessionDetail(plan, perfil, curW, a.code, P).dur; } catch { /* código no resoluble */ }
+    return { ...a, dur };
+  });
   const todaySes = assign.find((a) => a.day === wk.dayIdx && !wk.fuera);
   const sp = semanaPlan(plan, curW);
   const dias = daysBetween(today, perfil.fechaCarrera);
@@ -1920,7 +1929,12 @@ function Today({ st, P, curW, today, wk, setTab, setPantalla }) {
         <p className="eyebrow" style={{ margin: 0 }}>días · {perfil.distancia}</p></div>
     </div>
     <p className="eyebrow" style={{ marginTop: 12 }}>Semana {curW} de {plan.totalSemanas} · {sp.fase}</p>
-    <Strip assign={assign} todayIdx={wk.fuera ? -1 : wk.dayIdx} onPick={() => setTab("semana")} />
+    {/* Tocar un día de la tira ABRE ese día, en vez de limitarse a cambiar de
+        pestaña ignorando cuál se ha tocado. Es el mismo gesto que ya funciona
+        en el calendario mensual, y desde Hoy era la única forma natural de
+        llegar a registrar otro día. */}
+    <Strip assign={assign} todayIdx={wk.fuera ? -1 : wk.dayIdx}
+      onPick={(i) => abrirDia(addDays(lunesDe(today), i))} />
 
     {sp.cp && <div className="card" style={{ borderColor: "#7A5730" }}><span className="tag gym">Checkpoint</span><p className="sm" style={{ margin: "7px 0 0" }}>{sp.cp}</p></div>}
 
@@ -1953,8 +1967,9 @@ function Today({ st, P, curW, today, wk, setTab, setPantalla }) {
       <div style={{ height: 12 }} />
       {done.includes(todaySes.code)
         ? <div className="row"><span className="tag ok">Completado</span><span className="sm muted">Registrado</span></div>
-        : (<><button className={"btn " + (colorOf(todaySes.code) === "run" ? "run" : "primary")} onClick={() => setTab("entrenar")}>Empezar entrenamiento</button>
-           <div style={{ height: 8 }} /><button className="btn ghost" onClick={() => setTab("entrenar")}>Registrar entrenamiento</button></>)}
+        /* Un solo botón: los dos que había hacían exactamente lo mismo
+           (`setTab("entrenar")`) y sugerían dos flujos donde solo hay uno. */
+        : <button className={"btn " + (colorOf(todaySes.code) === "run" ? "run" : "primary")} onClick={() => setTab("entrenar")}>Empezar entrenamiento</button>}
     </div>)}
 
     <NutricionHoy st={st} P={P} curW={curW} wk={wk} setPantalla={setPantalla} />
@@ -2057,7 +2072,20 @@ function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia,
     setDraft(null); setPlanningError(""); setPlanningErrorCode(""); setPlanningSyncWarning(""); setPlanningBusy("hydrate");
     setReconfig(!localWeek?.assign?.length);
     let cancelled = false;
-    void getAcceptedWeekPlan(w).then((proposal) => {
+    /* La hidratación deshabilita TODOS los botones del planificador mientras
+       corre (`disabled={!!planningBusy}`). Sin tope de tiempo, una petición que
+       no resuelve —red caída a media conexión, servidor que no contesta— dejaba
+       "Generar", "Aceptar" y "Rechazar" bloqueados para siempre, sin ningún
+       mensaje y sin forma de cancelar: el planificador entero muerto.
+
+       Leer la semana aceptada es una MEJORA sobre la copia local, no un
+       requisito: si tarda demasiado se sigue con lo que hay en el dispositivo,
+       que es exactamente lo que ya se hace cuando la petición falla. */
+    const conTope = Promise.race([
+      getAcceptedWeekPlan(w),
+      new Promise((_, rechazar) => setTimeout(() => rechazar(new Error("timeout")), 15000)),
+    ]);
+    void conTope.then((proposal) => {
       if (cancelled) return;
       hydrateAcceptedWeek(P.id, w, visibleWeekStart, proposal);
       if (proposal) {
@@ -2167,8 +2195,13 @@ function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia,
   const sp = semanaPlan(plan, w);
   const hechas = shown.filter((a) => (saved?.done || []).includes(a.code)).length;
   const proposalByDay = {};
-  const detailedSessions = draft?.source === "server" ? draft.proposal.sessions
-    : (!draft && saved?.source === "ai-rag" ? (saved.sessions || []) : []);
+  /* `?? []` y no `.sessions` a secas: una propuesta del servidor sin `sessions`
+     —o con null— hacía que el `for..of` de abajo lanzara "not iterable" en
+     pleno render y se llevara por delante la pestaña Semana entera. El
+     try/catch de dentro del bucle protege cada sesión, pero no el iterable. */
+  const detailedSessionsBruto = draft?.source === "server" ? draft.proposal?.sessions
+    : (!draft && saved?.source === "ai-rag" ? saved.sessions : null);
+  const detailedSessions = Array.isArray(detailedSessionsBruto) ? detailedSessionsBruto : [];
   /* El detalle por sesión es un extra sobre la semana, no la semana.
      `proposalSessionsToAssignments()` LANZA si una sesión no se puede situar
      (sin día, sin código, o dos el mismo día), y aquí estamos en pleno render:
@@ -2238,10 +2271,23 @@ function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia,
     {planningError && !draft && (<div className="card" role="alert" aria-live="assertive" style={{ borderColor: "var(--alert)" }}>
       <span className="tag alert">Planificador no disponible</span>
       <p className="sm" style={{ margin: "8px 0 0" }}>{planningError}</p>
-      <p className="xs muted">{yaProgramada ? "La semana aceptada sigue intacta." : "No se ha activado ninguna semana inventada."} {new Set(["CLINICAL_SAFETY", "GUARDRAIL_FAILED", "INVALID_OUTPUT"]).has(planningErrorCode) ? "Por seguridad clínica no se ofrece un plan alternativo." : "Puedes reintentar o usar expresamente el motor de reglas anterior."}</p>
+      <p className="xs muted">{yaProgramada ? "La semana aceptada sigue intacta." : "No se ha activado ninguna semana inventada."} {planningErrorCode === "CLINICAL_SAFETY" ? "Es un límite de seguridad clínica: no se ofrece un plan alternativo hasta que lo valore un profesional sanitario." : "Puedes reintentar o usar expresamente el motor de reglas anterior."}</p>
       <div className="row" style={{ marginTop: 9 }}>
         <button className="btn primary sm" style={{ flex: 1 }} onClick={gen} disabled={!!planningBusy}>Reintentar IA + RAG</button>
-        {!new Set(["CLINICAL_SAFETY", "GUARDRAIL_FAILED", "INVALID_OUTPUT"]).has(planningErrorCode) && <button className="btn ghost sm" style={{ flex: 1 }} onClick={baseline} disabled={!!planningBusy}>Usar plan base determinista</button>}
+        {/* Solo CLINICAL_SAFETY veta el plan base.
+
+            GUARDRAIL_FAILED e INVALID_OUTPUT no son diagnósticos clínicos: son
+            fallos TÉCNICOS del modelo —devolvió un JSON que no valida, o una
+            semana que no pasa los guardarraíles—. Ocultar el fallback ahí
+            dejaba al atleta sin ninguna vía para tener semana cada vez que el
+            LLM tenía un mal día, que es justo el momento en que un motor
+            determinista sirve para algo.
+
+            No se relaja ninguna protección: baseline() aplica sus PROPIOS
+            cortes clínicos (dolor ≥5, dolor en reposo, banderas) antes de
+            generar nada, y las reglas R1-R9 se validan igual. El plan base es
+            más conservador que el del modelo, no menos. */}
+        {planningErrorCode !== "CLINICAL_SAFETY" && <button className="btn ghost sm" style={{ flex: 1 }} onClick={baseline} disabled={!!planningBusy}>Usar plan base determinista</button>}
       </div>
     </div>)}
 
@@ -2282,8 +2328,13 @@ function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia,
               </div>
               {/* El estado va aquí y no en un icono suelto: leer la semana de un
                   vistazo es lo que §2 pide como acción principal. */}
-              {!draft && s && <span className={"tag " + (est === "hecha" ? "ok" : est === "omitida" ? "alert" : "")}>
-                {est === "hecha" ? "Hecho" : est === "omitida" ? "Sin registrar" : "Pendiente"}</span>}
+              {/* No se pinta en rojo de alerta un día sin registrar: saltarse
+                  una sesión recomendada no es un error, y una aplicación que
+                  dice "el plan recomienda, no obliga" no puede tratarlo como
+                  tal. El estado "libre" tiene su propia etiqueta: ahí SÍ se
+                  entrenó, aunque fuera otra cosa. */}
+              {!draft && (s || est === "libre") && <span className={"tag " + (est === "hecha" ? "ok" : est === "libre" ? "evid" : "")}>
+                {est === "hecha" ? "Hecho" : est === "libre" ? "Libre" : est === "omitida" ? "Sin registrar" : "Pendiente"}</span>}
             </div>
             <NutriLinea P={P} w={w} codes={shown.filter((a) => a.day === i).map((a) => a.code)} />
             {!draft && s && <button className="btn ghost sm" style={{ marginTop: 7 }} onClick={() => abrirDia(fecha)}>Abrir este día</button>}
@@ -2519,7 +2570,8 @@ function FichaDelDia({ P, fecha, dia, estado }) {
     <div className="between">
       <span className={"tag " + tipo}>{esGym(dia.code) ? "Fuerza" : "Carrera"} · {dia.code}</span>
       {estado === "hecha" && <span className="tag ok">Completado</span>}
-      {estado === "omitida" && <span className="tag alert">Sin registrar</span>}
+      {/* Neutro, no rojo: no haber registrado algo todavía no es una alerta. */}
+      {estado === "omitida" && <span className="tag">Sin registrar</span>}
     </div>
     <h2 style={{ margin: "9px 0 2px" }}>{det.titulo}</h2>
     <div className="mono" style={{ fontSize: 22, color: tipo === "gym" ? "var(--gym)" : "var(--run)" }}>{det.dur}′</div>
