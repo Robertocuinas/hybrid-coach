@@ -5,11 +5,15 @@ export function normalizeBaseURL(value) {
 }
 
 export class OpenAICompatibleProvider extends LLMProvider {
-  constructor({ apiKey = "", model, baseURL, fetchImpl = fetch, provider = "openai-compatible", nativeJsonMode = false, reliableStructuredOutput = false }) {
+  constructor({ apiKey = "", model, baseURL, maxTokens, fetchImpl = fetch, provider = "openai-compatible", nativeJsonMode = false, reliableStructuredOutput = false }) {
     super();
     this.apiKey = apiKey;
     this.model = model;
     this.baseURL = normalizeBaseURL(baseURL);
+    /* Valor por defecto del proveedor, tomado de la configuración. Sin esto,
+       una llamada que no pase `maxTokens` se quedaba en 1400 tokens de salida
+       por mucho que LLM_MAX_TOKENS dijera otra cosa. */
+    this.maxTokens = Number(maxTokens) > 0 ? Number(maxTokens) : undefined;
     this.fetchImpl = fetchImpl;
     this.provider = provider;
     this.nativeJsonMode = nativeJsonMode;
@@ -30,7 +34,7 @@ export class OpenAICompatibleProvider extends LLMProvider {
     const body = {
       model: this.model,
       messages: [...(system ? [{ role: "system", content: system }] : []), ...messages],
-      max_tokens: maxTokens ?? max_tokens ?? 1400,
+      max_tokens: maxTokens ?? max_tokens ?? this.maxTokens ?? 8000,
     };
     if (temperature !== undefined) body.temperature = temperature;
     const stops = stopSequences ?? stop_sequences;

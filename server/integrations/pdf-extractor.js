@@ -12,6 +12,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { presupuestoSalida } from "../ai/limits.js";
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const SCRIPT = path.join(AQUI, "extract.py");
@@ -350,7 +351,7 @@ export async function analizarFicha(texto, { provider, nombre = "documento.pdf",
   if (!provider) throw new Error("No hay proveedor de IA configurado: la ficha debe rellenarse a mano");
   const respuesta = await provider.call({
     system: SYS_PDF,
-    maxTokens: 1600,
+    maxTokens: presupuestoSalida().pdf,
     messages: [{ role: "user", content: `Archivo: ${nombre}\n\nTEXTO EXTRAÍDO:\n${texto.slice(0, maxChars)}` }],
   });
   return normalizarFicha(extraerJSON(respuesta.text), { doiDetectado });

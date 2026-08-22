@@ -31,6 +31,7 @@ import { startReconciliationJob } from "./server/jobs/reconciliation.js";
 import { aiRateLimiter, loginRateLimiter, registrationRateLimiter, requireAuth, uploadRateLimiter } from "./server/middleware/auth.js";
 import { requireTrustedOrigin, securityHeaders } from "./server/middleware/security.js";
 import { createLLMProvider, createToolRouterProvider, readEmbeddingConfig } from "./server/ai/factory.js";
+import { topeSalidaPeticion } from "./server/ai/limits.js";
 import { resolveEmbeddingConfig } from "./server/ai/instance-embeddings.js";
 import { resolveUserLLMProvider } from "./server/ai/user-provider.js";
 import { getEmbeddingStatus, validateEmbeddingStartup } from "./server/embeddings/index-state.js";
@@ -248,7 +249,10 @@ app.post("/api/ia", requireAuth, aiRateLimiter, async (req, res) => {
     const result = await provider.call({
       system: req.body?.system,
       messages: req.body?.messages || [],
-      maxTokens: Math.min(+req.body?.max_tokens || 1400, 4000),
+      /* El tope real es el del servidor (LLM_MAX_TOKENS), no un 4000 fijo: con
+         un modelo grande configurado, ese literal recortaba la respuesta a un
+         cuarto de lo que el proveedor podía dar. */
+      maxTokens: topeSalidaPeticion(req.body?.max_tokens),
       temperature: req.body?.temperature,
       responseFormat: req.body?.response_format,
       stopSequences: req.body?.stop_sequences,

@@ -4,6 +4,7 @@ import { parsearPlanSemanal, validarPlanSemanal } from "./schema.js";
 import { derivarCambiosPlan, evaluarGuardrailsPlan, GUARDRAILS_VERSION } from "./guardrails.js";
 import { construirPromptPlanificador, construirPromptReparacion, PLANNER_PROMPT_VERSION } from "./prompt.js";
 import { crearFallbackSeguro } from "./fallback.js";
+import { presupuestoSalida } from "../../ai/limits.js";
 
 const JERARQUIA = Object.freeze({ meta_analysis: 6, systematic_review: 5, rct: 4, observational: 3, position_statement: 2, narrative_review: 1, preprint: 0 });
 const GRADO = Object.freeze({ fuerte: 4, moderada: 3, debil: 2, débil: 2, practica: 1, práctica: 1 });
@@ -196,7 +197,14 @@ function validarSalida(bruto, contexto, analytics, evidence, guardrailConfig) {
  */
 export async function planificarSemana(contexto = {}, deps = {}) {
   const inicio = Date.now();
-  const { retrieve, llmProvider, maxEvidence = 12, queryConfig = {}, guardrailConfig = {}, maxTokens = 3000 } = deps;
+  const {
+    retrieve, llmProvider, maxEvidence = 12, queryConfig = {}, guardrailConfig = {},
+    /* El planificador escribe la semana entera en un solo JSON. Quedarse corto
+       aquí no degrada la respuesta: la invalida, porque un JSON truncado no
+       parsea y se tira una generación de casi un minuto. El presupuesto sale
+       de limits.js y sube con LLM_MAX_TOKENS. */
+    maxTokens = presupuestoSalida().planificador,
+  } = deps;
   const comunes = { analytics: null, queries: [], evidence: [], validation: null, provider: null, model: null, modelCalls: 0 };
   if (typeof retrieve !== "function" || !llmProvider || !contexto.profile || !contexto.plan || !contexto.week) {
     return respuestaFallback(inicio, "invalid", "invalid_context", contexto, comunes, "Se requieren profile, plan, week, retrieve y llmProvider.");

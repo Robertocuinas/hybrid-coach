@@ -4,6 +4,7 @@ import { aiRateLimiter, requireAuth } from "../middleware/auth.js";
 import { decryptApiKey, encryptApiKey } from "../ai/settings-crypto.js";
 import { createUserLLMProvider, publicAISettings, validateUserLLMSettings } from "../ai/user-provider.js";
 import { deleteAISettings, findAISettingsByUser, saveAISettings, updateAISettingsTest } from "../db/repositories/aiSettings.js";
+import { presupuestoSalida } from "../ai/limits.js";
 
 /* El detalle que devuelve el proveedor en un 400 describe QUÉ campo de la
    petición no le vale, y sin él "ha rechazado la configuración" es imposible
@@ -71,7 +72,7 @@ export function createAISettingsRouter({ db = pool, fetchImpl = fetch } = {}) {
       const result = await provider.call({
         system: "Responde únicamente OK.",
         messages: [{ role: "user", content: "Prueba de conexión" }],
-        maxTokens: 512,
+        maxTokens: presupuestoSalida().prueba,
       });
       if (usesStoredKey) await updateAISettingsTest(userId, true, db);
       res.json({ ok: true, provider: result.provider, model: result.model });

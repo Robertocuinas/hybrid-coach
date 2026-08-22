@@ -10,6 +10,7 @@ import { OpenAICompatibleRerankProvider } from "./providers/rerank/openai-compat
 import { NoopRerankProvider } from "./providers/rerank/noop.js";
 import { NeedleToolRouterProvider } from "./providers/tool-routing/needle.js";
 import { assertEmbeddingProvider, assertLLMProvider, assertRerankProvider, assertToolRouterProvider } from "./providers/types.js";
+import { topeSalida } from "./limits.js";
 
 const PROVIDERS = new Set(["anthropic", "openai", "openai-compatible", "ollama"]);
 const EMBEDDING_PROVIDERS = new Set(["voyage", "openai", "openai-compatible"]);
@@ -38,8 +39,14 @@ export function readLLMConfig(env = process.env) {
   if (!provider) return { enabled: false };
   if (!PROVIDERS.has(provider)) throw new Error(`LLM_PROVIDER desconocido: ${provider}`);
   const model = required(env.LLM_MODEL, "LLM_MODEL", provider);
-  const maxTokens = Number(env.LLM_MAX_TOKENS || 1400);
-  if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 100000) throw new Error("LLM_MAX_TOKENS no es válido");
+  /* El tope de salida vive en limits.js: es el mismo número que usan el
+     planificador, el coach y /api/ia, y ahí se puede subir de una vez para
+     todos en lugar de perseguirlo por seis ficheros. */
+  if (env.LLM_MAX_TOKENS !== undefined && env.LLM_MAX_TOKENS !== "") {
+    const bruto = Number(env.LLM_MAX_TOKENS);
+    if (!Number.isFinite(bruto) || bruto < 1 || bruto > 200000) throw new Error("LLM_MAX_TOKENS no es válido");
+  }
+  const maxTokens = topeSalida(env);
   const apiKey = ["openai-compatible", "ollama"].includes(provider) ? String(env.LLM_API_KEY || "") : required(env.LLM_API_KEY, "LLM_API_KEY", provider);
   const baseURL = provider === "openai-compatible"
     ? validBaseURL(required(env.LLM_BASE_URL, "LLM_BASE_URL", provider))

@@ -2,6 +2,7 @@ import pool from "../db/pool.js";
 import { findAISettingsByUser } from "../db/repositories/aiSettings.js";
 import { createLLMProvider } from "./factory.js";
 import { decryptApiKey } from "./settings-crypto.js";
+import { topeSalida } from "./limits.js";
 
 export const USER_LLM_PROVIDERS = new Set(["openai", "anthropic"]);
 
@@ -41,7 +42,11 @@ export function createUserLLMProvider({ provider, model, apiKey }, { fetchImpl =
     LLM_PROVIDER: valid.provider,
     LLM_MODEL: valid.model,
     LLM_API_KEY: valid.apiKey,
-    LLM_MAX_TOKENS: "1400",
+    /* El mismo tope que el proveedor del servidor. Estaba fijado a 1400: quien
+       configuraba su propia clave desde Ajustes quedaba con una ventana de
+       salida cuatro veces más estrecha que la del resto de la aplicación, y el
+       planificador le devolvía JSON cortado. */
+    LLM_MAX_TOKENS: String(topeSalida()),
   }, { fetchImpl: timedFetch(timeoutMs, fetchImpl) });
 }
 

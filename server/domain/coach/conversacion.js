@@ -6,9 +6,14 @@
    se convierte en "tenía molestias"— y esos matices son justo lo que cambia
    una recomendación de entrenamiento. El resumen solo sustituye a lo viejo. */
 import { pool } from "../../db/repositories/_helpers.js";
+import { presupuestoEntrada, presupuestoSalida } from "../../ai/limits.js";
 
-export const UMBRAL_RESUMEN = Number(process.env.CHAT_RESUMEN_UMBRAL || 30);
-export const LITERALES = Number(process.env.CHAT_TURNOS_LITERALES || 12);
+/* Cuántos turnos viajan literalmente y a partir de cuántos se compacta. Ambos
+   viven en limits.js con el resto del presupuesto de contexto: con modelos de
+   ventana grande, resumir a los 30 mensajes tirando todo salvo los últimos 12
+   era perder matiz clínico sin ninguna necesidad. */
+export const UMBRAL_RESUMEN = presupuestoEntrada().umbralResumen;
+export const LITERALES = presupuestoEntrada().turnosLiterales;
 
 const SYS_RESUMEN = `Resumes la conversación previa entre un atleta y su entrenador para no perder contexto al continuar.
 
@@ -97,7 +102,7 @@ export async function compactarSiHaceFalta(conversationId, { db = pool, llmProvi
 
   const respuesta = await llmProvider.call({
     system: SYS_RESUMEN,
-    maxTokens: 400,
+    maxTokens: presupuestoSalida().resumen,
     messages: [{
       role: "user",
       content: previo[0]?.resumen

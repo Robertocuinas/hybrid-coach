@@ -3,10 +3,16 @@ import { LLMProvider, normalizeStopReason, readProviderResponse } from "./types.
 const ENDPOINT = "https://api.anthropic.com/v1/messages";
 
 export class AnthropicProvider extends LLMProvider {
-  constructor({ apiKey, model, fetchImpl = fetch }) {
+  /* `maxTokens` llega de la configuración (limits.js) y actúa como valor por
+     defecto del proveedor. Antes se descartaba en el constructor y cada
+     llamada sin `maxTokens` explícito caía en un literal de 1400 escrito para
+     un modelo pequeño, con lo que subir LLM_MAX_TOKENS no tenía ningún efecto
+     sobre las tareas que no lo pasaban a mano. */
+  constructor({ apiKey, model, maxTokens, fetchImpl = fetch }) {
     super();
     this.apiKey = apiKey;
     this.model = model;
+    this.maxTokens = Number(maxTokens) > 0 ? Number(maxTokens) : undefined;
     this.fetchImpl = fetchImpl;
   }
 
@@ -28,7 +34,7 @@ export class AnthropicProvider extends LLMProvider {
   async call({ system, messages = [], maxTokens, max_tokens, temperature: _temperature, stopSequences, stop_sequences }) {
     const body = {
       model: this.model,
-      max_tokens: maxTokens ?? max_tokens ?? 1400,
+      max_tokens: maxTokens ?? max_tokens ?? this.maxTokens ?? 8000,
       system,
       messages,
     };

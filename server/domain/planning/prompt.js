@@ -1,6 +1,7 @@
 import { WEEKLY_PLAN_SCHEMA_VERSION, MODALIDADES, TIPOS_SESION, PRIORIDADES, TIPOS_CAMBIO, diaDeFecha } from "./schema.js";
 import { DEFAULT_GUARDRAIL_CONFIG, derivarCambiosPlan, sesionesBaseActivas } from "./guardrails.js";
 import { distribuirSesiones } from "./distribucion.js";
+import { presupuestoEntrada } from "../../ai/limits.js";
 
 export const PLANNER_PROMPT_VERSION = "weekly-planner.7";
 
@@ -87,22 +88,19 @@ function cabeceraChunk(chunk) {
   ].filter(Boolean).join(" · ");
 }
 
-/* Recorte por fragmento. Estaba en 4.000 caracteres, que con 12 fragmentos son
-   48 KB de un prompt en el que la evidencia ya era el término dominante.
+/* Recorte de texto por fragmento de evidencia.
 
-   Los datos de producción (2026-08-17) dejaron claro dónde está el tiempo: el
-   retrieval tarda 0,2-0,9 s y la llamada al modelo entre 33 y 68 s. Con el
-   recorte anterior una generación legítima no cabía en el timeout de 45 s del
-   proveedor y se abortaba a medias.
+   Historia corta: 4.000 caracteres eran demasiados cuando el timeout del
+   proveedor estaba en 45 s, así que se bajó a 1.200. Pero el timeout ya es
+   configurable y está en 300 s en producción, y 1.200 caracteres son unas 200
+   palabras: a menudo se cortaba el fragmento justo antes del dato que
+   sostenía la cita, y el modelo citaba un párrafo del que solo había visto la
+   introducción.
 
-   1.200 caracteres siguen siendo unas 200 palabras por fragmento, suficiente
-   para sostener una cita: no se recorta el NÚMERO de fragmentos, que es lo que
-   sostiene la cobertura por consulta, solo cuánto texto entra de cada uno.
-   Configurable porque el punto óptimo depende del corpus. */
-export const PLANNER_CHARS_POR_CHUNK = Math.max(
-  300,
-  Number(process.env.PLANNER_EVIDENCE_CHARS || 1200) || 1200,
-);
+   El valor vive ahora en limits.js con el resto del presupuesto de contexto.
+   Lo que NO se recorta nunca es el número de fragmentos: eso es lo que
+   sostiene la cobertura por consulta. */
+export const PLANNER_CHARS_POR_CHUNK = presupuestoEntrada().evidenciaChars;
 
 export function formatearEvidenciaPlanificador(chunks = [], charsPorChunk = PLANNER_CHARS_POR_CHUNK) {
   if (!chunks.length) return "(sin evidencia)";
@@ -320,7 +318,9 @@ export function construirPromptReparacion({ errores, intentoAnterior }) {
       "Devuelve otra vez únicamente JSON completo.",
       JSON.stringify(errores, null, 2),
       "PROPUESTA_RECHAZADA",
-      String(intentoAnterior || "").slice(0, 20_000),
+      /* El intento rechazado entero, salvo que sea desmesurado. Recortarlo a
+         20 KB dejaba al modelo reparando a ciegas la parte que no veía. */
+      String(intentoAnterior || "").slice(0, presupuestoEntrada().reparacionChars),
     ].join("\n"),
   };
 }

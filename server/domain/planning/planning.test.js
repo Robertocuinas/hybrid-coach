@@ -492,33 +492,52 @@ test("la base activa del prompt es la que usa el diff de guardarraíles", async 
   assert.deepEqual(base.map((b) => b.session_key), derivada.map((c) => c.session_key));
 });
 
-/* Con los datos de producción en la mano (retrieval 0,2-0,9 s frente a 33-68 s
-   de modelo) el tamaño del prompt es la única palanca de latencia que queda del
-   lado del pipeline. 12 fragmentos a 4.000 caracteres eran 48 KB solo de
-   evidencia, y una generación legítima no cabía en el timeout del proveedor.
+/* El recorte por fragmento es un PRESUPUESTO, no un número mágico: se recorta
+   cuánto texto entra de cada fragmento y nunca cuántos fragmentos entran, que
+   es lo que sostiene la cobertura por consulta.
 
-   El test fija el presupuesto, no el número exacto: lo que no puede volver a
-   pasar es que la evidencia crezca sin techo. */
+   El valor concreto vive en server/ai/limits.js y se ajusta por entorno
+   (PLANNER_EVIDENCE_CHARS). Este test fija las dos invariantes que de verdad
+   importan —el número de fragmentos se conserva y cada uno se corta al
+   presupuesto vigente— sin clavar una cifra que impida subirla para un modelo
+   de ventana grande. */
 test("el prompt acota el texto por fragmento sin recortar cuántos hay", async () => {
   const { construirPromptPlanificador, formatearEvidenciaPlanificador, PLANNER_CHARS_POR_CHUNK } = await import("./prompt.js");
+  const { presupuestoEntrada } = await import("../../ai/limits.js");
   const evidence = Array.from({ length: 12 }, (_, i) => ({
-    id: `c${i}`, titulo: `Paper ${i}`, texto: "x".repeat(5000),
+    id: `c${i}`, titulo: `Paper ${i}`, texto: "x".repeat(50_000),
   }));
 
   const bloque = formatearEvidenciaPlanificador(evidence);
-  assert.ok(PLANNER_CHARS_POR_CHUNK <= 2000, "el recorte por fragmento se mantiene acotado");
+  assert.ok(PLANNER_CHARS_POR_CHUNK >= 300, "el presupuesto no puede degradar a un fragmento inservible");
   assert.equal((bloque.match(/x+/g) || []).length, 12, "siguen entrando los doce fragmentos");
   for (const texto of bloque.match(/x+/g)) {
     assert.equal(texto.length, PLANNER_CHARS_POR_CHUNK, "cada uno recortado al presupuesto");
   }
+
+  /* El presupuesto se puede subir y bajar por entorno, y se acota por los dos
+     extremos: ni un valor absurdo deja el fragmento sin texto ni uno enorme
+     manda el corpus entero. */
+  assert.equal(presupuestoEntrada({ PLANNER_EVIDENCE_CHARS: "8000" }).evidenciaChars, 8000);
+  assert.equal(presupuestoEntrada({ PLANNER_EVIDENCE_CHARS: "1" }).evidenciaChars, 300);
+  assert.equal(presupuestoEntrada({ PLANNER_EVIDENCE_CHARS: "999999" }).evidenciaChars, 40_000);
+  assert.equal(presupuestoEntrada({ PLANNER_EVIDENCE_CHARS: "no-es-un-numero" }).evidenciaChars, 3000);
+
+  /* Un recorte explícito manda sobre el presupuesto: es lo que permite bajarlo
+     para un modelo pequeño sin tocar la configuración global. */
+  const corto = formatearEvidenciaPlanificador(evidence, 400);
+  for (const texto of corto.match(/x+/g)) assert.equal(texto.length, 400);
 
   const prompt = construirPromptPlanificador({
     contexto: { plan: { id: "p" }, week: { id: "w" }, profile: {} },
     analytics: { ventana7d: { km: 30 } }, queries: [], evidence,
     semana: { start: "2026-08-17", end: "2026-08-23" }, disponibilidad: [0, 2, 4],
   });
+  /* La evidencia domina el prompt, así que el techo se expresa en función del
+     presupuesto: lo que no puede pasar es que crezca por otro lado. */
+  const techo = PLANNER_CHARS_POR_CHUNK * evidence.length + 30_000;
   const total = prompt.system.length + prompt.messages[0].content.length;
-  assert.ok(total < 30_000, `el prompt completo debe caber en el presupuesto, son ${total} caracteres`);
+  assert.ok(total < techo, `el prompt completo debe caber en el presupuesto, son ${total} caracteres`);
 
   /* Los dos bloques grandes van sin sangría; los deterministas, con ella,
      porque el modelo tiene que copiarlos con precisión. */

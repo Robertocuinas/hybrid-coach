@@ -12,6 +12,7 @@ import {
   compactarSiHaceFalta, guardarMensaje, historialParaPrompt, obtenerOCrearConversacion,
 } from "./conversacion.js";
 import { createRecommendation } from "../../db/repositories/aiConversations.js";
+import { presupuestoSalida } from "../../ai/limits.js";
 
 /* Preguntas que no piden evidencia científica, sino un dato del propio atleta.
    Aplicarles el umbral de "sin evidencia" sería absurdo: "¿cuánto corrí esta
@@ -97,7 +98,7 @@ export async function responder(profileId, consulta, deps) {
 
   const respuesta = await llmProvider.call({
     system: contexto.system,
-    maxTokens: 1000,
+    maxTokens: deps.maxTokens ?? presupuestoSalida().coach,
     messages: [...historial, { role: "user", content: consulta }],
   });
 

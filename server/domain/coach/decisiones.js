@@ -10,6 +10,7 @@ import { recuperar } from "../../rag/retrieval.js";
 import { cargarContexto } from "../../db/repositories/coachContext.js";
 import { contextoParaRetrieval } from "./context.js";
 import { formatearEvidencia, SYS_DECISIONES, SIN_EVIDENCIA_TEXTO } from "./prompt.js";
+import { presupuestoSalida } from "../../ai/limits.js";
 import { validarPropuesta } from "./validacion.js";
 import { guardarDecisionConCitas } from "../../db/repositories/trainingPlans.js";
 import { createRecommendation } from "../../db/repositories/aiConversations.js";
@@ -83,7 +84,7 @@ export async function decisionesIA(profileId, deps) {
 
   const respuesta = await llmProvider.call({
     system: SYS_DECISIONES,
-    maxTokens: 2400,
+    maxTokens: presupuestoSalida().decisiones,
     messages: [{
       role: "user",
       content: [
