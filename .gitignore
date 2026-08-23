@@ -17,3 +17,5 @@ migration/parsed/
 migration/transformed/
 migration/backups/
 .tmp-pgtest/
+hc_cookie.txt
+*.cookie
