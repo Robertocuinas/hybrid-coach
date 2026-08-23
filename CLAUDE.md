@@ -136,6 +136,20 @@ Una sustitución no cambia el patrón ni la rutina: escribe el nombre elegido en
 8. **Datos de salud.** Peso, lesiones, dolor y sensaciones son datos sensibles. No los
    escribas en logs, no los mandes a servicios de terceros que no estén ya en el diseño.
 
+9. **El presupuesto de tokens tiene una sola fuente: `server/ai/limits.js`.**
+   Nunca escribas un `maxTokens` literal en una llamada al modelo. Los topes se derivan de
+   `LLM_MAX_TOKENS` a través de `presupuestoEntrada()`, `presupuestoSalida()`, `topeSalida()`
+   y `topeSalidaPeticion()`. Antes había siete números mágicos repartidos por el servidor
+   (1400, 1000, 400, 2400, 1600, 512, 3000) y todos correspondían a un modelo pequeño: subir
+   el modelo no subía nada. Si necesitas más margen, sube la variable de entorno, no el código.
+
+10. **El plan recomienda; nunca excluye.**
+    Registrar un entrenamiento debe ser posible **siempre**: cualquier día, sin semana
+    generada, en día de descanso, con un código que no está en el plan (código `LIBRE`), o
+    fuera del rango del plan. El estado de día `libre` en `src/agenda.js` existe justo para
+    eso. Esto es flexibilidad del **registro** —lo que ya ocurrió—, nunca de la prescripción:
+    los guardarraíles clínicos del punto 5 siguen siendo `if` duros y no se relajan.
+
 ## 5. Convenciones de estilo
 
 - **Comentarios en español**, en el tono del código existente: explican *por qué*, no *qué*.
