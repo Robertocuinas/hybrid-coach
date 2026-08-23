@@ -1,5 +1,18 @@
 import pkg from "pg";
-const { Pool } = pkg;
+const { Pool, types } = pkg;
+
+/* Una columna `date` es un día del calendario, no un instante. node-pg la
+   convierte por defecto a un Date de JavaScript interpretado en la zona horaria
+   del proceso, y al serializar a JSON sale como instante UTC. En España
+   (UTC+1/+2) eso significaba que un entrenamiento registrado el 25 volvía de la
+   API como "2026-12-24T23:00:00.000Z": el día anterior. El usuario registraba
+   una tirada el viernes y la aplicación se la pintaba el jueves.
+
+   El resto del sistema ya trata las fechas como cadenas "YYYY-MM-DD" (helper
+   `iso()` en el cliente, `src/agenda.js` entero), así que lo coherente es que la
+   capa de datos devuelva exactamente eso y no un instante con zona horaria.
+   1082 es el OID del tipo `date` en PostgreSQL. */
+types.setTypeParser(1082, (valor) => valor);
 
 /* La red privada de Railway no necesita TLS entre servicios del mismo proyecto,
    pero cualquier conexión externa (proxy público de Railway, Postgres local con
