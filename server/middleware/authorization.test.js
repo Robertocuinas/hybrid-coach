@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
 import { findOwnedProfile } from "../db/repositories/athleteProfiles.js";
+import { esUUID } from "./authorization.js";
 
 test("un usuario no puede resolver el athlete_profile_id de otro usuario", async () => {
   const db = new PGlite();
@@ -23,4 +25,18 @@ test("un usuario no puede resolver el athlete_profile_id de otro usuario", async
   assert.equal(own.nombre, "Privado");
   assert.equal(foreign, null);
   await db.close();
+});
+
+test("esUUID acepta UUID v4 reales (regresión de T-01: el regex tenía un grupo de más)", () => {
+  for (let i = 0; i < 1000; i++) assert.equal(esUUID(randomUUID()), true);
+});
+
+test("esUUID rechaza formatos inválidos sin lanzar", () => {
+  assert.equal(esUUID(""), false);
+  assert.equal(esUUID(null), false);
+  assert.equal(esUUID(undefined), false);
+  assert.equal(esUUID("null"), false);
+  assert.equal(esUUID("1234-5678"), false);
+  assert.equal(esUUID("xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"), false);
+  assert.equal(esUUID("11111111-1111-1111-1111-111111111111-extra"), false);
 });

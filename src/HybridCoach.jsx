@@ -1162,7 +1162,7 @@ function nutricionDia(st, P, w, dayIdx) {
 /* Llamada única a la API. Dentro de un artifact de claude.ai esta petición se
    intercepta y no necesita API key; fuera de ahí fallará, y todo lo que la usa
    tiene un camino alternativo sin IA.                                        */
-async function llamarIA({ system, messages, max_tokens = 1400 }) {
+async function llamarIA({ system, messages, max_tokens }) {
   /* Dentro de un artifact de claude.ai la petición a la API se intercepta sola.
      Desplegada en un servidor, va por /api/ia y la clave vive en el servidor:
      así no se puede leer desde el navegador de quien use la aplicación.      */
@@ -1284,7 +1284,10 @@ REGLAS
 - En "aplicacion" no repitas el resumen: escribe qué haría un entrenador distinto por haber leído esto.`;
 
 async function analizarPDF(texto, nombreArchivo) {
-  const txt = await llamarIA({ system: SYS_PDF, max_tokens: 1600,
+  /* Sin max_tokens: el servidor aplica su propio presupuesto (server/ai/limits.js),
+     que es la única fuente de verdad. Antes venía con 1600 literal, pero el
+     presupuesto de PDF ya vive en limits.js y el servidor lo impone en /api/ia. */
+  const txt = await llamarIA({ system: SYS_PDF,
     messages: [{ role: "user", content: "Archivo: " + nombreArchivo + "\n\nTEXTO EXTRAÍDO:\n" + texto }] });
   const j = extraerJSON(txt);
   return normRef({ ...j, origen: "pdf", archivo: nombreArchivo, revisado: false });

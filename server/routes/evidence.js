@@ -3,17 +3,14 @@
    desde PostgreSQL. Nunca se acepta un bucket/key enviado por el navegador. */
 import express from "express";
 import { requireAuth } from "../middleware/auth.js";
-import { requireActiveProfile } from "../middleware/authorization.js";
+import { requireActiveProfile, esUUID } from "../middleware/authorization.js";
 import { findReviewedChunkEvidence } from "../db/repositories/documents.js";
 import { createStorageClient, signedURLTTL } from "../integrations/storage/r2.js";
 
 const router = express.Router();
 router.use(requireAuth, requireActiveProfile);
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const storage = createStorageClient();
-
-export const isValidChunkId = (value) => UUID.test(String(value || ""));
+export const isValidChunkId = (value) => esUUID(value);
 
 export function evidenceDTO(row) {
   return {
@@ -53,6 +50,7 @@ router.get("/chunks/:chunkId/pdf-url", async (req, res, next) => {
     const chunk = await findReviewedChunkEvidence(req.params.chunkId);
     if (!chunk) return res.status(404).json({ ok: false, message: "Fragmento no encontrado" });
     if (!chunk.storage_key) return res.status(404).json({ ok: false, message: "Esta referencia no tiene PDF asociado" });
+    const storage = createStorageClient();
     if (!storage) return res.status(503).json({ ok: false, message: "El almacenamiento de PDFs no está configurado" });
     const expiresIn = signedURLTTL();
     const url = await storage.urlFirmada(chunk.storage_key, { expiresIn });

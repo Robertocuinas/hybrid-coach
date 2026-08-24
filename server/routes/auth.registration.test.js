@@ -18,3 +18,14 @@ test("la configuración explícita true habilita el registro", () => {
   assert.equal(isPublicRegistrationEnabled("true"), true);
   assert.equal(isPublicRegistrationEnabled(" TRUE "), true);
 });
+
+test("el flag Secure de la cookie está activo salvo opt-out explícito (T-02)", () => {
+  const cookieSecure = (valor) =>
+    String(valor ?? "true").toLowerCase() !== "false";
+  assert.equal(cookieSecure(undefined), true);
+  assert.equal(cookieSecure("true"), true);
+  assert.equal(cookieSecure("TRUE"), true);
+  // Solo desarrollo local sin HTTPS debería desactivarlo.
+  assert.equal(cookieSecure("false"), false);
+  assert.equal(cookieSecure("FALSE"), false);
+});

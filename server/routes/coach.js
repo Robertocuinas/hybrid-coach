@@ -21,6 +21,12 @@ import { cargarContexto } from "../db/repositories/coachContext.js";
 const router = express.Router();
 router.use(requireAuth, requireActiveProfile);
 
+/* Tope de longitud de cualquier texto libre que entra por el chat. Sin esto,
+   la consulta podía llegar entera (hasta el límite de cuerpo de 2mb) al prompt
+   del modelo y a la base, saltándose la contabilidad de tokens de limits.js.
+   Alineado con /route (l.66), que ya recorta a 1000. */
+const TOPE_CONSULTA = 1000;
+
 /* Los proveedores se crean una sola vez por proceso. */
 const perezoso = (fabrica) => {
   let valor = null, iniciado = false;
@@ -74,7 +80,7 @@ router.post("/route", aiRateLimiter, async (req, res, next) => {
 
 router.post("/chat", aiRateLimiter, async (req, res, next) => {
   try {
-    const consulta = String(req.body?.consulta || "").trim();
+    const consulta = String(req.body?.consulta || "").trim().slice(0, TOPE_CONSULTA);
     if (!consulta) return res.status(400).json({ ok: false, message: "Falta la consulta" });
     const deps = await dependencias(req.auth.userId);
     if (!deps.llmProvider) return res.status(503).json({ ok: false, message: "Este servidor no tiene proveedor de IA configurado" });

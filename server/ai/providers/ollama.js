@@ -1,7 +1,7 @@
 import { LLMProvider, normalizeStopReason, readProviderResponse } from "./types.js";
 
 export class OllamaProvider extends LLMProvider {
-  constructor({ model, baseURL = "http://127.0.0.1:11434", maxTokens = 1400, thinking = false, keepAlive = "5m", fetchImpl = fetch }) {
+  constructor({ model, baseURL = "http://127.0.0.1:11434", maxTokens = 8000, thinking = false, keepAlive = "5m", fetchImpl = fetch }) {
     super();
     this.model = model;
     this.baseURL = String(baseURL).replace(/\/+$/, "");

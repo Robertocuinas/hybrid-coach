@@ -20,7 +20,14 @@ export function isPublicRegistrationEnabled(value) {
   return String(value).trim().toLowerCase() === "true";
 }
 const registrationEnabled = isPublicRegistrationEnabled(process.env.REGISTRATION_ENABLED);
-const cookieSecurityOptions = () => ({ httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax", path: "/" });
+/* El flag `Secure` de la cookie de sesión no depende de NODE_ENV: antes
+   valía `process.env.NODE_ENV === "production"`, y como esa variable no
+   estaba documentada en ningún despliegue, quien seguía .env.example tenía
+   la cookie viajando sin `Secure`. Ahora `Secure` está activo salvo opt-out
+   explícito en desarrollo local (COOKIE_SECURE=false), de modo que producción
+   siempre cifra la cookie por transporte. */
+const cookieSecure = String(process.env.COOKIE_SECURE ?? "true").toLowerCase() !== "false";
+const cookieSecurityOptions = () => ({ httpOnly: true, secure: cookieSecure, sameSite: "lax", path: "/" });
 const cookieOptions = () => ({ ...cookieSecurityOptions(), maxAge: ttlDays * 86400_000 });
 const argon2Options = { algorithm: Algorithm.Argon2id, memoryCost: 19_456, timeCost: 2, parallelism: 1 };
 

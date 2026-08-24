@@ -21,10 +21,9 @@ import {
   MasterPlanRequestError,
 } from "../domain/planning/masterPlanApplication.js";
 import { aiRateLimiter, requireAuth } from "../middleware/auth.js";
-import { requireActiveProfile } from "../middleware/authorization.js";
+import { requireActiveProfile, esUUID } from "../middleware/authorization.js";
 
 const router = express.Router();
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 router.use(requireAuth, requireActiveProfile);
 
@@ -32,7 +31,7 @@ const profileId = (req) => req.auth.athleteProfileId;
 
 const proposalId = (req) => {
   const value = String(req.params.id || "");
-  if (!UUID.test(value)) throw new PlanningRequestError("Identificador de propuesta no válido.", { code: "INVALID_PROPOSAL_ID" });
+  if (!esUUID(value)) throw new PlanningRequestError("Identificador de propuesta no válido.", { code: "INVALID_PROPOSAL_ID" });
   return value;
 };
 
