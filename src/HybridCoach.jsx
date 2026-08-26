@@ -1728,6 +1728,10 @@ function Wizard({ st, P, update, notify, today, onClose, setTab, onLogout }) {
   const banderas = (f.banderas || []).filter((b) => b !== "Ninguna");
 
   const guardar = async () => {
+    // 13.3 — La fecha de carrera define el horizonte del plan. Sin ella no hay
+    // nada que generar, así que no se invoca al planificador (POST /api/planning/master)
+    // y se avisa antes en vez de fallar en silencio.
+    if (!f.fechaCarrera) return notify("Indica la fecha de la carrera antes de generar el plan: define cuántas semanas hay.");
     if (comp.pct < 100) return notify("Faltan " + comp.faltan.length + " respuestas necesarias: " + comp.faltan.slice(0, 3).map((q) => q.l).join(", "));
     let plan, fuente;
     try {
@@ -5108,6 +5112,9 @@ function Ajustes({ st, P, update, notify, onClose, setPantalla, today, onLogout,
   };
   const [confReg, setConfReg] = useState(false);
   const regenerar = async () => { if (!confReg) { setConfReg(true); return; }
+    // 13.3 — Sin fecha de carrera no se genera/regenera el plan (mismo criterio
+    // que el alta del Wizard): se avisa y no se llama a POST /api/planning/master.
+    if (!P.perfil?.fechaCarrera) return notify("Indica la fecha de la carrera en el perfil antes de generar el plan.");
     let plan, fuente;
     try {
       const res = await createMasterPlan();
