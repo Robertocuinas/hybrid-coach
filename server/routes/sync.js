@@ -207,9 +207,51 @@ export async function replaceProfileState(client, profileId, snapshot) {
     }
   }
 
-  // Durante dual write localStorage es la fuente de verdad: el historial se reemplaza
-  // dentro de la misma transacción y las tablas detalle caen por ON DELETE CASCADE.
-  await client.query(`DELETE FROM completed_sessions WHERE athlete_profile_id=$1`, [profileId]);
+  // 16.4 — MITIGACIÓN DEL BUG #4 (sync borraba todo el historial del servidor).
+  // Durante el dual-write el cliente es fuente de verdad para LO QUE ÉL CONOCE,
+  // pero el servidor puede tener sesiones anotadas por otra vía (otro
+  // dispositivo, ingesta Strava o registro directo en el servidor). Antes, el
+  // DELETE masivo borraba ese historial ajeno en cada sincronización. Ahora el
+  // borrado es SELECTIVO por clave natural (fecha + código de sesión): solo se
+  // eliminan las sesiones que este cliente está reenviando, y se reinsertan; lo
+  // que el servidor tenga y este cliente no conoce se respeta. El borrado
+  // selectivo es idempotente: reenviar el mismo snapshot no crea duplicados.
+  const runningKeys = (wrapper.running || []).map((run) => ({
+    fecha: run.date ?? run.fecha ?? null,
+    codigo: run.session_code ?? run.codigo_sesion ?? null,
+  }));
+  const strengthGroups = new Map();
+  for (const set of wrapper.strength || []) {
+    const key = `${set.date ?? set.fecha ?? ""}|${set.session ?? set.codigo_sesion ?? "GYM"}`;
+    if (!strengthGroups.has(key)) strengthGroups.set(key, []);
+    strengthGroups.get(key).push(set);
+  }
+  const strengthKeys = [...strengthGroups.keys()].map((key) => {
+    const [fecha, codigo] = key.split("|");
+    return { fecha, codigo };
+  });
+  /* Borrado selectivo de carrera: solo las sesiones cuyo (fecha, código) el
+     cliente reenvía. USING enlaza con running_sessions para leer el código. */
+  if (runningKeys.length) {
+    await client.query(`
+      DELETE FROM completed_sessions cs
+      USING running_sessions rs
+      WHERE cs.id = rs.completed_session_id
+        AND cs.athlete_profile_id = $1
+        AND (cs.fecha, rs.codigo_sesion) IN (SELECT * FROM unnest($2::date[], $3::text[]))`,
+      [profileId, runningKeys.map((k) => k.fecha), runningKeys.map((k) => k.codigo)]);
+  }
+  /* Igual para fuerza: el código vive en strength_sessions. */
+  if (strengthKeys.length) {
+    await client.query(`
+      DELETE FROM completed_sessions cs
+      USING strength_sessions ss
+      WHERE cs.id = ss.completed_session_id
+        AND cs.athlete_profile_id = $1
+        AND (cs.fecha, ss.codigo_sesion) IN (SELECT * FROM unnest($2::date[], $3::text[]))`,
+      [profileId, strengthKeys.map((k) => k.fecha), strengthKeys.map((k) => k.codigo)]);
+  }
+
   for (const run of wrapper.running || []) {
     const completed = await client.query(`INSERT INTO completed_sessions
       (athlete_profile_id,planned_session_id,fecha,tipo,semana)
@@ -227,13 +269,6 @@ export async function replaceProfileState(client, profileId, snapshot) {
       numberOrNull(run.desnivel), numberOrNull(run.cadencia), intOrNull(run.rpe), intOrNull(run.dolor),
       run.notas ?? null, source(run.source ?? run.origen), run.external_id ? String(run.external_id) : null,
     ]);
-  }
-
-  const strengthGroups = new Map();
-  for (const set of wrapper.strength || []) {
-    const key = `${set.date ?? set.fecha ?? ""}|${set.session ?? set.codigo_sesion ?? "GYM"}`;
-    if (!strengthGroups.has(key)) strengthGroups.set(key, []);
-    strengthGroups.get(key).push(set);
   }
   for (const [key, sets] of strengthGroups) {
     const [date, code] = key.split("|");
@@ -256,7 +291,13 @@ export async function replaceProfileState(client, profileId, snapshot) {
     }
   }
 
-  await client.query(`DELETE FROM feedback_logs WHERE athlete_profile_id=$1`, [profileId]);
+  // 16.4 — feedback_logs: solo se reemplaza lo que el cliente reenvía por
+  // fecha, no todo el historial. Protege los checkins que el servidor tenga
+  // anotados por otra vía (p. ej. otro dispositivo).
+  const feedbackFechas = [...new Set((wrapper.checkins || []).map((row) => row.date ?? row.fecha).filter(Boolean))];
+  if (feedbackFechas.length) {
+    await client.query(`DELETE FROM feedback_logs WHERE athlete_profile_id=$1 AND fecha = ANY($2)`, [profileId, feedbackFechas]);
+  }
   for (const row of wrapper.checkins || []) {
     await client.query(`INSERT INTO feedback_logs
       (athlete_profile_id,fecha,semana,rpe,sensacion,dolor,zona_dolor,tipo_dolor,cuando_aparece,energia,comentario)
@@ -266,13 +307,19 @@ export async function replaceProfileState(client, profileId, snapshot) {
       numberOrNull(row.energia), row.comentario ?? null]);
   }
 
-  await client.query(`DELETE FROM recovery_logs WHERE athlete_profile_id=$1`, [profileId]);
+  // 16.4 — recovery_logs: upsert por (athlete_profile_id, fecha), su clave
+  // única. Nunca barre el historial ajeno: una recuperación del servidor
+  // ausente del snapshot del cliente se conserva.
   const recoveryByDate = new Map((wrapper.recovery || []).map((row) => [row.date ?? row.fecha, row]));
   for (const [date, row] of recoveryByDate) {
     if (!date) continue;
     await client.query(`INSERT INTO recovery_logs
       (athlete_profile_id,fecha,horas_sueno,calidad_sueno,fatiga,agujetas,estres,motivacion,dolor)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [profileId, date, numberOrNull(row.sueno ?? row.horas_sueno),
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      ON CONFLICT (athlete_profile_id,fecha) DO UPDATE SET
+        horas_sueno=EXCLUDED.horas_sueno, calidad_sueno=EXCLUDED.calidad_sueno,
+        fatiga=EXCLUDED.fatiga, agujetas=EXCLUDED.agujetas, estres=EXCLUDED.estres,
+        motivacion=EXCLUDED.motivacion, dolor=EXCLUDED.dolor`, [profileId, date, numberOrNull(row.sueno ?? row.horas_sueno),
       numberOrNull(row.calidad ?? row.calidad_sueno), numberOrNull(row.fatiga), numberOrNull(row.agujetas),
       numberOrNull(row.estres), numberOrNull(row.motivacion), numberOrNull(row.dolor)]);
   }
