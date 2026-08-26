@@ -2704,6 +2704,14 @@ function CambiarEjercicio({ ejercicio, P, update, notify }) {
         <span className="xs muted">{propio.g}{propio.equipamiento ? ` · ${propio.equipamiento}` : ""}</span>
         {propio.media && <a className="btn ghost sm" href={propio.media} target="_blank" rel="noreferrer">Ver demostración</a>}
       </div>
+      {/* Fase 17: si el ejercicio del catálogo trae ilustración (PNG de Workout
+          Guide servido same-origin), se muestra la figura del patrón. */}
+      {propio.media && propio.media.endsWith(".png") && (
+        <div style={{ marginTop: 6, textAlign: "center" }}>
+          <img src={propio.media} alt={`Ilustración de ${propio.g || propio.nombre || "ejercicio"}`}
+               loading="lazy" style={{ maxWidth: 132, maxHeight: 132, borderRadius: 8, background: "#fff", padding: 4 }} />
+        </div>
+      )}
       {!!propio.instrucciones?.length && (<details style={{ marginTop: 6 }}>
         <summary className="xs muted">Instrucciones</summary>
         <ol className="xs muted" style={{ paddingLeft: 18, margin: "6px 0 0" }}>
@@ -2738,10 +2746,22 @@ function CambiarEjercicio({ ejercicio, P, update, notify }) {
         </p>)}
 
       {!cargando && estado?.candidatos?.map((c) => (
-        <button key={c.externalId || c.nombre} className="convitem" onClick={() => elegir(c)}>
-          {c.nombre}
-          <small>{[c.target, c.equipamiento].filter(Boolean).join(" · ")}</small>
+        <button key={c.externalId || c.nombre} className="convitem" onClick={() => elegir(c)} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {c.media && c.media.endsWith(".png") && (
+            <img src={c.media} alt={`Ilustración de ${c.nombre}`} loading="lazy"
+                 style={{ width: 44, height: 44, flex: "0 0 auto", borderRadius: 6, background: "#fff", padding: 2 }} />
+          )}
+          <span style={{ display: "flex", flexDirection: "column", textAlign: "left" }}>
+            {c.nombre}
+            <small>{[c.target, c.equipamiento].filter(Boolean).join(" · ")}</small>
+          </span>
         </button>))}
+
+      {estado?.candidatos?.some((c) => c.media) && (
+        <p className="xs muted" style={{ margin: "8px 0 0" }}>
+          Ilustraciones: Workout Guide · CC BY-SA 4.0 (derivadas de Everkinetic).
+        </p>
+      )}
 
       {propio && (<button className="btn ghost sm" style={{ width: "100%", marginTop: 6 }}
         onClick={() => { update((s) => { delete s.perfiles[P.id].ejercicios[ejercicio.pat]; return s; }); notify("Ejercicio restaurado al de serie."); setAbierto(false); }}>

@@ -234,6 +234,23 @@ app.use("/api/exercises", exerciseRoutes);
 app.use("/api/foods", foodRoutes);
 app.use("/api", apiRoutes);
 
+/* Ilustraciones de ejercicios (Fase 17): servimos los PNG de Workout Guide
+   same-origin desde node_modules, sin copiarlos al repo ni depender de un CDN.
+   La ruta es /assets/ejercicios/{slug}/frame-{1..3}.png. Solo GET; sirve lo que
+   el paquete trae y nada más de node_modules. */
+{
+  const wgAssets = path.join(__dirname, "node_modules", "@bryllim", "workout-guide", "assets");
+  app.use("/assets/ejercicios", express.static(wgAssets, {
+    index: false,
+    fallthrough: false,
+    maxAge: "7d",
+    setHeaders: (res) => {
+      res.setHeader("Cache-Control", "public, max-age=604800");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+    },
+  }));
+}
+
 /* La ruta heredada /api/entrar devuelve 410; no existe fallback de contraseña compartida. */
 app.post("/api/entrar", (_req, res) => res.status(410).json({ ok: false, message: "Usa /api/auth/login" }));
 
@@ -475,6 +492,7 @@ app.listen(PORT, "0.0.0.0", () => {
   console.log(`  Local:  ${toolRouterProvider ? "needle/tool-routing" : "desactivado"}`);
   console.log(`  Hoja:   ${APPS_SCRIPT_URL ? "vía Apps Script" : SHEET_ID && GOOGLE_SERVICE_ACCOUNT_JSON ? "vía cuenta de servicio" : "sin configurar"}`);
   console.log(`  Strava: ${legacyStravaConfig.enabled ? "legacy monousuario activo" : legacyStravaConfig.credentialsConfigured ? "credenciales presentes, legacy bloqueado" : "sin configurar"}`);
+  console.log(`  Ejercicios: ${process.env.EXERCISE_PROVIDER ? process.env.EXERCISE_PROVIDER : "sin catálogo externo (solo PAT propio)"}`);
   console.log("  Acceso: sesiones autenticadas");
 });
 

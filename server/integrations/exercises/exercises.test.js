@@ -166,3 +166,70 @@ test("un ejercicio inexistente devuelve null, no un error", async () => {
   assert.equal(await provider.obtener("noexiste"), null);
   assert.equal(await provider.obtener(""), null, "sin id no se llama a la API");
 });
+
+/* ============================================================
+   Fase 17 — Workout Guide (catálogo local, sin clave ni red)
+   ============================================================ */
+
+test("workoutguide se activa sin API key (catálogo local)", () => {
+  const config = readExerciseConfig({ EXERCISE_PROVIDER: "workoutguide" });
+  assert.equal(config.enabled, true);
+  assert.equal(config.provider, "workoutguide");
+  assert.doesNotThrow(() => createExerciseProvider({ EXERCISE_PROVIDER: "workoutguide" }));
+});
+
+test("workoutguide NO exige EXERCISEDB_API_KEY y ExerciseDB sigue igual", () => {
+  assert.throws(() => readExerciseConfig({ EXERCISE_PROVIDER: "exercisedb" }), /EXERCISEDB_API_KEY/);
+  assert.doesNotThrow(() => readExerciseConfig({ EXERCISE_PROVIDER: "workoutguide" }));
+});
+
+test("el adaptador cumple el contrato ExerciseProvider", async () => {
+  const provider = createExerciseProvider({ EXERCISE_PROVIDER: "workoutguide" });
+  assert.ok(provider);
+  assert.equal(typeof provider.buscar, "function");
+  assert.equal(typeof provider.obtener, "function");
+  assert.equal(typeof provider.capabilities, "function");
+  const caps = provider.capabilities();
+  for (const k of ["provider", "media", "filtroEquipamiento", "filtroMusculo"]) {
+    assert.ok(k in caps, `falta capability ${k}`);
+  }
+  assert.equal(caps.provider, "workoutguide");
+});
+
+test("buscar por nombre devuelve el ejercicio con media PNG same-origin y músculo traducido", async () => {
+  const provider = createExerciseProvider({ EXERCISE_PROVIDER: "workoutguide" });
+  const salida = await provider.buscar({ texto: "push-up", limite: 6 });
+  const pushUp = salida.find((e) => e.canonico === "push up");
+  assert.ok(pushUp, `push-up debe aparecer: ${salida.map((e) => e.canonico).join(", ")}`);
+  assert.equal(pushUp.provider, "workoutguide");
+  assert.equal(pushUp.externalId, "push-up");
+  assert.equal(pushUp.target, "pectorals", "el músculo del paquete (Chest) se traduce al interno");
+  assert.ok(pushUp.media, "trae ilustración");
+  assert.match(pushUp.media, /\/assets\/ejercicios\/push-up\/frame-1\.png$/, "media es PNG same-origin");
+});
+
+test("buscar por músculo interno devuelve candidatos del grupo con media", async () => {
+  const provider = createExerciseProvider({ EXERCISE_PROVIDER: "workoutguide" });
+  const salida = await provider.buscar({ musculo: "pectorals", limite: 20 });
+  assert.ok(salida.length, "debe haber ejercicios de pecho");
+  assert.ok(salida.some((e) => e.target === "pectorals"), "alguno toca pectorals (traducido)");
+  assert.ok(salida.every((e) => e.media && e.media.endsWith(".png")), "todos traen figura PNG");
+});
+
+test("el filtro de equipamiento local se aplica (body weight excluye barra)", async () => {
+  const provider = createExerciseProvider({ EXERCISE_PROVIDER: "workoutguide" });
+  const soloCasa = await provider.buscar({ musculo: "pectorals", equipamiento: "body weight", limite: 20 });
+  assert.ok(soloCasa.length, "debe haber empujes sin material");
+  for (const e of soloCasa) {
+    assert.equal(e.equipamiento, "body weight", `sin filtro local entraría ${e.equipamiento}`);
+  }
+});
+
+test("obtener por slug devuelve el ejercicio y su figura", async () => {
+  const provider = createExerciseProvider({ EXERCISE_PROVIDER: "workoutguide" });
+  const e = await provider.obtener("push-up");
+  assert.ok(e);
+  assert.equal(e.canonico, "push up");
+  assert.match(e.media, /\/assets\/ejercicios\/push-up\/frame-1\.png$/);
+  assert.equal(await provider.obtener(""), null);
+});

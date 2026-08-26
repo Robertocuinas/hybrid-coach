@@ -30,6 +30,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1107.0",
     "@aws-sdk/s3-request-presigner": "^3.1107.0",
+    "@bryllim/workout-guide": "^1.0.0",
     "@node-rs/argon2": "^2.0.2",
     "esbuild": "^0.28.2",
     "express": "^4.21.2",

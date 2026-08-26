@@ -1,0 +1,885 @@
+{
+  "tablero": "Hybrid Coach - Producto funcional (Kanban)",
+  "workspace_id": "PENDIENTE: indicar por el usuario o configurar en plugin codex",
+  "list_id": "PENDIENTE: indicar por el usuario",
+  "columnas": [
+    "Backlog",
+    "Por hacer",
+    "En progreso",
+    "En revision",
+    "Hecho"
+  ],
+  "agentes": {
+    "ejecutor": "stevejobs (hermes -p stevejobs)",
+    "regla_avance": "Al completar todas las subtareas de una fase, mover la tarjeta a Hecho y pasar a la siguiente fase en Por hacer."
+  },
+  "tareas": [
+    {
+      "nombre": "Fase 00 - Marco y arquitectura documentados",
+      "estado_inicial": "Hecho",
+      "descripcion": "Documentacion fundacional del producto: marco (00), arquitectura objetivo (02 reorientada al marco), roadmap con fases 13-16, plan de transicion (15) y correccion del doc 01 (bug #1 ya resuelto en 011b9c4).",
+      "hacer": [
+        "Docs 00, 02, 15, roadmap 13-16, indice actualizado"
+      ],
+      "no_hacer": [
+        "Tocar codigo en esta fase"
+      ],
+      "terminado": [
+        "Documentos creados y enlazados; bug #1 marcado como resuelto"
+      ],
+      "subtareas": [
+        {
+          "nombre": "00-marco-del-proyecto.md",
+          "descripcion": "Vision del producto: cualquiera con ficha, plan global+semanal IA/RAG, comidas diarias, 5 funcionalidades obligatorias.",
+          "hacer": [
+            "Redactar marco"
+          ],
+          "no_hacer": [
+            "Inferir vision"
+          ],
+          "terminado": [
+            "Archivo existe y enlazado en indice"
+          ]
+        },
+        {
+          "nombre": "02-arquitectura-objetivo.md",
+          "descripcion": "Reorientar el objetivo al marco: IA autora de la semana adaptativa, avisos clinicos en codigo.",
+          "hacer": [
+            "Reescribir 02"
+          ],
+          "no_hacer": [
+            "Mantener filosofia determinista como duena"
+          ],
+          "terminado": [
+            "02 apunta al marco"
+          ]
+        },
+        {
+          "nombre": "15-plan-transicion.md + roadmap 13-16",
+          "descripcion": "Plan trazable 01->marco y fichas de fase nuevas.",
+          "hacer": [
+            "Crear 15 y fases 13-16"
+          ],
+          "no_hacer": [
+            "Dejar enlaces rotos"
+          ],
+          "terminado": [
+            "Roadmap referencia fases existentes"
+          ]
+        }
+      ]
+    },
+    {
+      "nombre": "Paso 1 - Aceptacion semanal (bug #1 UUID) YA RESUELTO",
+      "estado_inicial": "Hecho",
+      "descripcion": "El regex UUID del planificador ya fue corregido en commit 011b9c4 (esUUID centralizado en middleware/authorization.js). Aceptar/rechazar propuestas semanales funciona. No requiere trabajo; se confirma en Fase 14.",
+      "hacer": [
+        "Verificar en Fase 14"
+      ],
+      "no_hacer": [
+        "Reescribir esUUID"
+      ],
+      "terminado": [
+        "Confirmado funcional"
+      ],
+      "subtareas": [
+        {
+          "nombre": "Confirmar esUUID",
+          "descripcion": "Patron v4 en authorization.js:8-9, verificado contra 20000 UUID.",
+          "hacer": [
+            "Lectura de codigo"
+          ],
+          "no_hacer": [
+            "Cambiar el patron"
+          ],
+          "terminado": [
+            "esUUID acepta UUID reales"
+          ]
+        }
+      ]
+    },
+    {
+      "nombre": "Fase 13 - Onboarding funcional (ficha -> primer plan)",
+      "estado_inicial": "Por hacer",
+      "descripcion": "Que un usuario nuevo, al registrar y rellenar su ficha (carrera con fecha, disponibilidad, nivel), obtenga un plan global hacia la carrera. Cierra la entrada al producto del marco.",
+      "hacer": [
+        "Recoger fecha_carrera en la ficha",
+        "Persistirla via PATCH /api/profile (sin migracion nueva)",
+        "Validar que sin fecha no se genera plan",
+        "Disparar createMasterPlan al guardar",
+        "Mostrar plan global en UI",
+        "Smoke test E2E"
+      ],
+      "no_hacer": [
+        "Crear migracion (fecha_carrera ya existe en 0001_init.js:45/91)",
+        "Tocar el motor determinista ni reglas",
+        "Generar plan sin proveedor de IA (debe avisar)"
+      ],
+      "terminado": [
+        "Usuario nuevo con fecha ve plan global",
+        "Sin fecha, validacion bloquea",
+        "Smoke E2E verde",
+        "Ficha de fase 13 marcada completada en docs"
+      ],
+      "subtareas": [
+        {
+          "nombre": "13.1 Campo fecha_carrera en ficha (UI)",
+          "descripcion": "Anadir input date de fecha_carrera en alta/edicion de perfil (HybridCoach.jsx ~1781).",
+          "hacer": [
+            "Date input en ficha",
+            "Enviarlo en el body de perfil"
+          ],
+          "no_hacer": [
+            "Inventar otros campos no existentes"
+          ],
+          "terminado": [
+            "El campo aparece y se envia"
+          ]
+        },
+        {
+          "nombre": "13.2 Persistir fecha_carrera (backend)",
+          "descripcion": "Verificar que PATCH /api/profile (api.js:24) acepta fecha_carrera via updateProfile/PROFILE_FIELDS. Sin migracion.",
+          "hacer": [
+            "Confirmar PROFILE_FIELDS incluye fecha_carrera",
+            "Probar PATCH"
+          ],
+          "no_hacer": [
+            "Crear migracion nueva",
+            "Cambiar el esquema"
+          ],
+          "terminado": [
+            "PATCH actualiza fecha_carrera en athlete_profiles"
+          ]
+        },
+        {
+          "nombre": "13.3 Validacion UI: sin fecha no genera",
+          "descripcion": "El boton Generar mi plan avisa si falta fecha_carrera antes de llamar a createMasterPlan.",
+          "hacer": [
+            "Validacion en cliente"
+          ],
+          "no_hacer": [
+            "Llamar al backend sin fecha"
+          ],
+          "terminado": [
+            "Sin fecha, no se invoca /api/planning/master"
+          ]
+        },
+        {
+          "nombre": "13.4 Disparar createMasterPlan al guardar",
+          "descripcion": "Al guardar ficha con fecha, llamar a createMasterPlan (planningApi.js:235) -> POST /api/planning/master.",
+          "hacer": [
+            "Integrar llamada al guardar"
+          ],
+          "no_hacer": [
+            "Bloquear el alta si no hay IA (debe permitir alta y avisar luego)"
+          ],
+          "terminado": [
+            "Guardar ficha dispara generacion de plan"
+          ]
+        },
+        {
+          "nombre": "13.5 Mostrar plan global en UI",
+          "descripcion": "Renderizar el plan maestro (fases, descargas, techo tirada larga) devuelto por GET /api/planning/master.",
+          "hacer": [
+            "Vista de semanas/plan"
+          ],
+          "no_hacer": [
+            "Duplicar logica de buildPlan en cliente"
+          ],
+          "terminado": [
+            "El usuario ve el esqueleto macro"
+          ]
+        },
+        {
+          "nombre": "13.6 Smoke test E2E",
+          "descripcion": "scripts/smoke-onboarding.sh: registrar -> PATCH fecha_carrera -> POST master -> GET master -> assert total_semanas>0.",
+          "hacer": [
+            "Reutilizar patron de smoke-registro-libre.sh"
+          ],
+          "no_hacer": [
+            "Depender de IA para el assertion de estructura (usar stub si hace falta)"
+          ],
+          "terminado": [
+            "Smoke pasa en local"
+          ]
+        },
+        {
+          "nombre": "13.7 Cerrar documentacion",
+          "descripcion": "Marcar casillas de criterio de terminado y estado en docs/roadmap/fase-13-onboarding-funcional.md.",
+          "hacer": [
+            "Actualizar ficha"
+          ],
+          "no_hacer": [
+            "Marcar sin verificar"
+          ],
+          "terminado": [
+            "Ficha 13 refleja Hecho"
+          ]
+        }
+      ]
+    },
+    {
+      "nombre": "Fase 14 - Generacion semanal adaptativa (IA+RAG por disponibilidad)",
+      "estado_inicial": "Por hacer",
+      "descripcion": "Cada semana la IA genera la propuesta de entrenamiento segun la disponibilidad real del atleta y entendiendo el macro hasta la carrera, fundamentada en RAG. Valor diario real del producto.",
+      "hacer": [
+        "Confirmar aceptacion funciona",
+        "Modelar availability",
+        "Enviar disponibilidad al generar",
+        "Usar availability en el contexto del orquestador",
+        "Validar coherencia con macro",
+        "Citar evidencia RAG",
+        "Smoke de aceptacion"
+      ],
+      "no_hacer": [
+        "Romper la aceptacion ya funcionante",
+        "Dejar que la IA proponga semana aislada sin macro",
+        "Aplicar la propuesta sin aceptacion explicita"
+      ],
+      "terminado": [
+        "Propuesta semanal refleja disponibilidad",
+        "Es coherente con el macro",
+        "Cita evidencia",
+        "Aceptar/rechazar funciona de verdad",
+        "Guardarrailes clinicos intactos"
+      ],
+      "subtareas": [
+        {
+          "nombre": "14.1 Confirmar aceptacion semanal",
+          "descripcion": "Verificar que POST /proposals/:id/accept y /reject funcionan tras el fix 011b9c4 (esUUID).",
+          "hacer": [
+            "Llamar endpoints con UUID real"
+          ],
+          "no_hacer": [
+            "Reescribir el fix"
+          ],
+          "terminado": [
+            "Aceptar/rechazar responden ok"
+          ]
+        },
+        {
+          "nombre": "14.2 Modelar availability",
+          "descripcion": "Revisar getCurrentAvailability/setAvailability (api.js:27-42) y tabla availability (0002).",
+          "hacer": [
+            "Entender esquema y dias/minutos"
+          ],
+          "no_hacer": [
+            "Redisenar el modelo sin necesidad"
+          ],
+          "terminado": [
+            "Claro como se guarda la disponibilidad semanal"
+          ]
+        },
+        {
+          "nombre": "14.3 Enviar disponibilidad al generar (frontend)",
+          "descripcion": "El frontend envia la disponibilidad de la semana al POST /weeks/:week/proposals.",
+          "hacer": [
+            "Incluir availability en el body"
+          ],
+          "no_hacer": [
+            "Hardcodear disponibilidad"
+          ],
+          "terminado": [
+            "La llamada lleva disponibilidad real"
+          ]
+        },
+        {
+          "nombre": "14.4 Contexto del orquestador usa availability",
+          "descripcion": "El orquestador semanal (service.js / application.js) recibe availability y la usa para distribuir sesiones.",
+          "hacer": [
+            "Pasar availability al prompt/contexto"
+          ],
+          "no_hacer": [
+            "Ignorar availability en la generacion"
+          ],
+          "terminado": [
+            "La propuesta respeta dias/minutos disponibles"
+          ]
+        },
+        {
+          "nombre": "14.5 Coherencia con macro global",
+          "descripcion": "Validar que la semana propuesta es coherente con el plan maestro (no aislada).",
+          "hacer": [
+            "Chequear contra training_plans activo"
+          ],
+          "no_hacer": [
+            "Permitir semana que contradiga el taper/fase"
+          ],
+          "terminado": [
+            "La semana encaja en el macro"
+          ]
+        },
+        {
+          "nombre": "14.6 Citas de evidencia en propuesta",
+          "descripcion": "Cada propuesta semanal cita los chunks RAG usados (planning_run_evidence).",
+          "hacer": [
+            "Verificar evidencia en la salida"
+          ],
+          "no_hacer": [
+            "Generar sin evidencia cuando la hay"
+          ],
+          "terminado": [
+            "Propuesta incluye citations"
+          ]
+        },
+        {
+          "nombre": "14.7 Smoke de aceptacion",
+          "descripcion": "Smoke que genera propuesta y la acepta.",
+          "hacer": [
+            "Script o prueba manual"
+          ],
+          "no_hacer": [
+            "Saltarse la aceptacion"
+          ],
+          "terminado": [
+            "Flujo generar->aceptar verde"
+          ]
+        }
+      ]
+    },
+    {
+      "nombre": "Fase 15 - Recomendacion de comidas diarias (RAG + bases de datos)",
+      "estado_inicial": "Por hacer",
+      "descripcion": "Recomendaciones de comidas para todos los dias basadas en bibliografia y en bases de datos de alimentos (Open Food Facts, catalogo). Mismo principio que el entrenamiento: fundamentado.",
+      "hacer": [
+        "Revisar tablas nutricion",
+        "Generacion diaria RAG + BBDD",
+        "Conectar FOOD_PROVIDER",
+        "Citar evidencia",
+        "Registrar en consumed_foods",
+        "UI que-como-hoy"
+      ],
+      "no_hacer": [
+        "Valores fijos sin fuente",
+        "Depender solo de reglas sueltas",
+        "Mostrar sin pasar validacion"
+      ],
+      "terminado": [
+        "Atleta recibe comidas del dia con fundamentacion",
+        "Usa datos de alimentos reales",
+        "Pasa validacion y guardarrailes"
+      ],
+      "subtareas": [
+        {
+          "nombre": "15.1 Revisar nutricion existente",
+          "descripcion": "Leer nutrition_targets, meal_catalog, consumed_foods y /api/foods/*.",
+          "hacer": [
+            "Mapear lo existente"
+          ],
+          "no_hacer": [
+            "Duplicar catalogo sin razon"
+          ],
+          "terminado": [
+            "Claro que hay y que falta"
+          ]
+        },
+        {
+          "nombre": "15.2 Generacion diaria fundamentada",
+          "descripcion": "Endpoint/ flujo que genera comidas del dia con RAG + bases de datos.",
+          "hacer": [
+            "Disenar contrato de salida"
+          ],
+          "no_hacer": [
+            "Alucinar comidas sin base"
+          ],
+          "terminado": [
+            "Genera comidas con evidencia"
+          ]
+        },
+        {
+          "nombre": "15.3 Conectar FOOD_PROVIDER",
+          "descripcion": "Usar Open Food Facts ya configurado (FOOD_PROVIDER) para datos de alimentos.",
+          "hacer": [
+            "Integracion con la API/BBDD"
+          ],
+          "no_hacer": [
+            "Hardcodear valores"
+          ],
+          "terminado": [
+            "Datos de alimentos reales en la recomendacion"
+          ]
+        },
+        {
+          "nombre": "15.4 Citas de evidencia/nutricion",
+          "descripcion": "La recomendacion cita la evidencia/nutricion de la que sale.",
+          "hacer": [
+            "Adjuntar citations"
+          ],
+          "no_hacer": [
+            "Recomendar sin fuente cuando la hay"
+          ],
+          "terminado": [
+            "Comidas llevan fundamentacion"
+          ]
+        },
+        {
+          "nombre": "15.5 Registrar elecciones",
+          "descripcion": "Guardar selecciones en consumed_foods.",
+          "hacer": [
+            "Persistir consumo"
+          ],
+          "no_hacer": [
+            "Perder el registro"
+          ],
+          "terminado": [
+            "El atleta puede registrar lo que come"
+          ]
+        },
+        {
+          "nombre": "15.6 UI que-como-hoy",
+          "descripcion": "Vista de comidas del dia (boton Ver mi plan de comidas ya existe en HybridCoach.jsx:3771).",
+          "hacer": [
+            "Renderizar recomendacion"
+          ],
+          "no_hacer": [
+            "Romper la vista existente"
+          ],
+          "terminado": [
+            "El atleta ve comidas del dia"
+          ]
+        }
+      ]
+    },
+    {
+      "nombre": "Fase 16 - Registro y progreso visibles",
+      "estado_inicial": "Por hacer",
+      "descripcion": "Que el atleta pueda registrar lo que hace y ver su progreso. Funcionalidades obligatorias #3 (registro) y #5 (progreso) del marco.",
+      "hacer": [
+        "Revisar tablas registro",
+        "UI registrar sesiones",
+        "Vista de progreso",
+        "Mitigar bug #4 (sync borra historial)",
+        "Registro alimenta la semana"
+      ],
+      "no_hacer": [
+        "Borrar historial ajeno en sync",
+        "Mostrar metricas confusas"
+      ],
+      "terminado": [
+        "Atleta registra y persiste sin perder datos",
+        "Ve progreso legible",
+        "Registro alimenta Fase 14"
+      ],
+      "subtareas": [
+        {
+          "nombre": "16.1 Revisar tablas de registro/progreso",
+          "descripcion": "completed_sessions, running_sessions, recovery_logs, feedback_logs.",
+          "hacer": [
+            "Mapear campos"
+          ],
+          "no_hacer": [
+            "Tocar esquema sin necesidad"
+          ],
+          "terminado": [
+            "Claro que se guarda"
+          ]
+        },
+        {
+          "nombre": "16.2 UI registrar sesiones",
+          "descripcion": "Flujo para registrar sesiones completadas y estado del atleta.",
+          "hacer": [
+            "Formulario de registro"
+          ],
+          "no_hacer": [
+            "Obligar campos que no aportan"
+          ],
+          "terminado": [
+            "El atleta registra sesiones"
+          ]
+        },
+        {
+          "nombre": "16.3 Vista de progreso",
+          "descripcion": "Evolucion de carga, RPE, recuperacion.",
+          "hacer": [
+            "Grafica/minimo claro"
+          ],
+          "no_hacer": [
+            "Sobrecargar la vista"
+          ],
+          "terminado": [
+            "Progreso legible"
+          ]
+        },
+        {
+          "nombre": "16.4 Mitigar bug #4 (sync borra historial)",
+          "descripcion": "server/routes/sync.js:212 borra completed_sessions en cada sync. Cerrar dual-write al cumplir conciliacion (readyForCutover, 7 dias verdes) o proteger el borrado.",
+          "hacer": [
+            "Proteger historial ajeno al snapshot",
+            "O cerrar cutover cuando corresponda"
+          ],
+          "no_hacer": [
+            "Dejar borrado masivo en produccion"
+          ],
+          "terminado": [
+            "Sync no destruye historial del servidor"
+          ]
+        },
+        {
+          "nombre": "16.5 Registro alimenta la semana adaptativa",
+          "descripcion": "El contexto de Fase 14 lee el registro real.",
+          "hacer": [
+            "Conectar registro->contexto"
+          ],
+          "no_hacer": [
+            "Generar semana a ciegas"
+          ],
+          "terminado": [
+            "La semana usa el historial real"
+          ]
+        }
+      ]
+    },
+    {
+      "nombre": "Fase 10 - Evaluacion y observabilidad del RAG",
+      "estado_inicial": "Por hacer",
+      "descripcion": "Garantizar que la 'base cientifica' es real: dataset de evaluacion y metricas de retrieval. Clave para el marco (RAG funcionando como fundamento).",
+      "hacer": [
+        "Dataset de evaluacion",
+        "Metricas de retrieval",
+        "Observabilidad/logging",
+        "Validar umbral de evidencia",
+        "Comparar RAG vs lexico"
+      ],
+      "no_hacer": [
+        "Declarar calidad sin medirla",
+        "Apagar lo lexico sin comparar"
+      ],
+      "terminado": [
+        "Cobertura y precision medidas",
+        "Sin-evidencia detectado",
+        "Regresion controlada"
+      ],
+      "subtareas": [
+        {
+          "nombre": "10.1 Dataset de evaluacion",
+          "descripcion": "Preguntas con respuesta conocida sobre la bibliografia.",
+          "hacer": [
+            "Crear dataset"
+          ],
+          "no_hacer": [
+            "Usar preguntas triviales"
+          ],
+          "terminado": [
+            "Dataset versionado"
+          ]
+        },
+        {
+          "nombre": "10.2 Metricas de retrieval",
+          "descripcion": "Precision, cobertura, tasa de sin-evidencia.",
+          "hacer": [
+            "Medir"
+          ],
+          "no_hacer": [
+            "Ocultar fallos"
+          ],
+          "terminado": [
+            "Metricas reportadas"
+          ]
+        },
+        {
+          "nombre": "10.3 Observabilidad",
+          "descripcion": "Logging de retrieval (ya hay planning_run_evidence).",
+          "hacer": [
+            "Exponer diagnosticos"
+          ],
+          "no_hacer": [
+            "Ruido sin utilidad"
+          ],
+          "terminado": [
+            "Se puede auditar cada retrieval"
+          ]
+        },
+        {
+          "nombre": "10.4 Umbral de evidencia validado",
+          "descripcion": "El umbral de retrieval.js evita alucinacion.",
+          "hacer": [
+            "Probar umbral"
+          ],
+          "no_hacer": [
+            "Bajar el umbral a cero"
+          ],
+          "terminado": [
+            "Sin-evidencia se declara"
+          ]
+        },
+        {
+          "nombre": "10.5 Comparar RAG vs lexico",
+          "descripcion": "Usar /api/coach/comparar para detectar regresion.",
+          "hacer": [
+            "Ejecutar comparacion"
+          ],
+          "no_hacer": [
+            "Apagar lexico sin igualar calidad"
+          ],
+          "terminado": [
+            "RAG no empeora al lexico"
+          ]
+        }
+      ]
+    },
+    {
+      "nombre": "Fase 11 - Retirada de Google Sheets",
+      "estado_inicial": "Por hacer",
+      "descripcion": "Una vez el producto es funcional, retirar la integracion heredada de Sheets (Codigo.gs, /api/sheets).",
+      "hacer": [
+        "Auditar uso",
+        "Migrar export opcional a Postgres",
+        "Desactivar rutas",
+        "Verificar dependencias"
+      ],
+      "no_hacer": [
+        "Borrar datos de usuario",
+        "Romper export que alguien usa"
+      ],
+      "terminado": [
+        "Sheets fuera, export opcional desde Postgres"
+      ],
+      "subtareas": [
+        {
+          "nombre": "11.1 Auditar uso de Sheets",
+          "descripcion": "Identificar quien usa /api/sheets y Codigo.gs.",
+          "hacer": [
+            "Buscar referencias"
+          ],
+          "no_hacer": [
+            "Asumir que nadie lo usa"
+          ],
+          "terminado": [
+            "Uso mapeado"
+          ]
+        },
+        {
+          "nombre": "11.2 Export opcional a Postgres",
+          "descripcion": "Ofrecer export desde PostgreSQL en vez de Sheets.",
+          "hacer": [
+            "Endpoint export"
+          ],
+          "no_hacer": [
+            "Forzar a todos"
+          ],
+          "terminado": [
+            "Export disponible sin Sheets"
+          ]
+        },
+        {
+          "nombre": "11.3 Desactivar rutas Sheets",
+          "descripcion": "Quitar /api/sheets y Codigo.gs.",
+          "hacer": [
+            "Remover codigo"
+          ],
+          "no_hacer": [
+            "Dejar codigo muerto"
+          ],
+          "terminado": [
+            "Sin referencias a Sheets"
+          ]
+        },
+        {
+          "nombre": "11.4 Verificar dependencias",
+          "descripcion": "Nada depende de Sheets tras el retiro.",
+          "hacer": [
+            "Prueba de regresion"
+          ],
+          "no_hacer": [
+            "Ignorar efectos colaterales"
+          ],
+          "terminado": [
+            "Build y pruebas verdes"
+          ]
+        }
+      ]
+    },
+    {
+      "nombre": "Fase 12 - Optimizacion y pruebas de proveedores",
+      "estado_inicial": "Por hacer",
+      "descripcion": "Pulir tras el producto funcional: pruebas de proveedores IA/embeddings y optimizacion de costes/latencia.",
+      "hacer": [
+        "Probar proveedores",
+        "Optimizar prompts/tokens",
+        "Cache de embeddings/retrieval",
+        "Medir coste/latencia"
+      ],
+      "no_hacer": [
+        "Acoplar a un solo proveedor",
+        "Subir coste sin medir"
+      ],
+      "terminado": [
+        "Proveedores verificados",
+        "Coste/latencia bajo control"
+      ],
+      "subtareas": [
+        {
+          "nombre": "12.1 Pruebas de proveedores",
+          "descripcion": "Anthropic/OpenAI/Ollama y embeddings functionan por configuracion.",
+          "hacer": [
+            "Smoke por proveedor"
+          ],
+          "no_hacer": [
+            "Hardcodear uno"
+          ],
+          "terminado": [
+            "Cambio por env verificado"
+          ]
+        },
+        {
+          "nombre": "12.2 Optimizar prompts",
+          "descripcion": "Reducir tokens sin perder calidad.",
+          "hacer": [
+            "Recortar contexto"
+          ],
+          "no_hacer": [
+            "Mutar el system prompt sin prueba"
+          ],
+          "terminado": [
+            "Tokens dentro de presupuesto"
+          ]
+        },
+        {
+          "nombre": "12.3 Cache de retrieval",
+          "descripcion": "Cache de embeddings/retrieval donde aplique.",
+          "hacer": [
+            "Anadir cache"
+          ],
+          "no_hacer": [
+            "Cachear sin invalidacion"
+          ],
+          "terminado": [
+            "Latencia mejorada"
+          ]
+        },
+        {
+          "nombre": "12.4 Coste/latencia",
+          "descripcion": "Medir y documentar.",
+          "hacer": [
+            "Reporte"
+          ],
+          "no_hacer": [
+            "Omitir medicion"
+          ],
+          "terminado": [
+            "Reporte de coste/latencia"
+          ]
+        }
+      ]
+    },
+    {
+      "nombre": "Fase 17 - Ilustracion de ejercicios (workout-guide)",
+      "estado_inicial": "Por hacer",
+      "descripcion": "Anadir github.com/bryllim/workout-guide como proveedor de catalogo para ilustrar cada ejercicio con SVG. Paquete npm local (302 ejercicios, 906 SVG 512x512, 3 frames). Codigo MIT; assets CC BY-SA 4.0 (derivados de Everkinetic). Se integra en el patron EXERCISE_PROVIDER; sin clave (catalogo local).",
+      "hacer": [
+        "Instalar el paquete",
+        "Adaptador WorkoutGuideProvider que cumple ExerciseProvider",
+        "Registrar en factory (EXERCISE_PROVIDER=workoutguide, sin API key)",
+        "Servir assets SVG",
+        "Atribucion visible (CC BY-SA 4.0 / Everkinetic)",
+        "Renderizar ilustracion en UI",
+        "Tests del adaptador"
+      ],
+      "no_hacer": [
+        "Tocar el motor determinista ni PAT",
+        "Proponer ejercicios que el atleta no puede (filtro de equipamiento sigue en local)",
+        "Copiar binarios del material ajeno",
+        "Romper el fallback a PAT cuando no hay proveedor"
+      ],
+      "terminado": [
+        "Con EXERCISE_PROVIDER=workoutguide la UI muestra la ilustracion SVG de cada ejercicio",
+        "Atribucion visible",
+        "Tests verdes",
+        "Arranca sin clave"
+      ],
+      "subtareas": [
+        {
+          "nombre": "17.1 Instalar y validar el paquete",
+          "descripcion": "npm i @bryllim/workout-guide; comprobar exports (getExercise/searchExercises/getAssetUrl) y campos del manifest (nombres, musculos, equipamiento) y ruta de assets.",
+          "hacer": [
+            "Instalar y leer manifest"
+          ],
+          "no_hacer": [
+            "Asumir la forma del JSON"
+          ],
+          "terminado": [
+            "Conozco los campos y la ruta de assets"
+          ]
+        },
+        {
+          "nombre": "17.2 Adaptador WorkoutGuideProvider",
+          "descripcion": "server/integrations/exercises/workoutguide.js implementando buscar/obtener/capabilities del contrato ExerciseProvider; mapea la salida del paquete al modelo interno (externalId=name, target/secundarios/bodyPart/equipamiento desde metadatos, media=getAssetUrl(name,1) SVG).",
+          "hacer": [
+            "Implementar el adaptador"
+          ],
+          "no_hacer": [
+            "Inventar campos"
+          ],
+          "terminado": [
+            "Pasa assertExerciseProvider"
+          ]
+        },
+        {
+          "nombre": "17.3 Registrar en factory sin clave",
+          "descripcion": "factory.js: anadir workoutguide a PROVEEDORES; ramificar readExerciseConfig para que workoutguide no exija EXERCISEDB_API_KEY.",
+          "hacer": [
+            "Configurar sin clave"
+          ],
+          "no_hacer": [
+            "Romper ExerciseDB"
+          ],
+          "terminado": [
+            "EXERCISE_PROVIDER=workoutguide arranca sin clave"
+          ]
+        },
+        {
+          "nombre": "17.4 Servir assets SVG",
+          "descripcion": "Ruta estatica (ej. /assets/ejercicios/*) sobre node_modules/@bryllim/workout-guide/assets, o copia a public/ en build.",
+          "hacer": [
+            "URL servida accesible desde el navegador"
+          ],
+          "no_hacer": [
+            "Exponer todo node_modules"
+          ],
+          "terminado": [
+            "GET /assets/ejercicios/{name}-1.svg devuelve 200"
+          ]
+        },
+        {
+          "nombre": "17.5 Atribucion visible",
+          "descripcion": "Aviso Ilustraciones: Workout Guide · CC BY-SA 4.0 (Everkinetic) en UI donde se muestren.",
+          "hacer": [
+            "Mostrar atribucion"
+          ],
+          "no_hacer": [
+            "Omitir atribucion (obligatoria CC BY-SA)"
+          ],
+          "terminado": [
+            "Atribucion presente donde se muestran"
+          ]
+        },
+        {
+          "nombre": "17.6 Renderizar ilustracion en UI",
+          "descripcion": "En editor de rutinas y sugerencias del coach, si candidato.media, mostrar la figura SVG del ejercicio.",
+          "hacer": [
+            "Ilustrar PAT y alternativas"
+          ],
+          "no_hacer": [
+            "Romper la vista"
+          ],
+          "terminado": [
+            "El atleta ve la figura del ejercicio"
+          ]
+        },
+        {
+          "nombre": "17.7 Tests del adaptador",
+          "descripcion": "server/integrations/exercises/exercises.test.js cubre workoutguide (buscar devuelve media SVG, filtro equipamiento, obtener por name).",
+          "hacer": [
+            "Anadir test"
+          ],
+          "no_hacer": [
+            "Depender de red"
+          ],
+          "terminado": [
+            "Test verde"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -6,8 +6,12 @@
    ejercicios propios, que es el fallback que exige §59 del encargo. */
 import { assertExerciseProvider } from "./types.js";
 import { ExerciseDBProvider } from "./exercisedb.js";
+import { WorkoutGuideProvider } from "./workoutguide.js";
 
-const PROVEEDORES = new Set(["exercisedb"]);
+/* ExerciseDB es un catálogo remoto (necesita clave); Workout Guide es un
+   catálogo local empaquetado como npm (no necesita clave ni red). Ambos cumplen
+   el mismo contrato ExerciseProvider y se registran aquí. */
+const PROVEEDORES = new Set(["exercisedb", "workoutguide"]);
 const BASE_POR_DEFECTO = "https://exercisedb-api1.p.rapidapi.com/api/v1";
 
 const limpio = (valor) => String(valor || "").trim();
@@ -16,6 +20,10 @@ export function readExerciseConfig(env = process.env) {
   const provider = limpio(env.EXERCISE_PROVIDER);
   if (!provider) return { enabled: false };
   if (!PROVEEDORES.has(provider)) throw new Error(`EXERCISE_PROVIDER desconocido: ${provider}`);
+
+  /* Workout Guide es local: sin clave, sin red. Basta con que el paquete esté
+     instalado, que lo garantiza la dependencia en package.json. */
+  if (provider === "workoutguide") return { enabled: true, provider };
 
   const apiKey = limpio(env.EXERCISEDB_API_KEY);
   if (!apiKey) throw new Error("EXERCISEDB_API_KEY es obligatoria cuando EXERCISE_PROVIDER está configurado");
@@ -31,5 +39,6 @@ export function readExerciseConfig(env = process.env) {
 export function createExerciseProvider(env = process.env, { fetchImpl = fetch } = {}) {
   const config = readExerciseConfig(env);
   if (!config.enabled) return null;
+  if (config.provider === "workoutguide") return assertExerciseProvider(new WorkoutGuideProvider());
   return assertExerciseProvider(new ExerciseDBProvider({ ...config, fetchImpl }));
 }
