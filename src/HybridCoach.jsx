@@ -4020,6 +4020,128 @@ function ContadorDiario({ notify, objetivoLocal = null }) {
   </div>);
 }
 
+/* ============================================================
+   QUÉ COMO HOY (Fase 15) — vista de comidas del día fundamentadas
+
+   Llama a GET /api/foods/recomendacion, que devuelve las tomas del día con su
+   objetivo (nutrition_targets), las opciones del catálogo propio enriquecidas
+   con datos REALES de Open Food Facts cuando el proveedor responde, y las
+   citas de la bibliografía de nutrición (n*). Cada opción se puede registrar
+   en consumed_foods con un par de clics (15.5): el servidor calcula los macros
+   a partir de por100g, igual que en el contador diario.
+   ============================================================ */
+function QueComoHoy({ st, notify, curW, today, wk, n, dia }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [grams, setGrams] = useState({});
+  const [registrando, setRegistrando] = useState(null);
+
+  const fecha = iso(addDays(lunesDe(today), dia));
+  const contexto = contextoDelDia(n.sesiones);
+
+  const cargar = useCallback(async () => {
+    setBusy(true); setError("");
+    try {
+      const r = await fetch(`/api/foods/recomendacion?fecha=${encodeURIComponent(fecha)}&contexto=${encodeURIComponent(contexto)}`, { credentials: "same-origin" });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.message || "No se pudo cargar la recomendación");
+      setData(d);
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }, [fecha, contexto]);
+
+  useEffect(() => { void cargar(); }, [cargar]);
+
+  const registrar = async (toma, op) => {
+    const clave = toma.momento + "|" + op.nombre;
+    const g = Number(String(grams[clave] ?? (op.por100g?.kcal != null ? 150 : 100)).replace(",", "."));
+    if (!Number.isFinite(g) || g <= 0) return setError("Pon una cantidad en gramos.");
+    setRegistrando(clave); setError("");
+    try {
+      /* El alimento viaja ya normalizado: el servidor no vuelve a llamar a la
+         API y el snapshot es exactamente lo que el atleta vio al elegir. */
+      const r = await fetch("/api/foods/consumo", {
+        method: "POST", credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          alimento: {
+            nombre: op.nombre,
+            provider: op.proveedor === "catalogo" ? "manual" : op.proveedor,
+            externalId: op.proveedor === "openfoodfacts" ? (op.externalId || null) : null,
+            marca: op.marca || null,
+            por100g: op.por100g || undefined,
+          },
+          gramos: g, momento: toma.momento,
+        }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.message || "No se pudo registrar");
+      notify(`✓ ${op.nombre} · ${g} g registrado para hoy.`);
+    } catch (e) { setError(e.message); }
+    finally { setRegistrando(null); }
+  };
+
+  if (!data) return (<div className="card"><p className="xs muted" style={{ margin: 0 }}>{busy ? "Cargando recomendación…" : (error || "Sin recomendación todavía.")}</p></div>);
+
+  const fuenteTag = data.fuente === "openfoodfacts" ? { c: "evid", l: "Open Food Facts" } : { c: "", l: "Catálogo propio" };
+
+  return (<div>
+    <div className="between" style={{ marginBottom: 10 }}>
+      <span className={"tag " + fuenteTag.c}>{fuenteTag.l}</span>
+      {data.evidenciaSuficiente
+        ? <span className="mono xs muted">Fundamentado en tu objetivo + bibliografía</span>
+        : <span className="mono xs" style={{ color: "var(--alert)" }}>Sin objetivo: pautas generales</span>}
+    </div>
+
+    {data.nota && <p className="xs muted" style={{ margin: "0 0 10px" }}>{data.nota}</p>}
+
+    {data.objetivo && (<div className="card">
+      <div className="between"><h3>Objetivo de hoy</h3><span className="mono" style={{ fontSize: 20 }}>{data.objetivo.kcal} kcal</span></div>
+      <div className="grid2" style={{ marginTop: 9, gap: 8 }}>
+        <Metric l="Proteína" v={data.objetivo.proteina + " g"} />
+        <Metric l="Carbohidrato" v={data.objetivo.carbohidrato + " g"} />
+        <Metric l="Grasa" v={data.objetivo.grasa + " g"} />
+        {data.objetivo.fibra != null && <Metric l="Fibra" v={data.objetivo.fibra + " g"} />}
+      </div>
+    </div>)}
+
+    {data.tomas.map((t) => (<div className="card" key={t.momento}>
+      <div className="between"><h3>{t.titulo}</h3>
+        {t.distribucion && <span className="mono xs muted">{t.distribucion.kcal} kcal</span>}</div>
+      <p className="sm" style={{ margin: "6px 0 0" }}>{t.sugerencia}</p>
+      {/* Las citas resuelven contra la biblioteca del atleta (BIBLIO_SEED). */}
+      <RefChips ids={t.citas} biblio={st.biblio} onOpen={() => { }} />
+      {t.opciones.length > 0 ? (<div style={{ marginTop: 8 }}>
+        {t.opciones.map((op) => {
+          const clave = t.momento + "|" + op.nombre;
+          return (<div key={clave} className="between" style={{ padding: "6px 0", borderTop: "1px solid var(--line)", gap: 8 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="sm" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{op.nombre}</div>
+              <div className="xs muted mono">{op.encontrado && op.por100g?.kcal != null ? `${op.por100g.kcal} kcal/100 g` : "sin datos nutricionales"}</div>
+            </div>
+            <input inputMode="decimal" value={grams[clave] ?? (op.por100g?.kcal != null ? 150 : 100)}
+              onChange={(e) => setGrams((g) => ({ ...g, [clave]: e.target.value }))}
+              style={{ width: 60, textAlign: "right" }} aria-label={"Gramos de " + op.nombre} />
+            <button className="btn sm primary" style={{ width: 72 }} disabled={registrando === clave} onClick={() => registrar(t, op)}>Lo como</button>
+          </div>);
+        })}
+      </div>) : <p className="xs muted" style={{ margin: "8px 0 0" }}>Sin opciones en tu catálogo para este momento.</p>}
+    </div>))}
+
+    {/* Atribución exigida por la licencia ODbL de Open Food Facts. */}
+    {data.atribucion && (<p className="xs muted" style={{ margin: "4px 0 0" }}>
+      <a href={data.atribucion.enlace} target="_blank" rel="noreferrer">{data.atribucion.texto}</a>
+    </p>)}
+
+    {data.restante && (<div className="card flat">
+      <p className="xs muted" style={{ margin: 0 }}>Te quedan <span className="mono">{Math.round(data.restante.kcal)} kcal</span> y <span className="mono">{Math.round(data.restante.proteina)} g</span> de proteína hoy.</p>
+    </div>)}
+
+    {error && <p className="xs" style={{ color: "var(--alert)", marginTop: 8 }}>{error}</p>}
+  </div>);
+}
+
 function Nutricion({ st, P, update, notify, curW, today, wk, onClose }) {
   const [vista, setVista] = useState("hoy");
   const [dia, setDia] = useState(wk.fuera ? 0 : wk.dayIdx);
@@ -4044,7 +4166,7 @@ function Nutricion({ st, P, update, notify, curW, today, wk, onClose }) {
       <button className="btn sm ghost" onClick={onClose}>Cerrar</button></div>
 
     <div className="row" style={{ margin: "12px 0", gap: 6 }}>
-      {[["hoy", "Día"], ["semana", "Semana"], ["plan", "Mi plan"], ["como", "Cómo se calcula"]].map(([k, l]) =>
+      {[["hoy", "Día"], ["semana", "Semana"], ["plan", "Mi plan"], ["hoycome", "Hoy como"], ["como", "Cómo se calcula"]].map(([k, l]) =>
         <button key={k} className={"chip" + (vista === k ? " on" : "")} style={{ flex: 1 }} onClick={() => setVista(k)}>{l}</button>)}
     </div>
 
@@ -4105,6 +4227,9 @@ function Nutricion({ st, P, update, notify, curW, today, wk, onClose }) {
         </div>))}
       </details>
     </>)}
+
+    {/* ---------- HOY COMO (Fase 15) ---------- */}
+    {vista === "hoycome" && (<QueComoHoy st={st} notify={notify} curW={curW} today={today} wk={wk} n={n} dia={dia} />)}
 
     {/* ---------- SEMANA ---------- */}
     {vista === "semana" && (<>

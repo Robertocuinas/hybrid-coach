@@ -15,6 +15,8 @@ import { requireActiveProfile } from "../middleware/authorization.js";
 import { createFoodProvider } from "../integrations/foods/factory.js";
 import { macrosPara, totalDiario } from "../integrations/foods/types.js";
 import { borrarConsumo, listarConsumoDelDia, registrarConsumo } from "../db/repositories/consumedFoods.js";
+import { listMealCatalog } from "../db/repositories/nutrition.js";
+import { generarRecomendacionDia } from "../domain/nutrition/diario.js";
 
 const router = express.Router();
 router.use(requireAuth, requireActiveProfile);
@@ -138,6 +140,99 @@ router.get("/dia", async (req, res, next) => {
     } : null;
 
     res.json({ ok: true, fecha: dia, registros, consumido, objetivo, restante });
+  } catch (error) { next(error); }
+});
+
+/* ============================================================
+   RECOMENDACIÓN DIARIA DE COMIDAS (Fase 15)
+
+   Une tres fundamentos y los declara en la respuesta:
+     1. Base de datos  → objetivo de `nutrition_targets` del día, catálogo
+                         propio del atleta (`meal_catalog`) y lo ya consumido
+                         (`consumed_foods`) para el progreso.
+     2. FOOD_PROVIDER  → Open Food Facts enriquece las opciones del catálogo
+                         con macros REALES por 100 g. Si el proveedor cae o no
+                         está configurado, se degrada al catálogo propio SIN
+                         inventar macros y lo dice en `nota` + `fuente`.
+     3. Evidencia      → cada toma lleva sus `citas` (ids n* de la bibliografía
+                         de nutrición); la generación es determinista, no LLM.
+
+   Contrato de salida (claro, 15.2):
+     { ok, fecha, fuente, evidenciaSuficiente, contexto, objetivo, tomas[],
+       consumido, restante, atribucion, nota } */
+router.get("/recomendacion", async (req, res, next) => {
+  try {
+    const dia = fechaValida(req.query.fecha) || HOY();
+    const contexto = typeof req.query.contexto === "string" ? req.query.contexto : "suave";
+
+    /* 1. Objetivo del día: lo publica el motor determinista del cliente. Sin
+       fila, la recomendación es genérica y se declara evidencia insuficiente. */
+    const obj = await pool.query(
+      `SELECT kcal, proteina_g, carbohidrato_g, grasa_g, fibra_g, agua_l
+        FROM nutrition_targets WHERE athlete_profile_id = $1 AND fecha = $2
+        ORDER BY id LIMIT 1;`,
+      [perfil(req), dia]
+    );
+    const o = obj.rows[0];
+    const objetivo = o
+      ? { kcal: Number(o.kcal), proteina: Number(o.proteina_g), carbohidrato: Number(o.carbohidrato_g),
+          grasa: Number(o.grasa_g), fibra: Number(o.fibra_g) || null, agua: Number(o.agua_l) || null }
+      : null;
+
+    /* Catálogo propio del atleta, agrupado por momento. */
+    const filas = await listMealCatalog(perfil(req));
+    const catalogo = { desayuno: [], comida: [], cena: [], snack: [] };
+    for (const f of filas) if (f.categoria in catalogo) catalogo[f.categoria].push(f.opcion);
+
+    /* 2. FOOD_PROVIDER: enriquecer hasta 8 opciones distintas con datos reales.
+       Cualquier fallo de una opción se ignora (se queda sin enriquecer); si el
+       proveedor entero falta, se degrada al catálogo propio. */
+    const proveedor = getAlimentos();
+    const alimentos = {};
+    let fuente = "catalogo_propio";
+    let nota = null;
+    const nombres = [...new Set([...catalogo.desayuno, ...catalogo.comida, ...catalogo.cena, ...catalogo.snack])].slice(0, 8);
+    if (proveedor) {
+      let alguno = false;
+      await Promise.all(nombres.map(async (nombre) => {
+        try {
+          const res = await proveedor.buscar(nombre, { limite: 1 });
+          const a = res && res[0];
+          if (a && a.por100g && a.por100g.kcal != null) { alimentos[nombre] = a; alguno = true; }
+        } catch { /* falla esta opción: se queda sin enriquecer */ }
+      }));
+      if (alguno) fuente = "openfoodfacts";
+      else nota = "Open Food Facts no devolvió datos en esta consulta: se muestra el catálogo propio sin macros.";
+    } else {
+      nota = "Open Food Facts no está disponible en este servidor: se usa el catálogo propio sin macros.";
+    }
+
+    /* 3. Generación determinista + citas. */
+    const rec = generarRecomendacionDia({ objetivo, catalogo, alimentos, contexto });
+
+    /* Progreso del día: lo ya consumido y lo que queda del objetivo. */
+    const registros = await listarConsumoDelDia(perfil(req), dia);
+    const consumido = totalDiario(registros.map((r) => ({
+      kcal: r.kcal === null ? null : Number(r.kcal),
+      proteina: Number(r.proteina_g) || 0,
+      carbohidrato: Number(r.carbohidrato_g) || 0,
+      grasa: Number(r.grasa_g) || 0,
+      fibra: Number(r.fibra_g) || 0,
+    })));
+    const restante = objetivo ? {
+      kcal: Math.round((objetivo.kcal - consumido.kcal) * 10) / 10,
+      proteina: Math.round((objetivo.proteina - consumido.proteina) * 10) / 10,
+      carbohidrato: Math.round((objetivo.carbohidrato - consumido.carbohidrato) * 10) / 10,
+      grasa: Math.round((objetivo.grasa - consumido.grasa) * 10) / 10,
+    } : null;
+
+    const atribucion = fuente === "openfoodfacts" ? conAtribucion(proveedor) : null;
+
+    res.json({
+      ok: true, fecha: dia, fuente, evidenciaSuficiente: rec.evidenciaSuficiente,
+      contexto: rec.contexto, objetivo, tomas: rec.tomas, consumido, restante,
+      atribucion, nota,
+    });
   } catch (error) { next(error); }
 });
 

@@ -38,7 +38,7 @@ siguiente a Por hacer. Ejecuta el agente `stevejobs` (hermes -p stevejobs) por f
 - **14.7 Smoke de aceptación** — generar propuesta y aceptarla. Hacer: script/prueba. NO: saltarse aceptación. Terminado: flujo generar→aceptar verde.
 
 ## Fase 15 — Recomendación de comidas diarias (RAG + bases de datos)
-**Estado:** Por hacer
+**Estado:** Hecho (implementado y verificado: GET /api/foods/recomendacion con FOOD_PROVIDER+degradación, citas n*, 6 tests de diario.js, UI QueComoHoy con registro en consumed_foods)
 **Descripción:** Comidas diarias fundamentadas en bibliografía y bases de datos de alimentos.
 **Hacer:** revisar tablas nutrición · generación diaria RAG+BBDD · conectar FOOD_PROVIDER · citar evidencia · registrar consumed_foods · UI que-como-hoy.
 **NO hacer:** valores fijos sin fuente · solo reglas sueltas · mostrar sin validación.
