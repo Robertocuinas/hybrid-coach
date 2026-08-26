@@ -52,7 +52,7 @@ siguiente a Por hacer. Ejecuta el agente `stevejobs` (hermes -p stevejobs) por f
 - **15.6 UI que-como-hoy** — vista de comidas (botón ya en HybridCoach.jsx:3771). Hacer: renderizar. NO: romper vista. Terminado: atleta ve comidas del día.
 
 ## Fase 16 — Registro y progreso visibles
-**Estado:** Por hacer
+**Estado:** Hecho (rama fase-16, verificado con build + test PGlite del sync). Bug #4 mitigado en server/routes/sync.js: borrado selectivo por clave natural (fecha+código) + upsert en recovery_logs, en vez de DELETE masivo. 16.1 mapeo documentado en docs/roadmap/fase-16-registro-progreso.md. 16.2 formulario de registro ya presente (RunForm/StrengthForm/CheckIn, código LIBRE, RPE). 16.3 añadida gráfica de RPE a Progreso. 16.5 verificado por cableado: el registro llega a completed_sessions vía sync y buildCanonicalPlannerContext ya lo lee.
 **Descripción:** El atleta registra lo hecho y ve su progreso (obligatorias #3 y #5 del marco).
 **Hacer:** revisar tablas · UI registrar · vista progreso · mitigar bug #4 (sync borra historial) · registro alimenta Fase 14.
 **NO hacer:** borrar historial ajeno en sync · métricas confusas.
