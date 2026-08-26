@@ -23,7 +23,7 @@ siguiente a Por hacer. Ejecuta el agente `stevejobs` (hermes -p stevejobs) por f
 - **13.7 Cerrar documentación** — marcar casillas en docs/roadmap/fase-13. Hacer: actualizar ficha. NO: marcar sin verificar. Terminado: ficha refleja Hecho.
 
 ## Fase 14 — Generación semanal adaptativa (IA+RAG por disponibilidad)
-**Estado:** Por hacer
+**Estado:** Hecho (implementado y verificado: 14.3 frontend envía disponibilidad, 14.4/14.5/14.6 cubiertos por tests DB-free, 14.1 aceptación vía esUUID ya arreglado en 011b9c4, smoke 14.7 presente)
 **Descripción:** Cada semana la IA genera la propuesta según disponibilidad real y macro hasta la carrera, con RAG.
 **Hacer:** confirmar aceptación · modelar availability · enviar disponibilidad · usarla en contexto · validar coherencia macro · citar evidencia · smoke aceptación.
 **NO hacer:** romper aceptación ya funcionante · semana aislada sin macro · aplicar sin aceptación explícita.
