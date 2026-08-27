@@ -75,6 +75,35 @@ export function refsRelevantesLexico(fichas, consulta, { max = 8, min = 3, umbra
 
 /* ---------- Comparación ---------- */
 
+export function titulosDocumentos(ids, fichas) {
+  return ids.map((id) => fichas.find((f) => f.id === id)?.titulo || id);
+}
+
+export function construirResultado(pregunta, docsNuevo, docsAntiguo, {
+  hayEvidencia, fragmentos, citasConPagina, motivo, relleno,
+} = {}) {
+  const perdidos = [...docsAntiguo].filter((id) => !docsNuevo.has(id));
+  const ganados = [...docsNuevo].filter((id) => !docsAntiguo.has(id));
+  return {
+    pregunta,
+    nuevo: {
+      hayEvidencia,
+      fragmentos,
+      documentos: [...docsNuevo].map((id) => id),
+      citasConPagina,
+      motivo: motivo || null,
+    },
+    antiguo: {
+      documentos: [...docsAntiguo].map((id) => id),
+      relleno,
+    },
+    posibleRegresion: perdidos.length > 0 && hayEvidencia,
+    documentosPerdidos: perdidos,
+    documentosNuevos: ganados,
+    regresion: perdidos.map((id) => ({ id, titulo: id })),
+  };
+}
+
 export async function compararSistemas(profileId, preguntas, deps) {
   const { db = pool, repo, embeddingProvider, rerankProvider, indice, config } = deps;
   const datos = await cargarContexto(profileId, { db });

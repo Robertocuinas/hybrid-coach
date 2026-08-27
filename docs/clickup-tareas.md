@@ -64,8 +64,16 @@ siguiente a Por hacer. Ejecuta el agente `stevejobs` (hermes -p stevejobs) por f
 - **16.4 Mitigar bug #4 (sync borra historial)** — sync.js:212 borra completed_sessions en cada sync. Cerrar dual-write al cumplir conciliación (readyForCutover, 7 días verdes) o proteger el borrado. Hacer: proteger historial ajeno. NO: dejar borrado masivo en producción. Terminado: sync no destruye historial del servidor.
 - **16.5 Registro alimenta la semana adaptativa** — contexto de Fase 14 lee registro real. Hacer: conectar. NO: generar a ciegas. Terminado: la semana usa historial real.
 
-## Fase 10 — Evaluación y observabilidad del RAG
-**Estado:** Por hacer
+## Fase 10 — Evaluación formal y observabilidad del RAG
+**Estado:** Hecho (parcial — infra lista; línea base en producción bloqueada por falta de DB/IA remota en este entorno)
+
+- **10.1 Dataset de evaluación** — `eval/dataset.jsonl` con 24 preguntas reales (8 del array `sugerencias` del Coach + dominio + 4 `debe_responder:false`). IDs referencian chunks reales (n*, b*). ✅
+- **10.2 Métricas de retrieval** — `eval/metrics.js` (precision@k, recall@k, MRR, hit rate) + `eval/metrics.test.js` (8/8 pasan, DB-free). ✅
+- **10.3 Observabilidad** — migración `0015_ai_query_logs`, repo `aiQueryLogs.js` (create/readByProfile/deleteExpired), wrapper `aiLogging.js` (guarda protocolo SIN datos de salud) + purga 90 d. Pendiente: ejecutar migración y poblar en staging (requiere DB PostgreSQL). ⚠️
+- **10.4 Umbral de evidencia** — `RAG_MIN_SCORE`=0.25 validado en [0,1] (no cero). Test de retrieval respeta umbral. ✅
+- **10.5 Comparar RAG vs léxico** — `comparacion.js` + `POST /api/coach/comparar` existen; test DB-free añadido (`comparacion.evidence.test.js`, 5/5). ✅
+
+Bloqueado en este entorno: calibración empírica del umbral con tráfico real (10.4b) y línea base en producción (10.3b) — requieren DB + IA remota.
 **Descripción:** Garantizar que la base científica es real (dataset + métricas de retrieval).
 **Hacer:** dataset · métricas · observabilidad · validar umbral · comparar RAG vs léxico.
 **NO hacer:** declarar calidad sin medir · apagar léxico sin comparar.

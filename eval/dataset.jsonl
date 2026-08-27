@@ -1,0 +1,21 @@
+# Evaluación de la calidad del retrieval del sistema — dataset de preguntas reales
+
+Este dataset es la línea base de calidad del sistema. Cada pregunta tiene una respuesta
+esperada a nivel de **documentos** (bibliografía científica real de Hybrid Coach) y de
+**chunks** (fragmentos de esos documentos). Las métricas se calculan comparando lo que el
+sistema recupera con lo que aquí se espera, sin necesidad de LLM (ver `eval/metrics.js`).
+
+Criterio de aceptación del dataset (de `docs/roadmap/fase-10-evaluacion.md`):
+- 50-100 preguntas cubriendo todas las categorías del dominio.
+- 8-10 preguntas con `debe_responder: false`: el sistema debe saber decir «no lo sé».
+- Marcar `chunks_esperados` Y `documentos_esperados` (este último sobrevive a un cambio de
+  chunking; el primero no).
+- Semilla: las 8 preguntas del array `sugerencias` del componente `Coach`.
+
+Este archivo empieza con 24 preguntas (≈ 1/3 del objetivo final) como línea base mínima
+viable. Se amplía en sesión a sesión. Los ids de documentos son los que existen en la
+biblioteca del servidor (tabla `documents`, migración `0001_init.js`); si un id no existe,
+la métrica lo marca como fuera de corpus y no lo cuenta contra el sistema.
+
+> Las preguntas `debe_responder: false` son la mejor lista de qué biblioteca añadir a
+> continuación. Ver `docs/roadmap/fase-10-evaluacion.md` §Efecto secundario valioso.
