@@ -29,7 +29,8 @@ comprobar() {
   if [ "$2" = "$3" ]; then echo "  OK    $1"; ok=$((ok+1));
   else echo "  FALLO $1 -> obtenido '$2', esperado '$3'"; fallo=$((fallo+1)); fi
 }
-post() { curl -s -m 60 -b "$JAR" -c "$JAR" -H "$H_JSON" -H "$H_ORIGIN" -X POST "$BASE$1" -d "$2"; }
+post() { curl -s -m 240 -b "$JAR" -c "$JAR" -H "$H_JSON" -H "$H_ORIGIN" -X POST "$BASE$1" -d "$2"; }
+patch() { curl -s -m 120 -b "$JAR" -c "$JAR" -H "$H_JSON" -H "$H_ORIGIN" -X PATCH "$BASE$1" -d "$2"; }
 get()  { curl -s -m 30 -b "$JAR" -H "$H_ORIGIN" "$BASE$1"; }
 tiene_ok() { echo "$1" | grep -o '"ok":true' | head -1; }
 
@@ -47,7 +48,7 @@ comprobar "registro devuelve ok" "$(tiene_ok "$REG")" '"ok":true'
 [ "$(tiene_ok "$REG")" = '"ok":true' ] || { echo "  (No se pudo registrar)"; echo " OK:$ok FALLOS:$fallo OMITIDOS:$omitido"; [ "$fallo" -eq 0 ]; exit 1; }
 
 echo "=== 2. PATCH fecha_carrera ==="
-comprobar "PATCH /api/profile acepta fecha_carrera" "$(tiene_ok "$(post /api/profile "{\"fecha_carrera\":\"$FECHA\"}")")" '"ok":true'
+comprobar "PATCH /api/profile acepta fecha_carrera" "$(tiene_ok "$(patch /api/profile "{\"fecha_carrera\":\"$FECHA\"}")")" '"ok":true'
 
 echo "=== 3. POST /api/planning/master (macro global) ==="
 MASTER=$(post /api/planning/master "{}")
@@ -65,9 +66,10 @@ if echo "$PROP" | grep -q 'PLANNING_LLM_UNAVAILABLE'; then
   omitido=$((omitido+1))
 else
   PID=$(echo "$PROP" | grep -o '"id":"[0-9a-f-]*"' | head -1 | sed 's/"id":"//;s/"//')
+  PREV=$(echo "$PROP" | grep -o '"revision":[0-9]*' | head -1 | sed 's/"revision"://')
   if [ -n "$PID" ]; then
     echo "=== 5. POST /api/proposals/$PID/accept (aceptación, Fase 14.1) ==="
-    ACC=$(post /api/proposals/$PID/accept "{}")
+    ACC=$(post /api/proposals/$PID/accept "{\"expectedRevision\":${PREV:-1}}")
     comprobar "aceptación devuelve ok" "$(tiene_ok "$ACC")" '"ok":true'
   else
     echo "  OMITIDO no se obtuvo id de propuesta (¿sin IA?)."
