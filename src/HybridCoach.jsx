@@ -2115,6 +2115,11 @@ function PlanSemana({ st, P, curW, wk, update, notify, setTab, today, abrirDia,
     if (!sel.length) return notify("Marca al menos un día disponible.");
     setPlanningBusy("generate"); setPlanningError(""); setPlanningErrorCode(""); setDraft(null);
     try {
+      /* availabilityDays es la disponibilidad REAL que el atleta acaba de
+         marcar en el panel (estado `sel`), no un valor hardcodeado: la semana
+         adaptativa se genera a partir de los días que de verdad tiene. El
+         servidor la combina con la disponibilidad vigente de la tabla
+         `availability` y la pasa al orquestador (Fase 14). */
       const proposal = await createWeekProposal(w, {
         availabilityDays: [...sel].sort((a, b) => a - b), gym, correr, dolor, fatiga,
       });

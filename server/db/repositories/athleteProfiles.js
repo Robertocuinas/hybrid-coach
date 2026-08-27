@@ -62,6 +62,26 @@ export async function listActiveInjuries(profileId) {
   return rows;
 }
 
+/* Disponibilidad semanal del atleta (tabla `availability`).
+ *
+ *   Qué guarda: una sola fila "vigente" por atleta con la disponibilidad que
+ *   rige desde `vigente_desde` (fecha). Sus columnas:
+ *     - athlete_profile_id : dueño de la disponibilidad.
+ *     - vigente_desde      : fecha de inicio de esta disponibilidad (la más
+ *                            reciente <= hoy es la que aplica).
+ *     - dias               : int[] con los índices de día disponibles, 0=lunes
+ *                            … 6=domingo. Es lo que consume el planificador para
+ *                            encajar la semana (nunca se inventa fuera de aquí).
+ *     - min_gym / min_run / min_finde : minutos mínimos estimados de fuerza,
+ *                            carrera y fin de semana, respectivamente, para que
+ *                            la propuesta adaptive respete el tiempo real.
+ *
+ *   No es un histórico: getCurrentAvailability devuelve la fila vigente
+ *   (vigente_desde <= hoy, la más reciente). setAvailability inserta una fila
+ *   nueva; quien lea debe quedarse con la vigente, no acumular. El motor
+ *   determinista y el orquestador IA la usan solo como SUGERENCIA de días:
+ *   el plan recomienda, nunca excluye (CLAUDE.md §4.10), así que registrar una
+ *   sesión sigue siendo siempre posible aunque caiga fuera de `dias`. */
 export function setAvailability(profileId, { vigenteDesde, dias, minGym, minRun, minFinde }) {
   return insertRow("availability", {
     athlete_profile_id: profileId,
