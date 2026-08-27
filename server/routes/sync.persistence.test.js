@@ -144,3 +144,69 @@ test("un snapshot persiste perfil completo, disponibilidad, lesiones, plan maest
   ], "la revisión táctica aceptada no reescribe los slots del plan maestro");
   await db.close();
 });
+
+/* 16.4 — El sync ya NO destruye el historial ajeno del servidor (bug #4).
+   Una sesión anotada directamente en el servidor, ausente del snapshot del
+   cliente, debe sobrevivir a la sincronización; y reenviar el mismo snapshot
+   no debe crear duplicados (borrado selectivo idempotente). */
+test("el sync respeta el historial ajeno del servidor y es idempotente (bug #4)", async () => {
+  const db = new PGlite();
+  await db.exec(`
+    CREATE TYPE running_origen AS ENUM ('manual','strava');
+    CREATE TABLE athlete_profiles (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), nombre text, edad int, sexo text,
+      altura_cm int, peso_kg numeric, grasa_pct numeric, distancia_objetivo text, fecha_carrera date,
+      meta_tipo text, meta_tiempo text, prioridades text[], exp_carrera text, km_semana int,
+      sesiones_carrera int, tirada_larga_min int, ritmo_comodo text, paron text, superficie text[],
+      exp_fuerza text, equipamiento text, cargas jsonb, tecnica text, estructural text[], cirugias text,
+      banderas text[], momento_entreno text, cross_training text, horas_sueno numeric, calidad_sueno text,
+      estres numeric, trabajo text, nutricion_objetivo text, suplementos text[], reloj text,
+      current_complaints jsonb NOT NULL DEFAULT '[]'::jsonb, updated_at timestamptz DEFAULT now());
+    CREATE TABLE training_plans (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), athlete_profile_id uuid,
+      version int NOT NULL DEFAULT 1, activo boolean, structure_hash text);
+    CREATE TABLE training_weeks (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), training_plan_id uuid,
+      numero_semana int, inicio date, UNIQUE(training_plan_id,numero_semana));
+    CREATE TABLE planned_sessions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), training_week_id uuid,
+      dia_semana int, codigo_sesion text, tipo text, UNIQUE(training_week_id,codigo_sesion));
+    CREATE TABLE completed_sessions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), athlete_profile_id uuid,
+      planned_session_id uuid, fecha date, tipo text, semana int, created_at timestamptz DEFAULT now());
+    CREATE TABLE running_sessions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), completed_session_id uuid REFERENCES completed_sessions(id) ON DELETE CASCADE,
+      codigo_sesion text, distancia_km numeric, duracion_min int, ritmo numeric, fc_media numeric, fc_max numeric,
+      desnivel numeric, cadencia numeric, rpe int, dolor int, notas text, origen running_origen, external_id text);
+    CREATE TABLE strength_sessions (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), completed_session_id uuid REFERENCES completed_sessions(id) ON DELETE CASCADE, codigo_sesion text);
+    CREATE TABLE strength_exercises (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), nombre text, athlete_profile_id uuid);
+    CREATE TABLE strength_sets (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), strength_session_id uuid REFERENCES strength_sessions(id) ON DELETE CASCADE,
+      strength_exercise_id uuid, orden int, peso_kg numeric, reps int, rir int, notas text);
+    CREATE TABLE feedback_logs (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), athlete_profile_id uuid, fecha date,
+      semana int, rpe int, sensacion text, dolor numeric, zona_dolor text, tipo_dolor text, cuando_aparece text, energia numeric, comentario text);
+    CREATE TABLE recovery_logs (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), athlete_profile_id uuid, fecha date,
+      horas_sueno numeric, calidad_sueno numeric, fatiga numeric, agujetas numeric, estres numeric, motivacion numeric, dolor numeric);
+  `);
+  const profile = await db.query(`INSERT INTO athlete_profiles (nombre) VALUES ('Servidor') RETURNING id`);
+  const profileId = profile.rows[0].id;
+  /* Sesión anotada directamente en el servidor, que el cliente NO conoce. */
+  await db.query(`INSERT INTO completed_sessions (athlete_profile_id, fecha, tipo, semana)
+    VALUES ($1, '2026-07-01', 'running', 1)`, [profileId]);
+
+  const snapshot = {
+    capturedAt: "2026-08-14T10:00:00Z",
+    profile: {
+      id: "local-x", perfil: { nombre: "Servidor" },
+      running: [{ id: "r1", date: "2026-08-12", semana: 1, session_code: "RUN A", distancia_km: 8.5, duracion_min: 45, source: "manual" }],
+      strength: [], checkins: [], recovery: [],
+    },
+    totals: { runningCount: 1, km: 8.5, strengthSets: 0, kg: 0, checkins: 0 },
+  };
+  await replaceProfileState(db, profileId, snapshot);
+  let fechas = (await db.query(`SELECT fecha::text FROM completed_sessions WHERE athlete_profile_id=$1 ORDER BY fecha`, [profileId])).rows.map((r) => r.fecha);
+  assert.deepEqual(fechas, ["2026-07-01", "2026-08-12"], "el historial ajeno del servidor sobrevive al primer sync");
+
+  /* Reenvío idéntico: no debe duplicar la sesión del cliente ni tocar la ajena. */
+  await replaceProfileState(db, profileId, snapshot);
+  fechas = (await db.query(`SELECT fecha::text FROM completed_sessions WHERE athlete_profile_id=$1 ORDER BY fecha`, [profileId])).rows.map((r) => r.fecha);
+  assert.deepEqual(fechas, ["2026-07-01", "2026-08-12"], "el reenvío es idempotente y no borra lo ajeno");
+
+  /* La sesión ajena conserva su detalle (no se cepilló por cascada). */
+  const totales = await db.query(`SELECT count(*)::int AS n FROM running_sessions rs JOIN completed_sessions cs ON cs.id=rs.completed_session_id WHERE cs.athlete_profile_id=$1`, [profileId]);
+  assert.equal(totales.rows[0].n, 1, "solo la sesión del cliente tiene detalle de carrera");
+  await db.close();
+});

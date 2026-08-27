@@ -3473,6 +3473,9 @@ function Progreso({ P, curW }) {
     }).filter((l) => l.serie.length > 1).slice(0, 6);
   }, [P]);
   const rec = P.recovery.slice(-14).map((r) => ({ d: r.date.slice(5), sueno: +r.sueno || null, fatiga: +r.fatiga || null, dolor: +r.dolor || 0 }));
+  /* RPE de las últimas sesiones con sensación anotada: cierra el triángulo
+     carga/esfuerzo/recuperación de la vista de progreso (§16.3). */
+  const rpe = P.checkins.filter((c) => c.rpe != null).slice(-21).map((c) => ({ d: c.date.slice(5), rpe: +c.rpe }));
   const ax = { stroke: "#8CA3B8", fontSize: 10, fontFamily: "IBM Plex Mono" };
   const tt = { contentStyle: { background: "#16222F", border: "1px solid #27394C", borderRadius: 8, fontSize: 12 }, labelStyle: { color: "#8CA3B8" } };
 
@@ -3516,6 +3519,13 @@ function Progreso({ P, curW }) {
         <Line type="monotone" dataKey="fatiga" name="fatiga" stroke="#8CA3B8" strokeWidth={2} dot={false} />
         <Line type="monotone" dataKey="dolor" name="dolor" stroke="#E2685F" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer>)
         : <p className="sm muted">Sin registros de recuperación.</p>}
+    </div>
+    <div className="card"><h3>Esfuerzo percibido (RPE)</h3>
+      {rpe.length ? (<ResponsiveContainer width="100%" height={140}><LineChart data={rpe} margin={{ top: 10, right: 4, left: -22, bottom: 0 }}>
+        <CartesianGrid stroke="#27394C" vertical={false} /><XAxis dataKey="d" tick={ax} axisLine={false} tickLine={false} />
+        <YAxis tick={ax} axisLine={false} tickLine={false} domain={[1, 10]} /><Tooltip {...tt} />
+        <Line type="monotone" dataKey="rpe" name="RPE" stroke="#E2685F" strokeWidth={2} dot={{ r: 3 }} /></LineChart></ResponsiveContainer>)
+        : <p className="sm muted">Sin RPE anotado. Regístralo tras entrenar y verás tu tendencia de esfuerzo.</p>}
     </div>
     <div className="card"><h3>Adherencia</h3>
       <div style={{ marginTop: 8 }}>{weekly.map((w) => (<div className="row" key={w.sem} style={{ marginBottom: 6 }}>
