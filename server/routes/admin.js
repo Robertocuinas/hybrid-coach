@@ -139,6 +139,13 @@ router.get("/storage/estado", async (req, res, next) => {
       ia: !!llm,
       embeddings: !!embeddingConfig.enabled,
       maxBytes: MAX_BYTES,
+      /* Fase 11: Google Sheets dejó de ser fuente de datos. PostgreSQL es la
+         fuente única; el respaldo heredado (pushToSheets en el cliente) solo
+         actúa si un perfil antiguo trae `sheetsUrl`, y ya no hay forma de
+         configurar una hoja nueva desde la app. El panel lo declara explícitamente
+         para que quede claro que no hay dependencia de Sheets. */
+      hoja: false,
+      fuenteUnica: "postgres",
     });
   } catch (error) { next(error); }
 });

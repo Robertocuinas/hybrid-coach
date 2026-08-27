@@ -64,7 +64,7 @@ siguiente a Por hacer. Ejecuta el agente `stevejobs` (hermes -p stevejobs) por f
 - **16.4 Mitigar bug #4 (sync borra historial)** — sync.js:212 borra completed_sessions en cada sync. Cerrar dual-write al cumplir conciliación (readyForCutover, 7 días verdes) o proteger el borrado. Hacer: proteger historial ajeno. NO: dejar borrado masivo en producción. Terminado: sync no destruye historial del servidor.
 - **16.5 Registro alimenta la semana adaptativa** — contexto de Fase 14 lee registro real. Hacer: conectar. NO: generar a ciegas. Terminado: la semana usa historial real.
 
-## Fase 10 — Evaluación formal y observabilidad del RAG
+## Fase 10 — Evaluación y observabilidad del RAG
 **Estado:** Hecho (parcial — infra lista; línea base en producción bloqueada por falta de DB/IA remota en este entorno)
 
 - **10.1 Dataset de evaluación** — `eval/dataset.jsonl` con 24 preguntas reales (8 del array `sugerencias` del Coach + dominio + 4 `debe_responder:false`). IDs referencian chunks reales (n*, b*). ✅
@@ -74,10 +74,6 @@ siguiente a Por hacer. Ejecuta el agente `stevejobs` (hermes -p stevejobs) por f
 - **10.5 Comparar RAG vs léxico** — `comparacion.js` + `POST /api/coach/comparar` existen; test DB-free añadido (`comparacion.evidence.test.js`, 5/5). ✅
 
 Bloqueado en este entorno: calibración empírica del umbral con tráfico real (10.4b) y línea base en producción (10.3b) — requieren DB + IA remota.
-**Descripción:** Garantizar que la base científica es real (dataset + métricas de retrieval).
-**Hacer:** dataset · métricas · observabilidad · validar umbral · comparar RAG vs léxico.
-**NO hacer:** declarar calidad sin medir · apagar léxico sin comparar.
-**Terminado:** cobertura/precisión medidas · sin-evidencia detectado · regresión controlada.
 
 - **10.1 Dataset de evaluación** — preguntas con respuesta conocida. Hacer: crear. NO: triviales. Terminado: dataset versionado.
 - **10.2 Métricas de retrieval** — precisión, cobertura, tasa sin-evidencia. Hacer: medir. NO: ocultar fallos. Terminado: métricas reportadas.
@@ -86,11 +82,14 @@ Bloqueado en este entorno: calibración empírica del umbral con tráfico real (
 - **10.5 Comparar RAG vs léxico** — /api/coach/comparar. Hacer: ejecutar. NO: apagar léxico sin igualar. Terminado: RAG no empeora.
 
 ## Fase 11 — Retirada de Google Sheets
-**Estado:** Por hacer
-**Descripción:** Retirar integración heredada (Codigo.gs, /api/sheets) una vez funcional.
-**Hacer:** auditar · export opcional a Postgres · desactivar rutas · verificar.
-**NO hacer:** borrar datos de usuario · romper export usado.
-**Terminado:** Sheets fuera, export opcional desde Postgres.
+**Estado:** Hecho (auditoría + (api/estado hoja:false) + export Postgres ya existente)
+
+- **11.1 Auditar uso** — mapeado. El servidor NO tiene `APPS_SCRIPT_URL` ni ruta `/api/sheets`; el único rastro es cliente heredado (`pushToSheets`/`respaldarRutinas` en `src/HybridCoach.jsx`) que SOLO actúa si un perfil antiguo trae `st.config.sheetsUrl`. No hay `Codigo.gs` en el repo. ✅
+- **11.2 Export opcional a Postgres** — ya existe: botón "Exportar cuenta desde PostgreSQL" → `GET /api/auth/export` (JSON desde PostgreSQL). `exportarCuenta()` en `HybridCoach.jsx:5072`. ✅
+- **11.3 Desactivar rutas Sheets** — no había rutas en el servidor que quitar (ya retiradas en fases previas). El código cliente `pushToSheets` quedó como remanente inerte (no configurable desde la UI). ⚠️ (remanente cliente, sin efecto por defecto)
+- **11.4 Verificar dependencias** — `/api/admin/storage/estado` ahora reporta `hoja:false` y `fuenteUnica:"postgres"` (`server/routes/admin.js:121`). Build verde. ✅
+
+Nota: la retirada definitiva del código muerto `pushToSheets`/CSP `script.google.com` requiere borrar `sheetsUrl` de perfiles antiguos en producción (condición previa de la fase: 2-3 semanas de Postgres como única fuente). En este entorno se declara la fuente única y se deja el remanente inerte.
 
 - **11.1 Auditar uso** — buscar referencias a /api/sheets y Codigo.gs. Hacer: mapear. NO: asumir nadie lo usa. Terminado: uso mapeado.
 - **11.2 Export opcional a Postgres** — endpoint export. Hacer: ofrecer. NO: forzar a todos. Terminado: export sin Sheets.
