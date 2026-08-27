@@ -8,7 +8,7 @@ siguiente a Por hacer. Ejecuta el agente `stevejobs` (hermes -p stevejobs) por f
 ---
 
 ## Fase 13 — Onboarding funcional (ficha → primer plan)
-**Estado:** Por hacer
+**Estado:** Hecho (implementado y verificado: build verde, backend acepta fecha_carrera, validación 13.3, smoke test presente)
 **Descripción:** Usuario nuevo rellena ficha (carrera+fecha, disponibilidad, nivel) y obtiene plan global hacia la carrera.
 **Hacer:** recoger fecha_carrera en ficha · persistir vía PATCH /api/profile (sin migración) · validar sin-fecha-no-genera · disparar createMasterPlan · mostrar plan · smoke E2E.
 **NO hacer:** crear migración (fecha_carrera ya existe en 0001_init.js:45/91) · tocar motor determinista/reglas · generar sin IA (debe avisar).
