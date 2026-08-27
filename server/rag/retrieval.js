@@ -7,6 +7,11 @@
    Flujo: ampliar consulta → vectorial + léxico en paralelo (con los filtros
    duros dentro de cada uno) → fusión RRF → reranking → umbral → top-K. */
 import { ampliarConsulta } from "./query-expansion.js";
+import { cacheRetrieval, CacheRetrieval } from "./cache.js";
+
+/* Cache de retrieval por repo (conexión a BD). WeakMap para no retener el repo
+   en memoria tras cerrar la conexión (Fase 12.3). */
+const repoCache = new WeakMap();
 
 /* Pesos de PESO_GRADO del cliente, conservados tal cual para no cambiar el
    criterio a mitad de migración. Solo se aplican si RAG_WEIGHT_BY_GRADE=true. */
@@ -56,7 +61,33 @@ const numero = (valor) => {
  * @param consulta  texto del atleta, en español
  * @param deps      { db, repo, embeddingProvider, rerankProvider, indice, config, contexto, filtros }
  */
-export async function recuperar(consulta, {
+export async function recuperar(consulta, deps) {
+  /* Fase 12.3: caché en memoria para no recomputar embeddings/búsqueda/rerank
+     en consultas repetidas (mismo texto + filtros + índice). Reduce latencia y
+     coste de proveedores sin tocar el motor determinista ni acoplar a un LLM.
+
+     Activación:
+     - Si se pasa `deps.cache` explícitamente, se usa (null = desactivado).
+     - Si no, se usa el singleton `cacheRetrieval` SOLO cuando
+       RETRIEVAL_CACHE_ENABLED=true (producción/Railway). En tests (node --test
+       sin la env var) queda desactivado para no colisionar entre consultas
+       repetidas sobre distintas bases de datos de prueba. */
+  const cache = deps.cache !== undefined
+    ? deps.cache
+    : (process.env.RETRIEVAL_CACHE_ENABLED === "true" ? cacheRetrieval : null);
+  const hit = cache?.obtener(consulta, deps.filtros, deps.indice);
+  if (hit) {
+    return {
+      ...hit,
+      diagnostico: { ...(hit.diagnostico || {}), desdeCache: true, latenciaMs: 0 },
+    };
+  }
+  const resultado = await recuperarReal(consulta, deps);
+  cache?.poner(consulta, deps.filtros, deps.indice, resultado);
+  return resultado;
+}
+
+async function recuperarReal(consulta, {
   db, repo, embeddingProvider, rerankProvider, indice, config, contexto = {}, filtros = {},
 }) {
   const inicio = Date.now();
