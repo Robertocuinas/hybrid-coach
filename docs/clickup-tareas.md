@@ -112,7 +112,7 @@ Limpieza de código muerto (12.1): eliminada referencia a `https://script.google
 - **12.4 Coste/latencia** — medir y documentar. Hacer: reporte. NO: omitir medición. Terminado: reporte disponible.
 
 ## Fase 17 — Ilustración de ejercicios (workout-guide)
-**Estado:** Por hacer
+**Estado:** Hecho (commit 5c7ad8f en main: WorkoutGuideProvider integrado, sin clave, atribución CC BY-SA en UI, tests verdes, arranca sin clave)
 **Descripción:** Añadir github.com/bryllim/workout-guide como proveedor de catálogo para ilustrar cada ejercicio con SVG. Paquete npm local (302 ejercicios, 906 SVG 512×512, 3 frames). Código MIT; assets CC BY-SA 4.0 (derivados de Everkinetic). Se integra en el patrón EXERCISE_PROVIDER; sin clave (catálogo local).
 **Hacer:** instalar paquete · adaptador WorkoutGuideProvider que cumple ExerciseProvider · registrar en factory (EXERCISE_PROVIDER=workoutguide, sin API key) · servir assets SVG · atribución visible · renderizar ilustración en UI · tests.
 **NO hacer:** tocar motor determinista ni PAT · proponer ejercicios que el atleta no puede (filtro de equipamiento sigue en local) · copiar binarios del material ajeno · romper fallback a PAT cuando no hay proveedor.
