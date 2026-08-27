@@ -90,11 +90,14 @@ siguiente a Por hacer. Ejecuta el agente `stevejobs` (hermes -p stevejobs) por f
 - **11.4 Verificar dependencias** — prueba de regresión. Hacer: probar. NO: ignorar colaterales. Terminado: build/pruebas verdes.
 
 ## Fase 12 — Optimización y pruebas de proveedores
-**Estado:** Por hacer
-**Descripción:** Pulir tras lo funcional: proveedores IA/embeddings y coste/latencia.
-**Hacer:** probar proveedores · optimizar prompts · cache retrieval · medir coste/latencia.
-**NO hacer:** acoplar a un proveedor · subir coste sin medir.
-**Terminado:** proveedores verificados · coste/latencia controlado.
+**Estado:** Hecho (parcial — cache retrieval + limpieza CSP; pruebas de proveedores bloqueadas por falta de llaves/cuota en este entorno)
+
+- **12.1 Pruebas de proveedores** — el sistema ya es neutral (cambio por env: `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, `RERANKER_PROVIDER`). Verificado en el código. ⚠️ Smoke real con cada proveedor (Anthropic/OpenAI/Ollama) requiere llaves/cuota — bloqueado en este entorno.
+- **12.2 Optimizar prompts** — `prompt.js` ya tiene grounding/citas separados y sin acoplamiento a proveedor. No se requieren cambios (el recorte de tokens ya está en `context.js` con lista blanca estricta). ✅
+- **12.3 Cache de retrieval** — `server/rag/cache.js` + integración en `recuperar()` (opt-in vía `RETRIEVAL_CACHE_ENABLED=true`, inyectable vía `deps.cache`). Test DB-free en `server/rag/cache.test.js` (6/6). ✅
+- **12.4 Coste/latencia** — el diagnóstico de `recuperar()` ya reporta `latenciaMs`; el logging de `aiLogging.js` (Fase 10) registra latencia por fase. Reporte empírico requiere ejecución en producción. ⚠️
+
+Limpieza de código muerto (12.1): eliminada referencia a `https://script.google.com` del CSP (`security.js`) — el servidor ya no usa Google Sheets. `googleapis` sigue en `package.json` como dependencia muerta (pendiente de verificar scripts que lo usen antes de quitar).
 
 - **12.1 Pruebas de proveedores** — Anthropic/OpenAI/Ollama por configuración. Hacer: smoke. NO: hardcodear. Terminado: cambio por env verificado.
 - **12.2 Optimizar prompts** — recortar tokens. Hacer: recortar contexto. NO: mutar system prompt sin prueba. Terminado: tokens en presupuesto.
