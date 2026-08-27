@@ -134,12 +134,17 @@ async function readCanonicalPlanningContextSnapshot(profileId, {
     ? [`SELECT * FROM training_plans WHERE id = $1 AND athlete_profile_id = $2;`, [planId, profileId]]
     : [`SELECT * FROM training_plans WHERE athlete_profile_id = $1 AND activo = true ORDER BY generado_en DESC LIMIT 1;`, [profileId]];
 
-  const [planResult, injuries, availability, completed, strengthSets, feedback, recovery, nutrition] = await Promise.all([
-    db.query(...planQuery),
-    db.query(`SELECT * FROM injuries WHERE athlete_profile_id = $1 AND activa = true ORDER BY recurrente DESC, created_at DESC;`, [profileId]),
-    db.query(`SELECT * FROM availability WHERE athlete_profile_id = $1 AND vigente_desde <= $2
-      ORDER BY vigente_desde DESC, id DESC LIMIT 1;`, [profileId, dateOnly(today)]),
-    db.query(`SELECT cs.*, rs.codigo_sesion AS running_code, rs.distancia_km, rs.duracion_min,
+  /* FASE 12 / fix concurrencia pg: las queries se ejecutan en secuencia, no en
+     Promise.all, porque este snapshot se lee dentro de una transacción sobre un
+     cliente dedicado (readCanonicalPlanningContext abre client.connect()). En
+     node-postgres no se permite lanzar query() en paralelo sobre el mismo
+     cliente; pg@9 lo convierte en error duro (500). El pool sí tolera
+     concurrencia, pero al ir sobre cliente dedicado hay que serializar. */
+  const planResult = await db.query(...planQuery);
+  const injuries = await db.query(`SELECT * FROM injuries WHERE athlete_profile_id = $1 AND activa = true ORDER BY recurrente DESC, created_at DESC;`, [profileId]);
+  const availability = await db.query(`SELECT * FROM availability WHERE athlete_profile_id = $1 AND vigente_desde <= $2
+      ORDER BY vigente_desde DESC, id DESC LIMIT 1;`, [profileId, dateOnly(today)]);
+  const completed = await db.query(`SELECT cs.*, rs.codigo_sesion AS running_code, rs.distancia_km, rs.duracion_min,
                     rs.ritmo, rs.fc_media, rs.fc_max, rs.desnivel, rs.cadencia, rs.rpe, rs.dolor,
                     rs.notas AS running_notes, rs.origen AS running_source,
                     ss.codigo_sesion AS strength_code
@@ -147,19 +152,18 @@ async function readCanonicalPlanningContextSnapshot(profileId, {
                LEFT JOIN running_sessions rs ON rs.completed_session_id = cs.id
                LEFT JOIN strength_sessions ss ON ss.completed_session_id = cs.id
               WHERE cs.athlete_profile_id = $1 AND cs.fecha >= $2
-              ORDER BY cs.fecha DESC, cs.created_at DESC;`, [profileId, from]),
-    db.query(`SELECT cs.fecha, s.codigo_sesion, e.nombre AS exercise, st.orden,
+              ORDER BY cs.fecha DESC, cs.created_at DESC;`, [profileId, from]);
+  const strengthSets = await db.query(`SELECT cs.fecha, s.codigo_sesion, e.nombre AS exercise, st.orden,
                     st.peso_kg, st.reps, st.rir, st.notas
                FROM strength_sets st
                JOIN strength_sessions s ON s.id = st.strength_session_id
                JOIN completed_sessions cs ON cs.id = s.completed_session_id
                JOIN strength_exercises e ON e.id = st.strength_exercise_id
               WHERE cs.athlete_profile_id = $1 AND cs.fecha >= $2
-              ORDER BY cs.fecha DESC, s.id, st.orden;`, [profileId, from]),
-    db.query(`SELECT * FROM feedback_logs WHERE athlete_profile_id = $1 AND fecha >= $2 ORDER BY fecha DESC, created_at DESC;`, [profileId, from]),
-    db.query(`SELECT * FROM recovery_logs WHERE athlete_profile_id = $1 AND fecha >= $2 ORDER BY fecha DESC;`, [profileId, from]),
-    db.query(`SELECT * FROM nutrition_targets WHERE athlete_profile_id = $1 ORDER BY fecha DESC LIMIT 1;`, [profileId]),
-  ]);
+              ORDER BY cs.fecha DESC, s.id, st.orden;`, [profileId, from]);
+  const feedback = await db.query(`SELECT * FROM feedback_logs WHERE athlete_profile_id = $1 AND fecha >= $2 ORDER BY fecha DESC, created_at DESC;`, [profileId, from]);
+  const recovery = await db.query(`SELECT * FROM recovery_logs WHERE athlete_profile_id = $1 AND fecha >= $2 ORDER BY fecha DESC;`, [profileId, from]);
+  const nutrition = await db.query(`SELECT * FROM nutrition_targets WHERE athlete_profile_id = $1 ORDER BY fecha DESC LIMIT 1;`, [profileId]);
 
   const plan = planResult.rows[0] || null;
   let weeks = [], acceptedRevision = null;
@@ -619,18 +623,19 @@ export async function getWeeklyPlanRevision(revisionId, profileId, db = pool) {
   );
   if (!rows[0]) throw new PlanningNotFoundError();
   const revision = rows[0];
-  const [sessions, evidence, guardrails] = await Promise.all([
-    db.query(`SELECT * FROM weekly_plan_sessions WHERE weekly_plan_revision_id = $1 ORDER BY orden;`, [revisionId]),
-    db.query(`SELECT pe.*, dc.document_id, dc.texto, dc.seccion, dc.pagina_inicio, dc.pagina_fin,
+  /* FASE 12 / fix concurrencia pg: secuencial en vez de Promise.all porque
+     getWeeklyPlanRevision se invoca dentro de transaction() sobre un cliente
+     dedicado; query() en paralelo sobre el mismo cliente lanza en pg@9. */
+  const sessions = await db.query(`SELECT * FROM weekly_plan_sessions WHERE weekly_plan_revision_id = $1 ORDER BY orden;`, [revisionId]);
+  const evidence = await db.query(`SELECT pe.*, dc.document_id, dc.texto, dc.seccion, dc.pagina_inicio, dc.pagina_fin,
                      d.titulo, d.autores, d.anio, d.doi, d.fuente_revista,
                      d.study_type, d.evidence_grade, d.poblacion, d.population_type, d.sample_size
                 FROM planning_run_evidence pe
                 JOIN document_chunks dc ON dc.id = pe.document_chunk_id
                 JOIN documents d ON d.id = dc.document_id
                WHERE pe.planning_run_id = $1
-               ORDER BY pe.query_key, pe.rank;`, [revision.planning_run_id]),
-    db.query(`SELECT * FROM guardrail_results WHERE planning_run_id = $1 ORDER BY order_index, id;`, [revision.planning_run_id]),
-  ]);
+               ORDER BY pe.query_key, pe.rank;`, [revision.planning_run_id]);
+  const guardrails = await db.query(`SELECT * FROM guardrail_results WHERE planning_run_id = $1 ORDER BY order_index, id;`, [revision.planning_run_id]);
   return { revision, sessions: sessions.rows, evidence: evidence.rows, guardrails: guardrails.rows };
 }
 
