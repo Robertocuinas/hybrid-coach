@@ -182,12 +182,20 @@ function validarSalida(bruto, contexto, analytics, evidence, guardrailConfig) {
   if (!schema.ok) return { ok: false, output: null, schema, guardrails: null, errors: schema.errors };
   const normalizado = normalizarCambiosDerivados(schema.value, contexto);
   const guardrails = evaluarGuardrailsPlan(normalizado, contexto, analytics, guardrailConfig);
+  const outputValid = schema.ok;
+  /* FASE 12 / reglas no estrictas: los guardarraíles fallidos se registran como
+     warnings, pero no invalidan la propuesta. El dominio conserva hard/soft para
+     auditoría; el orquestador recibe ok=true siempre que el schema sea válido. */
   return {
-    ok: guardrails.valid,
-    output: guardrails.valid ? normalizado : null,
+    ok: outputValid,
+    output: outputValid ? normalizado : null,
     schema,
     guardrails,
-    errors: guardrails.hard.map((e) => ({ path: e.path, code: e.code, message: e.message })),
+    errors: [
+      ...(parsed.errors || []),
+      ...guardrails.hard.map((e) => ({ path: e.path, code: e.code, message: e.message })),
+      ...guardrails.soft.map((e) => ({ path: e.path, code: e.code, message: e.message })),
+    ],
   };
 }
 
