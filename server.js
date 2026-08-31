@@ -459,9 +459,9 @@ app.use((error, req, res, _next) => {
      fallado, y un 500 en producción se queda sin diagnóstico posible. Se añade
      método y ruta, recortando la query: ahí es donde viajan los términos de
      búsqueda de alimentos y no tienen por qué acabar en un log. */
-  if (status === 500) {
+  if (status >= 400) {
     const ruta = String(req.originalUrl || req.url || "").split("?")[0].slice(0, 120);
-    console.error("Error interno de API:", req.method, ruta, error?.name, error?.code || "", "\n", error?.stack || error?.message || error);
+    console.error("Error API:", req.method, ruta, status, error?.name, error?.code || "", error?.publicMessage || error?.message || "", "\n", error?.stack || error);
   }
   const postgresError = /^[0-9A-Z]{5}$/.test(String(error.code || ""));
   const safeMessage = error.publicMessage
