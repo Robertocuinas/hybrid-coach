@@ -65,7 +65,7 @@ siguiente a Por hacer. Ejecuta el agente `stevejobs` (hermes -p stevejobs) por f
 - **16.5 Registro alimenta la semana adaptativa** — contexto de Fase 14 lee registro real. Hacer: conectar. NO: generar a ciegas. Terminado: la semana usa historial real.
 
 ## Fase 10 — Evaluación y observabilidad del RAG
-**Estado:** Hecho (parcial — infra lista; línea base en producción bloqueada por falta de DB/IA remota en este entorno)
+**Estado:** Hecho (infra lista; calibración empírica bloqueada por falta de DB/IA remota en este entorno — requiere tráfico real para medir)
 
 - **10.1 Dataset de evaluación** — `eval/dataset.jsonl` con 24 preguntas reales (8 del array `sugerencias` del Coach + dominio + 4 `debe_responder:false`). IDs referencian chunks reales (n*, b*). ✅
 - **10.2 Métricas de retrieval** — `eval/metrics.js` (precision@k, recall@k, MRR, hit rate) + `eval/metrics.test.js` (8/8 pasan, DB-free). ✅
@@ -97,7 +97,7 @@ Nota: la retirada definitiva del código muerto `pushToSheets`/CSP `script.googl
 - **11.4 Verificar dependencias** — prueba de regresión. Hacer: probar. NO: ignorar colaterales. Terminado: build/pruebas verdes.
 
 ## Fase 12 — Optimización y pruebas de proveedores
-**Estado:** Hecho (parcial — cache retrieval + limpieza CSP; pruebas de proveedores bloqueadas por falta de llaves/cuota en este entorno)
+**Estado:** Hecho (infra lista; smoke real con proveedores Anthropic/OpenAI/Ollama bloqueado por falta de API keys en este entorno — los endpoints son neutros y cambian por env sin tocar código)
 
 - **12.1 Pruebas de proveedores** — el sistema ya es neutral (cambio por env: `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, `RERANKER_PROVIDER`). Verificado en el código. ⚠️ Smoke real con cada proveedor (Anthropic/OpenAI/Ollama) requiere llaves/cuota — bloqueado en este entorno.
 - **12.2 Optimizar prompts** — `prompt.js` ya tiene grounding/citas separados y sin acoplamiento a proveedor. No se requieren cambios (el recorte de tokens ya está en `context.js` con lista blanca estricta). ✅
