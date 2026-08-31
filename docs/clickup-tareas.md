@@ -104,7 +104,7 @@ Nota: la retirada definitiva del código muerto `pushToSheets`/CSP `script.googl
 - **12.3 Cache de retrieval** — `server/rag/cache.js` + integración en `recuperar()` (opt-in vía `RETRIEVAL_CACHE_ENABLED=true`, inyectable vía `deps.cache`). Test DB-free en `server/rag/cache.test.js` (6/6). ✅
 - **12.4 Coste/latencia** — el diagnóstico de `recuperar()` ya reporta `latenciaMs`; el logging de `aiLogging.js` (Fase 10) registra latencia por fase. Reporte empírico requiere ejecución en producción. ⚠️
 
-Limpieza de código muerto (12.1): eliminada referencia a `https://script.google.com` del CSP (`security.js`) — el servidor ya no usa Google Sheets. `googleapis` sigue en `package.json` como dependencia muerta (pendiente de verificar scripts que lo usen antes de quitar).
+Limpieza de código muerto (12.1): eliminada referencia a `https://script.google.com` del CSP (`security.js`) — el servidor ya no usa Google Sheets. `googleapis` verificado: código vivo en `server.js:294-303` (fallback opcional cuenta de servicio para Sheets cuando no hay Apps Script). No es dependencia muerta — se mantiene en `package.json`.
 
 - **12.1 Pruebas de proveedores** — Anthropic/OpenAI/Ollama por configuración. Hacer: smoke. NO: hardcodear. Terminado: cambio por env verificado.
 - **12.2 Optimizar prompts** — recortar tokens. Hacer: recortar contexto. NO: mutar system prompt sin prueba. Terminado: tokens en presupuesto.
