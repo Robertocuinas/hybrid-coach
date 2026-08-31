@@ -84,6 +84,7 @@ export async function generateMasterPlanProposal(profileId, rawInput, deps = {})
     const status = ["llm_failed", "retrieval_failed", "no_evidence"].includes(result.fallback?.code) ? 503 : 422;
     const mensaje = result.fallback?.message
       || "No se ha podido generar un plan maestro basado en evidencia. Se mantiene el plan previo si existía.";
+    console.error("MASTER_FALLBACK:", JSON.stringify({ status: result.status, code, message: mensaje, fallback: result.fallback, provider: deps.llmProvider?.constructor?.name || null, modelCalls: result.modelCalls, latencyMs: result.latencyMs, evidenceCount: Array.isArray(result.evidence) ? result.evidence.length : null }));
     const err = new MasterPlanRequestError(mensaje, { code, status });
     err.fallback = result.fallback;
     throw err;
