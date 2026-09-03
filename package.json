@@ -8,7 +8,7 @@
     "node": ">=20.11"
   },
   "scripts": {
-    "test": "node --test --test-concurrency=1 \"src/**/*.test.js\" \"server/**/*.test.js\" \"scripts/**/*.test.js\" \"migration/**/*.test.js\"",
+    "test": "bash scripts/test.sh",
     "lint": "eslint .",
     "build": "node build.mjs",
     "start": "node server.js",
