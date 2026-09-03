@@ -7,11 +7,7 @@
    Flujo: ampliar consulta → vectorial + léxico en paralelo (con los filtros
    duros dentro de cada uno) → fusión RRF → reranking → umbral → top-K. */
 import { ampliarConsulta } from "./query-expansion.js";
-import { cacheRetrieval, CacheRetrieval } from "./cache.js";
-
-/* Cache de retrieval por repo (conexión a BD). WeakMap para no retener el repo
-   en memoria tras cerrar la conexión (Fase 12.3). */
-const repoCache = new WeakMap();
+import { cacheRetrieval } from "./cache.js";
 
 /* Pesos de PESO_GRADO del cliente, conservados tal cual para no cambiar el
    criterio a mitad de migración. Solo se aplican si RAG_WEIGHT_BY_GRADE=true. */

@@ -89,3 +89,17 @@ citas, RAG, conciliación y el motor determinista.
 - Los backups nativos de Railway requieren un plan compatible; mientras tanto se usa
   exportación JSON y `npm run backup:db` con almacenamiento privado externo.
 - No escalar a varias réplicas mientras Strava y jobs sigan teniendo estado de proceso.
+
+## Documentación adicional
+
+La arquitectura, decisiones y runbook viven en `docs/`:
+
+- `docs/runbook-operacion.md` — despliegue, rollback, backup y restore.
+- `docs/08-seguridad.md` — política de seguridad y CSP.
+- `docs/04-capa-ia.md` y `docs/05-rag.md` — capa de IA y RAG.
+- `docs/03-modelo-datos.md` y `docs/06-migracion.md` — esquema y migraciones.
+- `docs/12-arquitectura-backend.md` y `docs/13-frontend-y-agenda.md` — detalle backend y frontend.
+- `CLAUDE.md` — instrucciones operativas para el agente que trabaja sobre este repo.
+
+`CLAUDE.md` y `GUIA-INSTALACION.md` son las dos puertas de entrada si vienes a tocar
+algo: léelas antes de cambiar nada.

@@ -1,0 +1,75 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancela duplicados: si llega un push a main mientras corre un run anterior,
+# GitHub Actions lo cancela automáticamente. Aquí solo nos aseguramos de no
+# gastar minutos en PRs con commits de bots o etiquetas sin código.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: lint + tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Coincide con `engines.node: ">=20.11"`. Probar dos majors evita
+        # regresiones silenciosas cuando una dependencia usa APIs nuevas.
+        node: [20.x, 22.x]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tests
+        env:
+          # Los tests no tocan Postgres real, pero algunos módulos leen
+          # `SESSION_SECRET` al importarse. 48 chars para superar el check
+          # de longitud del propio módulo.
+          SESSION_SECRET: ci-secret-de-mas-de-treinta-y-dos-caracteres-aqui
+          AI_RATE_LIMIT_PER_MINUTE: "0"
+        run: npm test
+
+  # Job separado para los scripts opcionales de smoke que requieren Python
+  # y un Postgres real (los usa el bot en local, no en CI). Se mantiene como
+  # manual dispatch para no romper el flujo principal si un día fallan por
+  # motivos ajenos al código.
+  smoke-optional:
+    name: smoke opcional (Python + Postgres)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instalar
+        run: |
+          npm ci
+          python -m pip install --quiet pymupdf
+      - name: Needle smoke
+        env:
+          SESSION_SECRET: ci-secret-de-mas-de-treinta-y-dos-caracteres-aqui
+        run: npm run needle:smoke
+        continue-on-error: true  # Solo informativo, no bloquea merge.
